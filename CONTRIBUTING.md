@@ -8,7 +8,7 @@ SPDX-License-Identifier: CC-BY-4.0
 Thank you for your interest in improving Horizon. In principle anything can
 be contributed: bug fixes, features, documentation, and examples.
 Contributions are made by forking the repository and opening a pull request
-against the `main` branch.
+against the `dev` branch.
 
 Horizon is a companion tool for
 [Navigate](https://github.com/zerocarbonshipping/navigate-zcs). Changes to
@@ -20,7 +20,7 @@ covers the uncertainty analysis layer on top of it.
 1. Fork the repository and clone your fork.
 2. Set up a development environment. Feel free to use `make conda-setup`
    (conda) or `make pip-setup` (venv + pip).
-3. Create a branch from `main` for your change.
+3. Create a branch from `dev` for your change.
 4. Verify your setup by running `make lint` and `make test`.
 
 ## What to contribute
@@ -38,7 +38,8 @@ can be submitted directly as a pull request.
 
 ## Pull request expectations
 
-- Target the `main` branch.
+- Target the `dev` branch. Maintainers merge `dev` into `main` when a
+  release is cut.
 - Keep each pull request focused on a single change. Unrelated fixes and
   refactors belong in separate pull requests.
 - Write a clear description: what the change does, why it is needed, and how
