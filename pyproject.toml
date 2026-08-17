@@ -1,0 +1,78 @@
+# SPDX-FileCopyrightText: 2026 Fonden Mærsk Mc-Kinney Møller Center for Zero Carbon Shipping
+# SPDX-License-Identifier: Apache-2.0
+
+[build-system]
+requires = ["setuptools>=68.2", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "horizon-zcs"
+version = "1.0.0"
+authors = [
+    { name = "Mathias Hintze", email = "mathias.hintze@zerocarbonshipping.com" },
+]
+maintainers = [
+    { name = "Frederik Winkel Lehn", email = "frederik.lehn@zerocarbonshipping.com" },
+]
+description = "An uncertainty analysis tool for the Navigate maritime transition model"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { file = "LICENSE" }
+
+dependencies = [
+    "pandas>=2.0",
+    "numpy>=1.22.0",
+    "matplotlib>=3.5.1",
+    "scipy>=1.7.3",
+    "openpyxl>=3.0.9",
+    "python-calamine>=0.2.0",
+    "pyDOE3",
+    "seaborn>=0.13.2",
+    "psutil",
+    "plotly>=5.0.0"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-cov",
+    "pytest-mock",
+    "flake8",
+    "flake8-bugbear",
+    "pep8-naming",
+    "isort",
+]
+test = [
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
+    "pytest-mock>=3.12.0",
+]
+
+[project.urls]
+Homepage = "https://www.zerocarbonshipping.com/"
+Repository = "https://github.com/zerocarbonshipping/horizon-zcs"
+
+[tool.setuptools.packages.find]
+include = ["horizon*"]
+exclude = ["tests*"]
+
+[project.scripts]
+horizon = "horizon.__main__:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "-v",
+    "--strict-markers",
+    "--tb=short",
+]
+markers = [
+    "unit: Unit tests that don't require external resources",
+]
+
+[tool.isort]
+profile = "black"
+line_length = 120

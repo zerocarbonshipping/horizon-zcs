@@ -1,0 +1,28 @@
+# Illustrative Navigate template for the fuel cost uncertainty study.
+#
+# A .unc file is an ordinary Navigate simulation file in which the values under
+# study are replaced by %TOKEN% placeholders. Horizon substitutes each token
+# with a sampled value and writes one .nav file per sample/scenario
+# combination.
+#
+# This template is a minimal sketch to show the mechanics; it is not a runnable
+# Navigate simulation. For a real study, copy a working .nav file from your own
+# Navigate project and replace the uncertain values with tokens.
+
+DEFINE {
+    Load DefaultModelDefinition
+
+    # scenario label available when Include(..., _name = "...") is used: %POLICY%
+
+    FuelMarket "global_fuel_market" {
+        set_price_multiplier(%FUEL_PRICE%)
+    }
+
+    TradeVolume "container_trade" {
+        set_annual_growth_rate(%DEMAND_GROWTH%)
+    }
+
+    Fleet "container_fleet" {
+        set_renewal_rate(%RENEWAL%)
+    }
+}

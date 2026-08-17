@@ -1,0 +1,70 @@
+# Example Horizon configuration: fuel cost uncertainty study.
+#
+# This example samples three uncertain parameters across two policy scenarios
+# and stops after sampling (SampleOnly = TRUE), so it runs without Navigate or
+# pueue installed. It writes the sampled values and diagnostic plots to the
+# output folder.
+#
+# To turn it into a real study: point UncFilePath at a tokenized copy of your
+# own Navigate simulation file, set SampleOnly = FALSE, and make sure the
+# pueue daemon is running.
+
+ScenarioParameter "Policy scenario" {
+    name = "Policy scenario"
+    token = "POLICY"
+    active = TRUE
+    default = "baseline"
+    values = ["baseline", "carbon_levy"]
+}
+
+ContinuousParameter "Fuel price multiplier" {
+    name = "Fuel price multiplier"
+    token = "FUEL_PRICE"
+    active = TRUE
+    default = 1.0
+    low_val = 0.8
+    high_val = 1.5
+    decimals = 2
+    distribution = "uniform"
+
+    # under a carbon levy, fuel prices shift upward
+    if POLICY = carbon_levy {
+        low_val = 1.0
+        high_val = 2.0
+    }
+}
+
+ContinuousParameter "Demand growth rate" {
+    name = "Demand growth rate"
+    token = "DEMAND_GROWTH"
+    active = TRUE
+    default = 0.025
+    low_val = 0.01
+    mid_val = 0.025
+    high_val = 0.04
+    decimals = 3
+    distribution = "triangular"
+}
+
+DiscreteParameter "Fleet renewal rate" {
+    name = "Fleet renewal rate"
+    token = "RENEWAL"
+    active = TRUE
+    default = 0.05
+    values = [0.03, 0.05, 0.08]
+    probabilities = [0.25, 0.5, 0.25]
+}
+
+Horizon {
+    UncFilePath = "template.unc"
+    OutputPath = "output/samples.csv"
+    NumberOfSamples = 25
+    SamplingMethod = LHS
+    RandomSeed = 42
+    SampleOnly = TRUE
+
+    ScenarioParameter("POLICY")
+    ContinuousParameter("FUEL_PRICE")
+    ContinuousParameter("DEMAND_GROWTH")
+    DiscreteParameter("RENEWAL")
+}
