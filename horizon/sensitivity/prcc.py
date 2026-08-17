@@ -114,8 +114,12 @@ def compute_prcc(X, y, param_names):
     # Clip to [-1, 1] for numerical safety
     prcc_active = np.clip(prcc_active, -1.0, 1.0)
 
-    # Build results for all parameters (including inactive ones)
-    df_freedom = n - p - 1  # degrees of freedom for p-value
+    # Build results for all parameters (including inactive ones).
+    # The partial correlation for each active parameter controls for the
+    # k - 1 other active parameters, so df = n - 2 - (k - 1) = n - k - 1.
+    # Constant columns are excluded from the correlation matrix and must not
+    # count against the degrees of freedom.
+    df_freedom = n - k - 1
     results = []
     active_pos = 0
     for j in range(p):

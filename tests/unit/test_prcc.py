@@ -169,3 +169,56 @@ class TestPRCCPValue:
         """PRCC of exactly ±1 should give p = 0."""
         assert _prcc_pvalue(1.0, df=10) == 0.0
         assert _prcc_pvalue(-1.0, df=10) == 0.0
+
+
+class TestDegreesOfFreedomWithConstantColumns:
+    """Constant columns are excluded from the correlation matrix, so they
+    must not count against the degrees of freedom of the p-values."""
+
+    @staticmethod
+    def _make_data(n=30, seed=7):
+        rng = np.random.default_rng(seed)
+        x1 = rng.uniform(size=n)
+        x2 = rng.uniform(size=n)
+        y = 2.0 * x1 - x2 + rng.normal(scale=0.1, size=n)
+        return x1, x2, y
+
+    def test_pvalues_unchanged_by_constant_column(self):
+        """Adding a constant column must not change any active p-value."""
+        x1, x2, y = self._make_data()
+        const = np.full_like(x1, 3.14)
+
+        with_const = compute_prcc(
+            np.column_stack([x1, const, x2]), y, ["x1", "const", "x2"]
+        ).set_index("parameter")
+        without_const = compute_prcc(
+            np.column_stack([x1, x2]), y, ["x1", "x2"]
+        ).set_index("parameter")
+
+        for name in ("x1", "x2"):
+            assert with_const.loc[name, "prcc"] == pytest.approx(
+                without_const.loc[name, "prcc"]
+            )
+            assert with_const.loc[name, "p_value"] == pytest.approx(
+                without_const.loc[name, "p_value"]
+            )
+
+    def test_df_uses_active_count(self):
+        """The p-value must match the t-distribution with df = n - k - 1
+        where k counts only non-constant parameters."""
+        x1, x2, y = self._make_data(n=25)
+        const = np.full_like(x1, 1.0)
+        n, k = len(y), 2
+
+        result = compute_prcc(
+            np.column_stack([x1, const, x2]), y, ["x1", "const", "x2"]
+        ).set_index("parameter")
+
+        prcc_x1 = result.loc["x1", "prcc"]
+        expected = _prcc_pvalue(prcc_x1, df=n - k - 1)
+        assert result.loc["x1", "p_value"] == pytest.approx(expected, rel=1e-9)
+
+        # the old formula (df = n - p - 1 with p = 3) gives a relatively
+        # different p-value; compare relatively since both are tiny
+        wrong_df = _prcc_pvalue(prcc_x1, df=n - 3 - 1)
+        assert abs(result.loc["x1", "p_value"] - wrong_df) > 0.5 * wrong_df
