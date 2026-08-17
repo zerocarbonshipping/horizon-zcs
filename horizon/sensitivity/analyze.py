@@ -556,12 +556,26 @@ def _read_collected_report(report_path):
 _SAMPLE_NUM_RE = re.compile(r"sample[_]?(\d+)")
 
 
+def _boundary_prefix_match(prefix, full):
+    """True if *full* starts with *prefix* at a name boundary.
+
+    The character following the prefix must be non-alphanumeric (or absent),
+    so ``sample1`` matches ``sample1_run`` but not ``sample10``.
+    """
+    if not full.startswith(prefix):
+        return False
+
+    return len(full) == len(prefix) or not full[len(prefix)].isalnum()
+
+
 def _match_labels_to_folders(labels, folder_names):
     """Match collected-report labels to sample folder names.
 
     Tries three strategies in order:
     1. Direct / exact match.
-    2. Prefix match (folder name is a prefix of label, or vice-versa).
+    2. Boundary-aware prefix match (folder name is a prefix of label, or
+       vice-versa, ending at a name boundary); the longest matching folder
+       name wins, so ``sample100`` is never attributed to ``sample1``.
     3. Sample-number match — extract the numeric sample index from both
        sides (e.g. ``s1_sample001_mtc_metrics`` → 1, ``sample_1`` → 1).
     """
@@ -573,10 +587,14 @@ def _match_labels_to_folders(labels, folder_names):
         if label in folder_set:
             label_to_folder[label] = label
             continue
-        for fn in folder_names:
-            if label.startswith(fn) or fn.startswith(label):
-                label_to_folder[label] = fn
-                break
+
+        candidates = [
+            fn for fn in folder_names
+            if _boundary_prefix_match(fn, label) or _boundary_prefix_match(label, fn)
+        ]
+        if candidates:
+            # prefer the most specific (longest) folder name
+            label_to_folder[label] = max(candidates, key=len)
 
     if label_to_folder:
         return label_to_folder
