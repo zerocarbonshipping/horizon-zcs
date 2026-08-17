@@ -426,6 +426,33 @@ class TestMatchLabelsToFolders:
         result = _match_labels_to_folders(labels, folders)
         assert result == {}
 
+    def test_prefix_match_does_not_confuse_numeric_neighbors(self):
+        """sample100 must never be attributed to folder sample1 or sample10."""
+        folders = ["sample1", "sample10", "sample100"]
+        labels = ["sample100_metrics", "sample10_metrics", "sample1_metrics"]
+        result = _match_labels_to_folders(labels, folders)
+        assert result == {
+            "sample100_metrics": "sample100",
+            "sample10_metrics": "sample10",
+            "sample1_metrics": "sample1",
+        }
+
+    def test_prefix_match_prefers_most_specific_folder(self):
+        """When several folders match at a boundary, the longest wins."""
+        folders = ["s1", "s1_sample001"]
+        labels = ["s1_sample001_mtc_metrics"]
+        result = _match_labels_to_folders(labels, folders)
+        assert result == {"s1_sample001_mtc_metrics": "s1_sample001"}
+
+    def test_label_prefix_of_folder_requires_boundary(self):
+        """A short label must not glue onto a longer numeric folder name."""
+        folders = ["sample10"]
+        labels = ["sample1"]
+        result = _match_labels_to_folders(labels, folders)
+        # no boundary prefix match; falls back to sample-number matching,
+        # where sample1 (1) and sample10 (10) differ - so no match at all
+        assert result == {}
+
 
 class TestCheckAnyReportExists:
     """Tests for early report existence check."""
