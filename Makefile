@@ -5,12 +5,14 @@
 # default environment name matches the one used by navigate-zcs.
 ENV_NAME := nav
 
-# Prefer conda if the env exists, otherwise fall back to .venv
+# Prefer conda if the env exists, otherwise fall back to .venv. RUN must be
+# a command prefix, so the venv branch prepends .venv/bin to PATH rather
+# than naming the directory itself.
 USE_CONDA := $(shell conda env list 2>/dev/null | grep -q "^$(ENV_NAME)[[:space:]]" && echo 1)
 ifeq ($(USE_CONDA),1)
   RUN := conda run -n $(ENV_NAME)
 else
-  RUN := .venv/bin
+  RUN := env PATH="$(CURDIR)/.venv/bin:$$PATH"
 endif
 
 .PHONY: help conda-setup pip-setup lint test
