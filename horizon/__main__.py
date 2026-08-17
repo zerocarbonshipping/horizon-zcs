@@ -69,6 +69,16 @@ def main():
         _replot_batch(args)
         return
 
+    if args.status:
+        # Status check mode — non-blocking check of pueue tasks with failure
+        # log tailing. Dispatched before the positional-argument check since
+        # the output directory arrives via --status, not as a positional.
+        logging.basicConfig(level=logging.INFO,
+                            format='%(asctime)s - %(levelname)s - %(message)s')
+        from horizon.run.run_commands import check_status
+        check_status(args.status)
+        return
+
     if args.sensitivity_analysis is not None:
         logging.basicConfig(level=logging.INFO,
                             format='%(asctime)s - %(levelname)s - %(message)s')
@@ -117,12 +127,6 @@ def main():
     log_directory = os.path.dirname(hor_file_path)
     log_file_path = os.path.join(log_directory, "output.log")
     setup_logging(log_file_path)
-
-    if args.status:
-        # Status check mode — non-blocking check of pueue tasks with failure log tailing
-        from horizon.run.run_commands import check_status
-        check_status(args.status)
-        return
 
     if args.calibration_plot:
         # Calibration dashboard mode

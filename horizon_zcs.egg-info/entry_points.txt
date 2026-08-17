@@ -1,0 +1,2 @@
+[console_scripts]
+horizon = horizon.__main__:main
