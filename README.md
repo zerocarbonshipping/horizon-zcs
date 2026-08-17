@@ -76,9 +76,8 @@ A full uncertainty study runs in three steps:
 # 1. Sample parameters, generate .nav files, queue Navigate runs via pueue
 horizon my_study.hor
 
-# 2. Watch progress (pueue) or check for failures
+# 2. Watch progress
 pueue status
-horizon --status path/to/output_dir
 
 # 3. Collect the Excel reports of completed runs into one file
 horizon -c path/to/output_dir results.xlsx
@@ -111,7 +110,6 @@ See `horizon --help` for the full list. The most used flags:
 | `--navigate-flags "..."` | Extra flags appended to each `navigate` command (e.g. `"-d ./assumptions -s"`). |
 | `--output-dir DIR` | Directory for generated scenario folders (default: next to the `.unc` file). |
 | `--dry-run` | Validate the configuration and preview what would be generated. |
-| `--status DIR` | Check pueue task status and report failures for an output directory. |
 | `--replot DIR ...` | Queue Navigate replot jobs for directories containing `plot_data.pkl`. |
 | `--sensitivity-analysis [FILE]` | Run PRCC sensitivity analysis, optionally from a `.sen` config. |
 | `--calibration-plot` | Generate a calibration comparison dashboard from completed results. |
