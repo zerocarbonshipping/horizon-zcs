@@ -5,6 +5,7 @@
 %TOKEN% replacement and scenario-combination filtering."""
 
 import concurrent.futures
+import hashlib
 import itertools
 import logging
 import os
@@ -51,6 +52,16 @@ def _normalize_include_keyword(line):
 def _format_include_line(path, indent='\t'):
     """Build an include line for a .nav file in Navigate's current format."""
     return f'{indent}{_INCLUDE_KEYWORD} "{path}"\n'
+
+
+def _short_hash(text):
+    """Deterministic 8-hex-char tag used to disambiguate include names."""
+    return hashlib.sha1(text.encode("utf-8", errors="surrogateescape")).hexdigest()[:8]
+
+
+def _path_stem(path):
+    """Filename of ``path`` without its extension."""
+    return os.path.splitext(os.path.basename(path))[0]
 
 
 def _compile_parts(text):
@@ -253,6 +264,7 @@ class FileHandler:
             raise FileOperationError(f"UNC template file not found: {unc_path}")
 
         template_program = self._compile_template(unc_content)
+        self._annotate_include_names(template_program, unc_path)
 
         # Build adjusted lists of scenario tokens and values:
         adjusted_scenario_values = []
@@ -420,6 +432,43 @@ class FileHandler:
             program.append(('text', _compile_parts(''.join(text_run))))
         return program
 
+    @staticmethod
+    def _annotate_include_names(template_program, unc_path):
+        """Assign each include a collision-safe name stem for rewritten copies.
+
+        Rewritten include files used to be named by replaced tokens and sample
+        number alone, so two different .inc files replacing the same token set
+        silently overwrote each other inside a realization (both nav lines then
+        pointed at whichever was written last). Names now carry the source
+        file's stem; when two static include paths share a stem, or when the
+        path itself is tokenized (its resolution is unknown until rendering),
+        a deterministic hash of the source path disambiguates.
+
+        Sets payload['name_stem'] for static paths and payload['stem_hash']
+        for tokenized paths (whose stem is composed at render time).
+        """
+        unc_dir = os.path.dirname(unc_path)
+        stem_sources = {}
+        for kind, payload in template_program:
+            if kind != 'include' or payload['raw_path'] is None:
+                continue
+            if len(payload['path_parts']) == 1:  # static path, no tokens
+                full = os.path.normpath(os.path.join(unc_dir, payload['raw_path']))
+                payload['full_path'] = full
+                stem_sources.setdefault(_path_stem(full), set()).add(full)
+        for kind, payload in template_program:
+            if kind != 'include' or payload['raw_path'] is None:
+                continue
+            if len(payload['path_parts']) == 1:
+                stem = _path_stem(payload['full_path'])
+                if len(stem_sources[stem]) == 1:
+                    payload['name_stem'] = stem
+                else:
+                    payload['name_stem'] = f"{stem}_{_short_hash(payload['full_path'])}"
+            else:
+                payload['name_stem'] = None
+                payload['stem_hash'] = _short_hash(payload['raw_path'])
+
     def _generate_nav_files_parallel(self, work_items, template_program, unc_path,
                                      command_sink=None, solver_flag='', extra_flags='',
                                      max_workers=None):
@@ -474,9 +523,18 @@ class FileHandler:
         - Returns the nav filepath on success, or None on failure.
         """
         os.makedirs(realization_folder, exist_ok=True)
-        # simulation_includes/ is created lazily, only when an include is
-        # actually rewritten for this realization.
+        # simulation_includes/ is created lazily and at most once per
+        # realization - on network filesystems every extra makedirs is a
+        # round trip, and decks can rewrite dozens of includes per
+        # realization.
         simulation_includes_folder = os.path.join(realization_folder, "simulation_includes")
+        includes_dir_ready = False
+
+        def _ensure_includes_dir():
+            nonlocal includes_dir_ready
+            if not includes_dir_ready:
+                os.makedirs(simulation_includes_folder, exist_ok=True)
+                includes_dir_ready = True
 
         # Build unified replacements map: scenario params (strings) first, then sampled params
         replacements = {}
@@ -511,6 +569,13 @@ class FileHandler:
 
             full_include_path = os.path.normpath(os.path.join(unc_dir, include_path_relative))
 
+            # Collision-safe stem for rewritten copies: static paths carry a
+            # precomputed stem; tokenized paths compose it from the resolved
+            # file plus a hash of the template's path pattern.
+            name_stem = payload.get('name_stem')
+            if name_stem is None and payload['raw_path'] is not None:
+                name_stem = f"{_path_stem(include_path_relative)}_{payload['stem_hash']}"
+
             try:
                 updated_line = self._process_and_update_include_file(
                     full_include_path,
@@ -518,7 +583,9 @@ class FileHandler:
                     sample_number,
                     simulation_includes_folder,
                     realization_folder,
-                    payload['indent']
+                    payload['indent'],
+                    name_stem or "include",
+                    _ensure_includes_dir,
                 )
             except Exception:
                 logger.exception("Failed to process include file: %s", full_include_path)
@@ -563,7 +630,8 @@ class FileHandler:
 
     def _process_and_update_include_file(self, include_file_path, replacements, sample_number,
                                          simulation_includes_folder, realization_folder,
-                                         indent='\t'):
+                                         indent='\t', name_stem="include",
+                                         ensure_includes_dir=None):
         """
         Process an include (.inc) file: replace tokens and optionally save to simulation_includes.
 
@@ -571,7 +639,10 @@ class FileHandler:
         and sampled values, pre-formatted). Returns a new `Include` line to be
         placed in the .nav file, or None if the include could not be handled.
         `indent` is the leading whitespace of the template line, carried over so
-        the generated .nav keeps the template's indentation.
+        the generated .nav keeps the template's indentation. `name_stem` is the
+        collision-safe stem for the rewritten copy (see _annotate_include_names);
+        `ensure_includes_dir` creates simulation_includes/ at most once per
+        realization.
         """
         parts = self._compiled_include(include_file_path)
 
@@ -586,12 +657,17 @@ class FileHandler:
                 tokens_replaced.append(token)
 
         if tokens_replaced:
-            # Name the file based on tokens that were actually replaced
+            # Name the file by its source stem plus the replaced tokens: the
+            # stem is what keeps two different .inc files that replace the
+            # same token set from overwriting each other.
             combined_tokens = '_'.join(tokens_replaced)
-            new_file_name = f"{combined_tokens}_sample_{sample_number}.inc"
+            new_file_name = f"{name_stem}_{combined_tokens}_sample_{sample_number}.inc"
             new_file_path = os.path.join(simulation_includes_folder, new_file_name)
             try:
-                os.makedirs(simulation_includes_folder, exist_ok=True)
+                if ensure_includes_dir is not None:
+                    ensure_includes_dir()
+                else:
+                    os.makedirs(simulation_includes_folder, exist_ok=True)
                 self._write_to_file(new_file_path, _render_parts(parts, replacements))
             except Exception:
                 logger.exception("Failed writing modified include file %s", new_file_path)

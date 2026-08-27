@@ -221,15 +221,55 @@ class TestCompiledRendering:
         assert _render_parts(_compile_parts("v=%A%;"), {"A": ""}) == "v=;"
 
     def test_rewritten_include_name_uses_first_appearance_order(self, tmp_path):
-        """The rewritten copy is named after the replaced tokens in the order
-        they first appear in the include file."""
+        """The rewritten copy is named after its source stem plus the replaced
+        tokens in the order they first appear in the include file."""
         _write(tmp_path / "inc" / "two.inc", "x = %B%\ny = %A%\nz = %B%\n")
         unc = _write(tmp_path / "t.unc", 'DEFINE {\n\tInclude "inc/two.inc"\n}\n')
 
         handler = _generate(unc, tmp_path / "out", [{"sample": 1, "A": 1.0, "B": 2.0}])
 
         line = _include_lines(handler.nav_filepaths[0])[0]
-        assert line.split('"')[1] == "simulation_includes/B_A_sample_1.inc"
+        assert line.split('"')[1] == "simulation_includes/two_B_A_sample_1.inc"
+
+
+class TestIncludeNameCollisions:
+    """Two different .inc files replacing the same token set used to be
+    rewritten to the same filename, silently overwriting each other inside a
+    realization (both nav lines then pointed at whichever was written last,
+    so the simulation ran with one include's content missing and the other's
+    duplicated)."""
+
+    def test_same_tokens_different_files_stay_distinct(self, tmp_path):
+        _write(tmp_path / "inc" / "fuel.inc", "fuel_price = %FOO%\n")
+        _write(tmp_path / "inc" / "demand.inc", "demand_level = %FOO%\n")
+        unc = _write(tmp_path / "t.unc",
+                     'DEFINE {\n\tInclude "inc/fuel.inc"\n\tInclude "inc/demand.inc"\n}\n')
+
+        handler = _generate(unc, tmp_path / "out", [{"sample": 1, "FOO": 42.0}])
+
+        nav = handler.nav_filepaths[0]
+        paths = [line.split('"')[1] for line in _include_lines(nav)]
+        assert len(set(paths)) == 2, f"include lines collide: {paths}"
+        contents = {}
+        for rel in paths:
+            full = os.path.join(os.path.dirname(nav), rel)
+            contents[rel] = open(full).read()
+        assert any("fuel_price = 42" in c for c in contents.values())
+        assert any("demand_level = 42" in c for c in contents.values())
+
+    def test_same_stem_in_different_dirs_stays_distinct(self, tmp_path):
+        _write(tmp_path / "a" / "policy.inc", "alpha = %FOO%\n")
+        _write(tmp_path / "b" / "policy.inc", "beta = %FOO%\n")
+        unc = _write(tmp_path / "t.unc",
+                     'DEFINE {\n\tInclude "a/policy.inc"\n\tInclude "b/policy.inc"\n}\n')
+
+        handler = _generate(unc, tmp_path / "out", [{"sample": 1, "FOO": 7.0}])
+
+        nav = handler.nav_filepaths[0]
+        paths = [line.split('"')[1] for line in _include_lines(nav)]
+        assert len(set(paths)) == 2, f"include lines collide: {paths}"
+        rendered = "".join(open(os.path.join(os.path.dirname(nav), rel)).read() for rel in paths)
+        assert "alpha = 7" in rendered and "beta = 7" in rendered
 
 
 class _RecordingSink:
