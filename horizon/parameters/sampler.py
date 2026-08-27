@@ -148,11 +148,35 @@ class ParameterSampler:
     - active=False always means "fixed at default"
     - MC and LHS behave consistently
     - distributions are respected explicitly
+
+    A sampler instance caches its seeded draw matrices, so per-scenario
+    sampling can reuse one instance across all scenario combinations and pay
+    for the (identical, seed-determined) LHS/MC matrix only once instead of
+    recomputing it per combination. Unseeded draws are never cached.
     """
+
+    def __init__(self):
+        self._draw_cache = {}
 
     # ------------------------------------------------------------------
     # Public sampling APIs
     # ------------------------------------------------------------------
+
+    def _cached_draw(self, kind, dim, rows, seed, compute):
+        """Return a seeded draw matrix from the cache, computing it once.
+
+        The matrices are read-only downstream (indexed, never mutated), so
+        sharing one array across scenario combinations is safe. With
+        seed=None the draw must stay random, so nothing is cached.
+        """
+        if seed is None:
+            return compute()
+        key = (kind, dim, rows, seed)
+        matrix = self._draw_cache.get(key)
+        if matrix is None:
+            matrix = compute()
+            self._draw_cache[key] = matrix
+        return matrix
 
     def sample_group(self, parameters, num_samples, seed=None):
         """
@@ -175,9 +199,13 @@ class ParameterSampler:
         if remaining <= 0:
             return simulation_sets
 
-        # Pre-generate uniform random draws for all continuous parameters at once
+        # Pre-generate uniform random draws for all continuous parameters at
+        # once. Seeded draws are cached so scenario combinations share one
+        # matrix instead of regenerating the identical one per combination.
         dim = len(parameters)
-        uniform_draws = np.random.uniform(0.0, 1.0, size=(remaining, dim))
+        uniform_draws = self._cached_draw(
+            "mc", dim, remaining, seed,
+            lambda: np.random.uniform(0.0, 1.0, size=(remaining, dim)))
 
         start = len(simulation_sets)
         for i in range(remaining):
@@ -217,12 +245,24 @@ class ParameterSampler:
 
         dim = len(parameters)
 
-        if remaining == 1:
-            lhs_matrix = np.full((1, dim), 0.5)
-        else:
-            lhs_matrix = lhs(dim, samples=remaining, criterion="maximin")
+        def _compute_lhs():
+            if remaining == 1:
+                matrix = np.full((1, dim), 0.5)
+            else:
+                # The seed must be passed to lhs() explicitly: pyDOE3 >= 1.5
+                # draws from its own numpy Generator and ignores the legacy
+                # global numpy.random.seed() state, so seeding only via
+                # _set_random_seed leaves LHS studies irreproducible. Passing
+                # it here also keeps the draw matrix identical across
+                # per-scenario sampling runs, so sample_i aligns across
+                # scenario combinations as documented.
+                matrix = lhs(dim, samples=remaining, criterion="maximin", seed=seed)
+            return np.clip(matrix, 0.0, 1.0)
 
-        lhs_matrix = np.clip(lhs_matrix, 0.0, 1.0)
+        # Seeded matrices are cached: the maximin criterion is O(n^2) per
+        # call, and per-scenario sampling would otherwise recompute the
+        # identical matrix for every scenario combination.
+        lhs_matrix = self._cached_draw("lhs", dim, remaining, seed, _compute_lhs)
 
         start = len(simulation_sets)
         for i in range(remaining):

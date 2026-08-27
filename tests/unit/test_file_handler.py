@@ -21,9 +21,11 @@ import pytest
 
 from horizon.file_handler.file_handler import (
     FileHandler,
+    _compile_parts,
     _format_include_line,
     _is_include_line,
     _normalize_include_keyword,
+    _render_parts,
     extract_template_tokens,
 )
 from horizon.parameters.parameter import ScenarioParameter
@@ -197,6 +199,105 @@ class TestGeneratedNavIncludeFormat:
         lines = _include_lines(handler.nav_filepaths[0])
         assert any(line.endswith('policy_strict.inc"') for line in lines)
         assert not any("%POLICY%" in line for line in lines)
+
+
+class TestCompiledRendering:
+    """The template/include text is compiled once and rendered per realization;
+    rendering must keep exactly the token-replacement semantics of the old
+    per-line regex path."""
+
+    def test_unknown_tokens_are_preserved(self):
+        parts = _compile_parts("a %X% b %Y% c\n")
+        assert _render_parts(parts, {"X": "1"}) == "a 1 b %Y% c\n"
+
+    def test_text_without_tokens_is_unchanged(self):
+        text = "no tokens here\nsecond line\n"
+        assert _render_parts(_compile_parts(text), {"X": "1"}) == text
+
+    def test_adjacent_tokens(self):
+        assert _render_parts(_compile_parts("%A%%B%"), {"A": "1", "B": "2"}) == "12"
+
+    def test_empty_replacement_value_is_used(self):
+        assert _render_parts(_compile_parts("v=%A%;"), {"A": ""}) == "v=;"
+
+    def test_rewritten_include_name_uses_first_appearance_order(self, tmp_path):
+        """The rewritten copy is named after the replaced tokens in the order
+        they first appear in the include file."""
+        _write(tmp_path / "inc" / "two.inc", "x = %B%\ny = %A%\nz = %B%\n")
+        unc = _write(tmp_path / "t.unc", 'DEFINE {\n\tInclude "inc/two.inc"\n}\n')
+
+        handler = _generate(unc, tmp_path / "out", [{"sample": 1, "A": 1.0, "B": 2.0}])
+
+        line = _include_lines(handler.nav_filepaths[0])[0]
+        assert line.split('"')[1] == "simulation_includes/B_A_sample_1.inc"
+
+
+class _RecordingSink:
+    """Minimal command_sink implementing the StreamingQueuer protocol."""
+
+    def __init__(self):
+        self.started = []
+        self.commands = []
+
+    def start(self, expected_total):
+        self.started.append(expected_total)
+
+    def submit(self, command):
+        self.commands.append(command)
+
+
+class TestCommandSink:
+    """generate_scenarios_and_nav_files streams commands into a sink so
+    queuing can overlap generation."""
+
+    def test_sink_gets_expected_total_and_every_command(self, template_project, tmp_path):
+        sink = _RecordingSink()
+        handler = FileHandler()
+        handler.generate_scenarios_and_nav_files(
+            unc_path=str(template_project),
+            sampled_parameters=[{"sample": 1, "LEN": 250.0}, {"sample": 2, "LEN": 300.0}],
+            scenario_parameters=[ScenarioParameter(name="Policy", token="POLICY", active=True,
+                                                   default="strict", values=["strict"])],
+            output_folder=str(tmp_path / "out"),
+            solver="highs",
+            command_sink=sink,
+        )
+
+        assert sink.started == [2]
+        # the streamed commands are exactly the batch command list
+        assert sorted(sink.commands) == sorted(handler.commands)
+        assert all(cmd.endswith("--solver highs") for cmd in sink.commands)
+
+    def test_without_sink_commands_are_still_built(self, template_project, tmp_path):
+        handler = _generate(template_project, tmp_path / "out", [{"sample": 1, "LEN": 250.0}])
+        assert len(handler.commands) == 1
+
+
+class TestGenerationWorkers:
+    """The generation pool size is overridable per machine."""
+
+    def test_single_worker_produces_all_files(self, template_project, tmp_path):
+        handler = FileHandler()
+        handler.generate_scenarios_and_nav_files(
+            unc_path=str(template_project),
+            sampled_parameters=[{"sample": i, "LEN": 100.0 + i} for i in range(1, 6)],
+            scenario_parameters=[],
+            output_folder=str(tmp_path / "out"),
+            max_workers=1,
+        )
+        assert len(handler.nav_filepaths) == 5
+        assert len(handler.commands) == 5
+
+    def test_zero_or_negative_workers_clamped(self, template_project, tmp_path):
+        handler = FileHandler()
+        handler.generate_scenarios_and_nav_files(
+            unc_path=str(template_project),
+            sampled_parameters=[{"sample": 1, "LEN": 250.0}],
+            scenario_parameters=[],
+            output_folder=str(tmp_path / "out"),
+            max_workers=0,
+        )
+        assert len(handler.nav_filepaths) == 1
 
 
 class TestLegacyTemplateNormalization:

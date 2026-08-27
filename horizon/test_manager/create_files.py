@@ -42,7 +42,7 @@ from horizon.parameters.sampler import ParameterSampler, resolve_parameters_for_
 from horizon.parser.exclusions import get_scenario_label, should_skip_combination
 from horizon.parser.parser import parse_hor_file
 from horizon.plot.plot import analyze_sampled_parameters
-from horizon.run.run_commands import run_commands
+from horizon.run.run_commands import StreamingQueuer
 
 logger = logging.getLogger(__name__)
 
@@ -83,9 +83,15 @@ def _format_duration(seconds):
     return "%d minutes, %d seconds" % (minutes, secs)
 
 
-def sample_parameters(parameters, number_of_samples, sampling_method, random_seed):
-    """Facade to ParameterSampler."""
-    sampler = ParameterSampler()
+def sample_parameters(parameters, number_of_samples, sampling_method, random_seed, sampler=None):
+    """Facade to ParameterSampler.
+
+    Pass a shared ``sampler`` when calling repeatedly (per-scenario sampling):
+    the instance caches its seeded draw matrix, so scenario combinations reuse
+    one matrix instead of recomputing the identical one per combination.
+    """
+    if sampler is None:
+        sampler = ParameterSampler()
     if sampling_method == "LHS":
         return sampler.sample_latin_hypercube(parameters, number_of_samples, seed=random_seed)
     elif sampling_method == "MC":
@@ -134,6 +140,11 @@ def _sample_for_active_combos(scenario_parameters, parameters, number_of_samples
     total_combos = 0
     skipped_combos = 0
 
+    # One sampler shared across combinations: it caches the seeded draw
+    # matrix, which is identical for every combination by design (that is
+    # what keeps sample_i aligned across scenarios).
+    shared_sampler = ParameterSampler()
+
     # If there are no active tokens, product(*) yields one empty tuple -> single iteration (desired).
     for combo_values in product(*active_value_lists):
         total_combos += 1
@@ -167,7 +178,8 @@ def _sample_for_active_combos(scenario_parameters, parameters, number_of_samples
         # Use shared deterministic seed so sample_i corresponds across scenarios
         seed_for_combo = random_seed
 
-        sampled_for_combo = sample_parameters(params_for_scenario, number_of_samples, sampling_method, seed_for_combo)
+        sampled_for_combo = sample_parameters(params_for_scenario, number_of_samples, sampling_method,
+                                              seed_for_combo, sampler=shared_sampler)
 
         # Annotate samples with full scenario_map and sample numbers 1..N
         for i, row in enumerate(sampled_for_combo):
@@ -223,7 +235,8 @@ def _validate_tokens(unc_file_path, scenario_parameters, parameters):
 
 
 def create_files(hor_file_path, max_files=None, priority="normal", solver=None,
-                 navigate_flags=None, output_dir=None, dry_run=False):
+                 navigate_flags=None, output_dir=None, dry_run=False, full_task_env=False,
+                 pueue_cli=False, gen_workers=None):
     """
     Main entrypoint to create files based on the .hor configuration.
 
@@ -235,6 +248,12 @@ def create_files(hor_file_path, max_files=None, priority="normal", solver=None,
         navigate_flags: optional extra flags to pass to each navigate command
         output_dir: optional directory for generated scenario folders (default: next to .unc file)
         dry_run: if True, validate and preview without generating files or running simulations
+        full_task_env: forward the entire environment to each pueue task instead of the
+            whitelist (see run_commands; extend the whitelist with HORIZON_TASK_ENV)
+        pueue_cli: force submission through the pueue CLI instead of the direct
+            daemon connection
+        gen_workers: generation thread-pool size (default: min(8, cpu_count);
+            see FileHandler.generate_scenarios_and_nav_files)
     Returns:
         sample_only (bool) if we terminated early because SampleOnly=True, otherwise None
     """
@@ -373,17 +392,31 @@ def create_files(hor_file_path, max_files=None, priority="normal", solver=None,
     file_handler = FileHandler()
     logger.info("Starting file creation in %s", output_folder)
 
-    # Call the file handler to create nav files
-    file_handler.generate_scenarios_and_nav_files(
-        unc_file_path,
-        sampled_parameters,
-        scenario_parameters,
-        output_folder,
-        exclusion_rules=exclusion_rules,
-        inclusion_rules=inclusion_rules,
-        solver=solver,
-        navigate_flags=navigate_flags,
-    )
+    # Queue each realization the moment its .nav is written: the first
+    # simulations start while the rest of the study is still generating, and
+    # total wall time becomes max(generation, queuing) instead of their sum.
+    queuer = StreamingQueuer(priority=priority, full_task_env=full_task_env, pueue_cli=pueue_cli)
+
+    try:
+        file_handler.generate_scenarios_and_nav_files(
+            unc_file_path,
+            sampled_parameters,
+            scenario_parameters,
+            output_folder,
+            exclusion_rules=exclusion_rules,
+            inclusion_rules=inclusion_rules,
+            solver=solver,
+            navigate_flags=navigate_flags,
+            command_sink=queuer,
+            max_workers=gen_workers,
+        )
+    finally:
+        # Wait for the already-submitted tasks even if generation failed
+        # midway - they are queued in pueue either way and must be reported.
+        try:
+            queuer.finish()
+        except Exception:
+            logger.exception("Failed to finish queue submission.")
 
     # Log generated files
     if logger.isEnabledFor(logging.DEBUG):
@@ -393,16 +426,10 @@ def create_files(hor_file_path, max_files=None, priority="normal", solver=None,
     skip_note = " (%d combination(s) skipped by filters)" % file_handler.skipped_count if file_handler.skipped_count > 0 else ""
     logger.info("Generated %d NAV file(s) in %s%s", len(file_handler.nav_filepaths), output_folder, skip_note)
 
-    logger.info("Prepared %d navigate command(s) for queuing", len(file_handler.commands))
+    logger.info("Queued %d navigate command(s)", len(file_handler.commands))
     if logger.isEnabledFor(logging.DEBUG):
         for cmd in file_handler.commands:
             logger.debug("Command: %s", cmd)
-
-    # Run commands
-    try:
-        run_commands(file_handler.commands, priority=priority)
-    except Exception:
-        logger.exception("Failed to run commands.")
 
     # Timing
     end_time = time.time()
