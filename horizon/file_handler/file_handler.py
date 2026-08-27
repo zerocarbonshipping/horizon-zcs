@@ -11,6 +11,7 @@ import logging
 import os
 import re
 import threading
+import time
 
 from horizon.exceptions import FileOperationError
 from horizon.parser.exclusions import get_scenario_label, should_skip_combination
@@ -245,12 +246,14 @@ class FileHandler:
             overlaps generation. ``self.commands`` is still populated either
             way; without a sink the caller queues it afterwards as before.
         max_workers : int or None
-            Generation thread-pool size. Default: ``min(8, cpu_count)`` —
-            measured optimal at core count on a 4-core machine, where both
-            undersubscribing (serial ~2.4x slower) and oversubscribing
-            (2x cores ~1.75x slower) cost real time. Worth measuring per
-            machine on many-core hosts and network filesystems
-            (``horizon --gen-workers``, benchmark in tools/benchmark/).
+            Generation thread-pool size. Default: adaptive — ``min(8,
+            cpu_count)`` on local disks (measured optimal at core count,
+            where over- and undersubscription both cost real time), and
+            ``min(64, 4 x cpu_count)`` when a startup probe of the output
+            filesystem shows per-operation latency in network-storage
+            territory, where generation is bound by file-creation round
+            trips and blocked threads are free. An explicit value always
+            wins (``horizon --gen-workers``; benchmark in tools/benchmark/).
         shared_includes : bool
             When True (default), a rewritten include whose replaced tokens
             are all scenario tokens — identical content for every sample of
@@ -415,7 +418,7 @@ class FileHandler:
         self._generate_nav_files_parallel(_generate_work_items(), template_program, unc_path,
                                           command_sink=command_sink,
                                           solver_flag=solver_flag, extra_flags=extra_flags,
-                                          max_workers=max_workers)
+                                          max_workers=max_workers, output_folder=output_folder)
 
         # After nav files created, prepare command list
         self.generate_commands_list(solver=solver, navigate_flags=navigate_flags)
@@ -493,9 +496,63 @@ class FileHandler:
                 payload['name_stem'] = None
                 payload['stem_hash'] = _short_hash(payload['raw_path'])
 
+    @staticmethod
+    def _probe_fs_latency(folder):
+        """Median file-creation latency of the filesystem holding ``folder``.
+
+        Times three create+write+close round trips of a tiny probe file -
+        exactly the operation generation performs per output file. On local
+        disks this is tens of microseconds; on network filesystems it is a
+        metadata round trip of one to tens of milliseconds.
+        """
+        os.makedirs(folder, exist_ok=True)
+        probe_path = os.path.join(folder, f".horizon_fs_probe_{os.getpid()}")
+        samples = []
+        for _ in range(3):
+            start = time.perf_counter()
+            with open(probe_path, "w") as fh:
+                fh.write("probe")
+            samples.append(time.perf_counter() - start)
+            os.remove(probe_path)
+        samples.sort()
+        return samples[1]
+
+    # Per-op latency above which the output filesystem is treated as
+    # network-backed and the pool is sized for latency hiding. Local disks
+    # measure far below this even under load.
+    _FS_LATENCY_THRESHOLD = 0.002
+
+    def _select_worker_count(self, requested, output_folder):
+        """Choose the generation pool size.
+
+        An explicit request always wins. Otherwise the default is
+        ``min(8, cpu)`` — measured optimal at core count on local disks,
+        where the work is compute-bound and oversubscription costs real
+        time. When the output filesystem shows per-operation latency in
+        network-storage territory, generation is bound by file-creation
+        round trips instead: threads blocked on I/O are free, so the pool
+        is sized at ``min(64, 4 x cpu)`` to keep more operations in flight.
+        """
+        cpu_count = os.cpu_count() or 4
+        if requested is not None:
+            return max(1, requested)
+        workers = min(8, cpu_count)
+        try:
+            latency = self._probe_fs_latency(output_folder)
+        except OSError:
+            return workers
+        if latency >= self._FS_LATENCY_THRESHOLD:
+            workers = min(64, cpu_count * 4)
+            logger.info(
+                "Output filesystem responds in ~%.1f ms per file operation "
+                "(network storage?); using %d generation workers to hide the "
+                "latency. Override with --gen-workers.",
+                latency * 1000, workers)
+        return workers
+
     def _generate_nav_files_parallel(self, work_items, template_program, unc_path,
                                      command_sink=None, solver_flag='', extra_flags='',
-                                     max_workers=None):
+                                     max_workers=None, output_folder=None):
         """Generate NAV files using a thread pool for I/O-bound parallelism.
 
         Accepts any iterable of work items (including generators) to avoid
@@ -504,7 +561,9 @@ class FileHandler:
         completed .nav's navigate command is submitted immediately, so
         queuing (and the first simulations) overlap generation.
         """
-        if max_workers is None:
+        if output_folder is not None:
+            max_workers = self._select_worker_count(max_workers, output_folder)
+        elif max_workers is None:
             max_workers = min(8, os.cpu_count() or 4)
         max_workers = max(1, max_workers)
         nav_filepaths = []

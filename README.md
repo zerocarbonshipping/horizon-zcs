@@ -137,10 +137,12 @@ defaults adapt to the machine, and two knobs cover the extremes:
   rewritten includes whose content only varies per scenario are written once
   per scenario combination into `shared_includes/` instead of into every
   realization folder (on by default; `--no-shared-includes` restores full
-  copies). Second, raise `--gen-workers` (e.g. 32): threads blocked on
-  round trips cost nothing, so more in-flight operations directly raise
-  throughput — measure your optimum with
-  [`tools/benchmark/`](tools/benchmark/README.md).
+  copies). Second, Horizon probes the output filesystem's latency at
+  generation start and automatically sizes the pool at `min(64, 4×CPU)`
+  when it looks network-backed — threads blocked on round trips cost
+  nothing, so more in-flight operations directly raise throughput. The log
+  says when this triggers; `--gen-workers` overrides either way (measure
+  your optimum with [`tools/benchmark/`](tools/benchmark/README.md)).
 
 - **Queue submission** uses a direct connection to the pueue daemon when a
   pueue >= 4 unix socket is found, and the pueue CLI otherwise (or with

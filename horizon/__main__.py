@@ -47,10 +47,11 @@ def main():
                                  "pueue >= 4 daemon socket is found) submits large studies much "
                                  "faster; this flag restores the one-pueue-process-per-task path.")
     cli_parser.add_argument("--gen-workers", type=int, default=None, metavar="N",
-                            help="Thread-pool size for .nav file generation. Default: min(8, CPU "
-                                 "count), measured optimal at core count on laptop-class machines. "
-                                 "Raise it (e.g. 32) on network filesystems, where generation is "
-                                 "bound by per-file round trips (see tools/benchmark).")
+                            help="Thread-pool size for .nav file generation. Default: adaptive - "
+                                 "min(8, CPU count) on local disks, min(64, 4x CPU count) when the "
+                                 "output filesystem's measured latency indicates network storage "
+                                 "(where generation is bound by per-file round trips). An explicit "
+                                 "value always wins.")
     cli_parser.add_argument("--no-shared-includes", action="store_true",
                             help="Copy every rewritten include into its realization folder, as "
                                  "before. By default, rewritten includes whose content only "

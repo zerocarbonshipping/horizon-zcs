@@ -313,6 +313,47 @@ class TestCommandSink:
         assert len(handler.commands) == 1
 
 
+class TestAdaptiveWorkerCount:
+    """The pool sizes itself to the output filesystem: local disks get
+    min(8, cpu); filesystems whose probed per-op latency looks
+    network-backed get min(64, 4x cpu). An explicit request always wins."""
+
+    def test_local_disk_keeps_core_count_default(self, tmp_path, mocker):
+        handler = FileHandler()
+        mocker.patch.object(FileHandler, "_probe_fs_latency", return_value=0.00005)
+        mocker.patch("os.cpu_count", return_value=16)
+        assert handler._select_worker_count(None, str(tmp_path)) == 8
+
+    def test_high_latency_fs_scales_up(self, tmp_path, mocker):
+        handler = FileHandler()
+        mocker.patch.object(FileHandler, "_probe_fs_latency", return_value=0.015)
+        mocker.patch("os.cpu_count", return_value=16)
+        assert handler._select_worker_count(None, str(tmp_path)) == 64
+
+    def test_high_latency_cap_at_64(self, tmp_path, mocker):
+        handler = FileHandler()
+        mocker.patch.object(FileHandler, "_probe_fs_latency", return_value=0.015)
+        mocker.patch("os.cpu_count", return_value=32)
+        assert handler._select_worker_count(None, str(tmp_path)) == 64
+
+    def test_explicit_request_always_wins(self, tmp_path, mocker):
+        handler = FileHandler()
+        probe = mocker.patch.object(FileHandler, "_probe_fs_latency")
+        assert handler._select_worker_count(12, str(tmp_path)) == 12
+        probe.assert_not_called()
+
+    def test_probe_failure_falls_back_to_default(self, tmp_path, mocker):
+        handler = FileHandler()
+        mocker.patch.object(FileHandler, "_probe_fs_latency", side_effect=OSError("denied"))
+        mocker.patch("os.cpu_count", return_value=4)
+        assert handler._select_worker_count(None, str(tmp_path)) == 4
+
+    def test_probe_leaves_no_file_behind(self, tmp_path):
+        latency = FileHandler._probe_fs_latency(str(tmp_path))
+        assert latency > 0
+        assert os.listdir(tmp_path) == []
+
+
 class TestGenerationWorkers:
     """The generation pool size is overridable per machine."""
 

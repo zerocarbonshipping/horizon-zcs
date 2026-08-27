@@ -24,6 +24,11 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   `policy_POLICY_sample_1.inc` instead of `POLICY_sample_1.inc`), with a
   short hash suffix when two sources share a stem or the include path is
   tokenized.
+- The generation thread pool sizes itself to the output filesystem: a
+  startup latency probe detects network storage and raises the pool from
+  `min(8, CPU)` to `min(64, 4×CPU)` there, where generation is bound by
+  file-creation round trips and blocked threads are free. `--gen-workers`
+  still overrides.
 - File generation is substantially faster: `.unc` templates and `.inc`
   include files are tokenized once and rendered per realization instead of
   being regex-scanned line by line for every realization. Generated files
