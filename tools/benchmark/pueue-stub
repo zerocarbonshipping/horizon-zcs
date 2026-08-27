@@ -1,0 +1,13 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 Fonden Mærsk Mc-Kinney Møller Center for Zero Carbon Shipping
+# SPDX-License-Identifier: Apache-2.0
+#
+# Recording fake pueue for benchmarks and equivalence checks (POSIX only).
+# Put this file's directory first on PATH, renamed or symlinked as `pueue`
+# (see tools/benchmark/README.md).
+#
+#   PUEUE_STUB_LOG    append each invocation's arguments to this file
+#   PUEUE_STUB_DELAY  sleep this many seconds per call (emulates daemon RTT)
+if [ -n "$PUEUE_STUB_LOG" ]; then printf '%s\n' "$*" >> "$PUEUE_STUB_LOG"; fi
+if [ -n "$PUEUE_STUB_DELAY" ]; then sleep "$PUEUE_STUB_DELAY"; fi
+exit 0

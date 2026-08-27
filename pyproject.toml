@@ -26,7 +26,7 @@ dependencies = [
     "scipy>=1.7.3",
     "openpyxl>=3.0.9",
     "python-calamine>=0.2.0",
-    "pyDOE3",
+    "pyDOE3>=1.5",  # lhs(seed=...) needed for reproducible LHS sampling
     "seaborn>=0.13.2",
     "psutil",
     "plotly>=5.0.0"

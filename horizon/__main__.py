@@ -36,6 +36,21 @@ def main():
                                  "'highs' skips Gurobi and uses HiGHS directly. Default: auto.")
     cli_parser.add_argument("--navigate-flags", type=str, default=None,
                             help='Extra flags to pass to each navigate command (e.g. "-d ./assumptions -s")')
+    cli_parser.add_argument("--full-task-env", action="store_true",
+                            help="Forward the entire environment to each queued task instead of the "
+                                 "curated whitelist. By default only the variables a Navigate run needs "
+                                 "are forwarded (plus any named in HORIZON_TASK_ENV, comma-separated), "
+                                 "which keeps pueue's state small and submission fast.")
+    cli_parser.add_argument("--pueue-cli", action="store_true",
+                            help="Submit tasks through the pueue CLI instead of the direct daemon "
+                                 "connection. The direct connection (used automatically when a "
+                                 "pueue >= 4 daemon socket is found) submits large studies much "
+                                 "faster; this flag restores the one-pueue-process-per-task path.")
+    cli_parser.add_argument("--gen-workers", type=int, default=None, metavar="N",
+                            help="Thread-pool size for .nav file generation. Default: min(8, CPU "
+                                 "count), measured optimal at core count on laptop-class machines. "
+                                 "Worth benchmarking on many-core hosts or network filesystems "
+                                 "(see tools/benchmark).")
     cli_parser.add_argument("--output-dir", type=str, default=None,
                             help="Directory for generated scenario folders (default: next to .unc file)")
     cli_parser.add_argument("--report-name", type=str, default=None,
@@ -163,7 +178,8 @@ def main():
         file_name = args.arguments[0]
         create_files(file_name, priority=args.priority, solver=args.solver,
                      navigate_flags=args.navigate_flags, output_dir=args.output_dir,
-                     dry_run=args.dry_run)
+                     dry_run=args.dry_run, full_task_env=args.full_task_env,
+                     pueue_cli=args.pueue_cli, gen_workers=args.gen_workers)
 
 
 def _replot_batch(args):
@@ -193,7 +209,8 @@ def _replot_batch(args):
 
     from horizon.run.run_commands import run_commands
     logger.info("Queuing %d replot command(s).", len(commands))
-    run_commands(commands, priority=args.priority)
+    run_commands(commands, priority=args.priority, full_task_env=args.full_task_env,
+                 pueue_cli=args.pueue_cli)
 
 
 if __name__ == "__main__":
