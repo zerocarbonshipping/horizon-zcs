@@ -169,7 +169,7 @@ Include(BIO = "low", ELEC = "high", _name = "s2")
 A `.unc` file is an ordinary Navigate simulation file in which uncertain
 values are replaced with `%TOKEN%` placeholders. Horizon writes one `.nav`
 file per sample/scenario combination, substituting each token with the
-sampled value. `INCLUDE` directives referencing `.inc` files are processed
+sampled value. `Include` directives referencing `.inc` files are processed
 the same way, so tokens work across included files too. Refer to the
 [Navigate documentation](https://zerocarbonshipping.github.io/navigate-zcs/)
 for the simulation file format itself.
