@@ -141,6 +141,11 @@ class FileHandler:
         self.commands = []
         self.skipped_count = 0
         self._include_cache = {}
+        # Rendered include lines for includes used unmodified, keyed by
+        # (include path, indent). Valid because every realization folder of a
+        # run sits directly under the same output folder, so the relative
+        # path is the same for all of them.
+        self._include_line_cache = {}
         self._include_lock = threading.Lock()
 
     # -------------------------
@@ -154,10 +159,10 @@ class FileHandler:
     @staticmethod
     def _write_to_file(filepath, content):
         """
-        Write content (a string or a list of lines) to filepath, creating
-        directories as needed.
+        Write content (a string or a list of lines) to filepath. The parent
+        directory must already exist - callers create it once per realization
+        instead of paying a makedirs round trip on every write.
         """
-        os.makedirs(os.path.dirname(filepath), exist_ok=True)
         with open(filepath, 'w') as fh:
             if isinstance(content, str):
                 fh.write(content)
@@ -219,6 +224,13 @@ class FileHandler:
         inclusion_rules : list[dict] or None
             Inclusion rules from Include() directives. Each dict maps token names to values.
         """
+        # Realization folders are created under output_folder; absolutize once
+        # so every derived path (and the navigate commands) is absolute.
+        output_folder = os.path.abspath(output_folder)
+        # The rendered include lines depend on the output folder, which can
+        # differ between calls on a reused handler.
+        self._include_line_cache = {}
+
         # Read the UNC template once and compile it into a render program:
         # runs of plain lines become compiled literal/token segments, include
         # lines keep their raw text plus a compiled path for interpolation.
@@ -409,7 +421,10 @@ class FileHandler:
         - Copies & replaces tokens in included .inc files when needed into simulation_includes/
         - Returns the nav filepath on success, or None on failure.
         """
-        simulation_includes_folder = self._prepare_simulation_directories(realization_folder)
+        os.makedirs(realization_folder, exist_ok=True)
+        # simulation_includes/ is created lazily, only when an include is
+        # actually rewritten for this realization.
+        simulation_includes_folder = os.path.join(realization_folder, "simulation_includes")
 
         # Build unified replacements map: scenario params (strings) first, then sampled params
         replacements = {}
@@ -472,12 +487,17 @@ class FileHandler:
             return None
 
     def generate_commands_list(self, solver=None, navigate_flags=None):
-        """Generate list of commands to run NavigaTE on all generated .nav files."""
+        """Generate list of commands to run NavigaTE on all generated .nav files.
+
+        nav_filepaths from generation are already absolute (the output folder
+        is absolutized at generation entry); isabs is a pure string check, so
+        the common case pays no per-path abspath round trip.
+        """
         solver_flag = f' --solver {solver}' if solver else ''
         extra_flags = f' {navigate_flags}' if navigate_flags else ''
         self.commands = [
             'navigate "{}"{}{}'.format(
-                os.path.abspath(path).replace(os.sep, '/'),
+                (path if os.path.isabs(path) else os.path.abspath(path)).replace(os.sep, '/'),
                 solver_flag,
                 extra_flags
             )
@@ -514,25 +534,25 @@ class FileHandler:
             new_file_name = f"{combined_tokens}_sample_{sample_number}.inc"
             new_file_path = os.path.join(simulation_includes_folder, new_file_name)
             try:
+                os.makedirs(simulation_includes_folder, exist_ok=True)
                 self._write_to_file(new_file_path, _render_parts(parts, replacements))
             except Exception:
                 logger.exception("Failed writing modified include file %s", new_file_path)
                 return None
             new_include_path_relative = os.path.join("simulation_includes", new_file_name).replace(os.sep, '/')
             return _format_include_line(new_include_path_relative, indent)
-        else:
-            # No tokens changed: include original file with a relative path from the .nav file's directory
+
+        # No tokens changed: include the original file with a relative path
+        # from the .nav file's directory. The relative path is identical for
+        # every realization of a run (all realization folders share one
+        # parent), so the rendered line is computed once and cached.
+        cache_key = (include_file_path, indent)
+        line = self._include_line_cache.get(cache_key)
+        if line is None:
             original_rel = os.path.relpath(
                 include_file_path,
                 realization_folder
             ).replace(os.sep, '/')
-            return _format_include_line(original_rel, indent)
-
-    @staticmethod
-    def _prepare_simulation_directories(output_folder):
-        """
-        Ensure the simulation folder and subfolders exist and return paths.
-        """
-        simulation_includes_folder = os.path.join(output_folder, "simulation_includes")
-        os.makedirs(simulation_includes_folder, exist_ok=True)
-        return simulation_includes_folder
+            line = _format_include_line(original_rel, indent)
+            self._include_line_cache[cache_key] = line
+        return line

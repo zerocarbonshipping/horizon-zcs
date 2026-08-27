@@ -16,6 +16,10 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   include files are tokenized once and rendered per realization instead of
   being regex-scanned line by line for every realization. Generated files
   are byte-identical to before.
+- Realization folders are created with one directory round trip each, and
+  `simulation_includes/` is only created when an include is actually
+  rewritten for that realization — realizations without tokenized includes
+  no longer contain an empty `simulation_includes/` folder.
 
 ### Fixed
 - `RandomSeed` now actually reproduces LHS studies: the seed is passed to
