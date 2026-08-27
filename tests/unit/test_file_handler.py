@@ -273,6 +273,33 @@ class TestCommandSink:
         assert len(handler.commands) == 1
 
 
+class TestGenerationWorkers:
+    """The generation pool size is overridable per machine."""
+
+    def test_single_worker_produces_all_files(self, template_project, tmp_path):
+        handler = FileHandler()
+        handler.generate_scenarios_and_nav_files(
+            unc_path=str(template_project),
+            sampled_parameters=[{"sample": i, "LEN": 100.0 + i} for i in range(1, 6)],
+            scenario_parameters=[],
+            output_folder=str(tmp_path / "out"),
+            max_workers=1,
+        )
+        assert len(handler.nav_filepaths) == 5
+        assert len(handler.commands) == 5
+
+    def test_zero_or_negative_workers_clamped(self, template_project, tmp_path):
+        handler = FileHandler()
+        handler.generate_scenarios_and_nav_files(
+            unc_path=str(template_project),
+            sampled_parameters=[{"sample": 1, "LEN": 250.0}],
+            scenario_parameters=[],
+            output_folder=str(tmp_path / "out"),
+            max_workers=0,
+        )
+        assert len(handler.nav_filepaths) == 1
+
+
 class TestLegacyTemplateNormalization:
     """Templates still using the old all-caps INCLUDE are normalized."""
 

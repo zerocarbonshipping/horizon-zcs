@@ -10,9 +10,15 @@ SPDX-License-Identifier: CC-BY-4.0
 > benchmark container (2 000 realizations): generation 5.3 s → 1.7 s,
 > queue submission via real pueue 4.0.4 129 s → 12.8 s (direct daemon
 > connection, minimal task env) and overlapped with generation;
-> `state.json` 17.2 MB → 2.0 MB. Still open: 1.5 (pool tuning — measure on
-> a Windows workstation), 2.3's TCP+TLS variant for Windows (Windows uses
-> the CLI fallback until then), 2.4 (docs/groups), and Phase 3.
+> `state.json` 17.2 MB → 2.0 MB. 1.5 is settled for laptop-class hardware
+> (default `min(8, cpu)` measured optimal at core count on 4 cores; the
+> full pipeline validated pinned to 2 cores; `--gen-workers` added for
+> many-core hosts to tune with the harness) and 2.4's guidance lives in the
+> README ("Performance and sizing", incl. measured submission decay to 10k
+> tasks and `pueue clean` hygiene). Still open: a `--gen-workers` sweep on
+> the production server and a Windows workstation, 2.3's TCP+TLS variant
+> for Windows (Windows uses the CLI fallback until then), optional pueue
+> groups, and Phase 3.
 
 Goal: make `horizon my_study.hor` — parse, sample, generate `.nav` files,
 queue via pueue — as fast as the machine allows, in steps that are each

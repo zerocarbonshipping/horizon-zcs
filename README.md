@@ -110,12 +110,51 @@ See `horizon --help` for the full list. The most used flags:
 | `--solver {auto,gurobi,highs}` | Solver backend passed through to Navigate. |
 | `--navigate-flags "..."` | Extra flags appended to each `navigate` command (e.g. `"-d ./assumptions -s"`). |
 | `--full-task-env` | Forward your entire environment to each queued task. By default only the variables a Navigate run needs are forwarded (plus any named in `HORIZON_TASK_ENV`, comma-separated), which keeps pueue's state small and submission fast. |
+| `--pueue-cli` | Submit through the pueue CLI instead of the direct daemon connection. |
+| `--gen-workers N` | Thread-pool size for `.nav` generation (default: `min(8, CPU count)`). |
 | `--output-dir DIR` | Directory for generated scenario folders (default: next to the `.unc` file). |
 | `--dry-run` | Validate the configuration and preview what would be generated. |
 | `--status DIR` | Check pueue task status and report failures for an output directory. |
 | `--replot DIR ...` | Queue Navigate replot jobs for directories containing `plot_data.pkl`. |
 | `--sensitivity-analysis [FILE]` | Run PRCC sensitivity analysis, optionally from a `.sen` config. |
 | `--calibration-plot` | Generate a calibration comparison dashboard from completed results. |
+
+## Performance and sizing
+
+Horizon runs the same on a many-core production server and on a laptop; the
+defaults adapt to the machine, and two knobs cover the extremes:
+
+- **File generation** uses a thread pool of `min(8, CPU count)` workers —
+  measured optimal at core count on a 4-core machine (serial is ~2.4x
+  slower, twice the cores ~1.75x slower). On many-core hosts or network
+  filesystems it is worth measuring your own optimum with
+  [`tools/benchmark/`](tools/benchmark/README.md) and setting
+  `--gen-workers N`. For scale: 10 000 realizations generate in ~15 s and
+  ~160 MB of RAM on a 4-core machine — memory is not the constraint, disk
+  is (that study writes ~0.7 GB of `.nav`/`.inc` files before Navigate
+  produces any results).
+
+- **Queue submission** uses a direct connection to the pueue daemon when a
+  pueue >= 4 unix socket is found, and the pueue CLI otherwise (or with
+  `--pueue-cli`). pueue rewrites its entire state file on every add, so
+  submission slows as the queue grows — measured with the direct
+  connection: the first 2 000 tasks submit at ~160/s, tasks 8 000–10 000
+  at ~17/s. Two habits keep it fast:
+  - run `pueue clean` between studies (finished tasks keep bloating the
+    state and slow every later submission and `pueue status`);
+  - for studies beyond ~10 000 runs, expect submission to take minutes and
+    consider splitting the study.
+
+- **Simulation parallelism** is pueue's job: set `pueue parallel N` to how
+  many Navigate runs the machine should execute at once (a handful on a
+  laptop, many on the production server). Horizon sizes each task's
+  thread-limit variables (`OMP_NUM_THREADS`, ...) from the study size
+  automatically.
+
+- **Task environment**: queued tasks get a minimal environment by default.
+  If your setup needs extra variables (license servers, module systems),
+  pass them with `HORIZON_TASK_ENV=VAR1,VAR2` or fall back to
+  `--full-task-env`.
 
 ## Editor support
 

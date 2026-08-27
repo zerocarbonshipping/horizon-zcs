@@ -205,7 +205,7 @@ class FileHandler:
     # -------------------------
     def generate_scenarios_and_nav_files(self, unc_path, sampled_parameters, scenario_parameters, output_folder,
                                          exclusion_rules=None, inclusion_rules=None, solver=None,
-                                         navigate_flags=None, command_sink=None):
+                                         navigate_flags=None, command_sink=None, max_workers=None):
         """
         Generate .nav files for all realizations.
 
@@ -229,6 +229,13 @@ class FileHandler:
             and ``submit(command)`` as each .nav completes, so queuing
             overlaps generation. ``self.commands`` is still populated either
             way; without a sink the caller queues it afterwards as before.
+        max_workers : int or None
+            Generation thread-pool size. Default: ``min(8, cpu_count)`` —
+            measured optimal at core count on a 4-core machine, where both
+            undersubscribing (serial ~2.4x slower) and oversubscribing
+            (2x cores ~1.75x slower) cost real time. Worth measuring per
+            machine on many-core hosts and network filesystems
+            (``horizon --gen-workers``, benchmark in tools/benchmark/).
         """
         # Realization folders are created under output_folder; absolutize once
         # so every derived path (and the navigate commands) is absolute.
@@ -371,7 +378,8 @@ class FileHandler:
         # Generate NAV files in parallel, consuming the generator on demand
         self._generate_nav_files_parallel(_generate_work_items(), template_program, unc_path,
                                           command_sink=command_sink,
-                                          solver_flag=solver_flag, extra_flags=extra_flags)
+                                          solver_flag=solver_flag, extra_flags=extra_flags,
+                                          max_workers=max_workers)
 
         # After nav files created, prepare command list
         self.generate_commands_list(solver=solver, navigate_flags=navigate_flags)
@@ -413,7 +421,8 @@ class FileHandler:
         return program
 
     def _generate_nav_files_parallel(self, work_items, template_program, unc_path,
-                                     command_sink=None, solver_flag='', extra_flags=''):
+                                     command_sink=None, solver_flag='', extra_flags='',
+                                     max_workers=None):
         """Generate NAV files using a thread pool for I/O-bound parallelism.
 
         Accepts any iterable of work items (including generators) to avoid
@@ -422,7 +431,9 @@ class FileHandler:
         completed .nav's navigate command is submitted immediately, so
         queuing (and the first simulations) overlap generation.
         """
-        max_workers = min(8, os.cpu_count() or 4)
+        if max_workers is None:
+            max_workers = min(8, os.cpu_count() or 4)
+        max_workers = max(1, max_workers)
         nav_filepaths = []
         future_to_name = {}
 

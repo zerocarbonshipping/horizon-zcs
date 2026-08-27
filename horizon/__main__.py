@@ -46,6 +46,11 @@ def main():
                                  "connection. The direct connection (used automatically when a "
                                  "pueue >= 4 daemon socket is found) submits large studies much "
                                  "faster; this flag restores the one-pueue-process-per-task path.")
+    cli_parser.add_argument("--gen-workers", type=int, default=None, metavar="N",
+                            help="Thread-pool size for .nav file generation. Default: min(8, CPU "
+                                 "count), measured optimal at core count on laptop-class machines. "
+                                 "Worth benchmarking on many-core hosts or network filesystems "
+                                 "(see tools/benchmark).")
     cli_parser.add_argument("--output-dir", type=str, default=None,
                             help="Directory for generated scenario folders (default: next to .unc file)")
     cli_parser.add_argument("--report-name", type=str, default=None,
@@ -174,7 +179,7 @@ def main():
         create_files(file_name, priority=args.priority, solver=args.solver,
                      navigate_flags=args.navigate_flags, output_dir=args.output_dir,
                      dry_run=args.dry_run, full_task_env=args.full_task_env,
-                     pueue_cli=args.pueue_cli)
+                     pueue_cli=args.pueue_cli, gen_workers=args.gen_workers)
 
 
 def _replot_batch(args):

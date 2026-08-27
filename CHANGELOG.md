@@ -40,6 +40,11 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   env, `ASSUMPTIONS_DATA_DIR`, Gurobi licensing, thread limits, ...);
   extend it with `HORIZON_TASK_ENV=VAR1,VAR2` or disable trimming with
   `horizon --full-task-env`.
+- New `--gen-workers N` flag to size the generation thread pool per machine
+  (default unchanged: `min(8, CPU count)`, measured optimal at core count),
+  and a "Performance and sizing" README section with measured guidance for
+  laptops and many-core production hosts, including pueue queue hygiene
+  (`pueue clean`) for large studies.
 - Tasks are submitted over a single direct connection to the pueue daemon
   when a pueue >= 4 unix socket is found (POSIX only), instead of spawning
   one `pueue add` client process per task — 2000 tasks queue in ~13 s where
