@@ -21,9 +21,11 @@ import pytest
 
 from horizon.file_handler.file_handler import (
     FileHandler,
+    _compile_parts,
     _format_include_line,
     _is_include_line,
     _normalize_include_keyword,
+    _render_parts,
     extract_template_tokens,
 )
 from horizon.parameters.parameter import ScenarioParameter
@@ -197,6 +199,37 @@ class TestGeneratedNavIncludeFormat:
         lines = _include_lines(handler.nav_filepaths[0])
         assert any(line.endswith('policy_strict.inc"') for line in lines)
         assert not any("%POLICY%" in line for line in lines)
+
+
+class TestCompiledRendering:
+    """The template/include text is compiled once and rendered per realization;
+    rendering must keep exactly the token-replacement semantics of the old
+    per-line regex path."""
+
+    def test_unknown_tokens_are_preserved(self):
+        parts = _compile_parts("a %X% b %Y% c\n")
+        assert _render_parts(parts, {"X": "1"}) == "a 1 b %Y% c\n"
+
+    def test_text_without_tokens_is_unchanged(self):
+        text = "no tokens here\nsecond line\n"
+        assert _render_parts(_compile_parts(text), {"X": "1"}) == text
+
+    def test_adjacent_tokens(self):
+        assert _render_parts(_compile_parts("%A%%B%"), {"A": "1", "B": "2"}) == "12"
+
+    def test_empty_replacement_value_is_used(self):
+        assert _render_parts(_compile_parts("v=%A%;"), {"A": ""}) == "v=;"
+
+    def test_rewritten_include_name_uses_first_appearance_order(self, tmp_path):
+        """The rewritten copy is named after the replaced tokens in the order
+        they first appear in the include file."""
+        _write(tmp_path / "inc" / "two.inc", "x = %B%\ny = %A%\nz = %B%\n")
+        unc = _write(tmp_path / "t.unc", 'DEFINE {\n\tInclude "inc/two.inc"\n}\n')
+
+        handler = _generate(unc, tmp_path / "out", [{"sample": 1, "A": 1.0, "B": 2.0}])
+
+        line = _include_lines(handler.nav_filepaths[0])[0]
+        assert line.split('"')[1] == "simulation_includes/B_A_sample_1.inc"
 
 
 class TestLegacyTemplateNormalization:

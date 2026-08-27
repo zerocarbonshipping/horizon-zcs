@@ -37,8 +37,14 @@ PRESETS = {
 
 def make_study(root, n_scen=3, scen_values=2, n_cont=12, n_disc=4, n_samples=250,
                template_lines=800, n_includes=12, tokenized_includes=4, include_lines=60,
-               seed=42, sample_only=False):
-    """Write the study files and return a dict describing the scale."""
+               seed=42, sample_only=False, overrides=True):
+    """Write the study files and return a dict describing the scale.
+
+    With ``overrides=True`` (default) the first continuous parameter carries a
+    scenario override, so Horizon takes the per-scenario sampling path. With
+    ``overrides=False`` it takes the legacy path: sample once, and let the
+    file handler expand the scenario combinations itself.
+    """
     random.seed(seed)
     os.makedirs(root, exist_ok=True)
     inc_dir = os.path.join(root, "includes")
@@ -66,7 +72,7 @@ def make_study(root, n_scen=3, scen_values=2, n_cont=12, n_disc=4, n_samples=250
         # per-scenario sampling (the production code path for real studies)
         # is exercised by the benchmark.
         override = ""
-        if i == 0:
+        if i == 0 and overrides:
             override = f'''
     if {scen_tokens[0]} = v1 {{
         low_val = 1.0
@@ -130,6 +136,12 @@ def make_study(root, n_scen=3, scen_values=2, n_cont=12, n_disc=4, n_samples=250
         with open(os.path.join(inc_dir, name), "w") as fh:
             fh.writelines(lines)
 
+    # One include whose *path* is scenario-dependent (exercises token
+    # interpolation in Include paths); one static file per scenario value.
+    for j in range(scen_values):
+        with open(os.path.join(inc_dir, f"branch_v{j}.inc"), "w") as fh:
+            fh.write(f"# scenario branch file v{j}\nDEFINE {{\n    set_branch({j})\n}}\n")
+
     # ---------------- template.unc ----------------
     lines = ["# synthetic benchmark deck\n", "DEFINE {\n"]
     # Guarantee every defined token appears at least once.
@@ -137,6 +149,7 @@ def make_study(root, n_scen=3, scen_values=2, n_cont=12, n_disc=4, n_samples=250
         lines.append(f"    # scenario branch marker: %{tok}%\n")
     for tok in all_sample_tokens:
         lines.append(f"    set_{tok.lower()}(%{tok}%)\n")
+    lines.append(f'    Include "includes/branch_%{scen_tokens[0]}%.inc"\n')
     body_lines = max(0, template_lines - len(lines) - len(include_names) - 4)
     token_cursor = 0
     for ln in range(body_lines):
@@ -173,13 +186,16 @@ def main():
     ap.add_argument("--tokenized-includes", type=int, default=4)
     ap.add_argument("--include-lines", type=int, default=60)
     ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--no-overrides", action="store_true",
+                    help="no scenario overrides: exercises the legacy sampling path")
     ap.add_argument("--fresh", action="store_true", help="delete the study directory first")
     args = ap.parse_args()
 
     kwargs = dict(n_scen=args.scen, scen_values=args.scen_values, n_cont=args.cont,
                   n_disc=args.disc, n_samples=args.samples, template_lines=args.template_lines,
                   n_includes=args.includes, tokenized_includes=args.tokenized_includes,
-                  include_lines=args.include_lines, seed=args.seed)
+                  include_lines=args.include_lines, seed=args.seed,
+                  overrides=not args.no_overrides)
     if args.preset:
         kwargs.update(PRESETS[args.preset])
 

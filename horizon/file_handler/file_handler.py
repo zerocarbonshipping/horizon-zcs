@@ -53,6 +53,34 @@ def _format_include_line(path, indent='\t'):
     return f'{indent}{_INCLUDE_KEYWORD} "{path}"\n'
 
 
+def _compile_parts(text):
+    """Compile text into alternating literal/token segments.
+
+    Returns ``[literal, token, literal, token, ..., literal]`` as produced by
+    splitting on the %TOKEN% pattern: odd indices hold bare token names, even
+    indices the literal text between them. Compiling once and rendering per
+    realization replaces a full regex scan of the text per realization with a
+    handful of dict lookups.
+    """
+    return _TOKEN_RE.split(text)
+
+
+def _render_parts(parts, replacements):
+    """Render compiled segments with a replacements mapping.
+
+    Tokens missing from ``replacements`` are kept as ``%token%`` (so
+    debugging / fallback is easier). Replacement values must be strings,
+    already formatted for textual placement.
+    """
+    if len(parts) == 1:
+        return parts[0]
+    out = list(parts)
+    for i in range(1, len(out), 2):
+        val = replacements.get(out[i])
+        out[i] = f"%{out[i]}%" if val is None else val
+    return "".join(out)
+
+
 def extract_template_tokens(unc_path):
     """Extract all %TOKEN% placeholders from a .unc template and its .inc includes.
 
@@ -126,11 +154,15 @@ class FileHandler:
     @staticmethod
     def _write_to_file(filepath, content):
         """
-        Write a list of lines to filepath (creates directories as needed).
+        Write content (a string or a list of lines) to filepath, creating
+        directories as needed.
         """
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
         with open(filepath, 'w') as fh:
-            fh.writelines(content)
+            if isinstance(content, str):
+                fh.write(content)
+            else:
+                fh.writelines(content)
 
     @staticmethod
     def _format_value_for_template(v):
@@ -146,30 +178,22 @@ class FileHandler:
             return f"{v:.6g}"
         return str(v)
 
-    @staticmethod
-    def _replace_tokens_in_text(text, replacements):
+    def _compiled_include(self, filepath):
+        """Read and compile an include file, using a thread-safe cache.
+
+        Returns the compiled literal/token segments (see _compile_parts).
         """
-        Replace %token% placeholders using replacements dict.
-
-        Unknown tokens are left as-is (so debugging / fallback is easier).
-        """
-        def _repl(m):
-            token = m.group(1)
-            if token in replacements:
-                return str(replacements[token])
-            return m.group(0)
-
-        return _TOKEN_RE.sub(_repl, text)
-
-    def _read_include_cached(self, filepath):
-        """Read an include file, using a thread-safe cache."""
         with self._include_lock:
-            if filepath not in self._include_cache:
+            parts = self._include_cache.get(filepath)
+            if parts is None:
                 try:
-                    self._include_cache[filepath] = self._read_file_lines(filepath)
+                    with open(filepath, 'r') as fh:
+                        text = fh.read()
                 except FileNotFoundError:
                     raise FileOperationError(f"Include file not found: {filepath}")
-            return self._include_cache[filepath]
+                parts = _compile_parts(text)
+                self._include_cache[filepath] = parts
+            return parts
 
     # -------------------------
     # Public API
@@ -195,13 +219,15 @@ class FileHandler:
         inclusion_rules : list[dict] or None
             Inclusion rules from Include() directives. Each dict maps token names to values.
         """
-        # Read UNC template once and pre-classify lines
+        # Read the UNC template once and compile it into a render program:
+        # runs of plain lines become compiled literal/token segments, include
+        # lines keep their raw text plus a compiled path for interpolation.
         try:
             unc_content = self._read_file_lines(unc_path)
         except FileNotFoundError:
             raise FileOperationError(f"UNC template file not found: {unc_path}")
 
-        is_include_line = [_is_include_line(line) for line in unc_content]
+        template_program = self._compile_template(unc_content)
 
         # Build adjusted lists of scenario tokens and values:
         adjusted_scenario_values = []
@@ -298,12 +324,48 @@ class FileHandler:
                         }
 
         # Generate NAV files in parallel, consuming the generator on demand
-        self._generate_nav_files_parallel(_generate_work_items(), unc_content, is_include_line, unc_path)
+        self._generate_nav_files_parallel(_generate_work_items(), template_program, unc_path)
 
         # After nav files created, prepare command list
         self.generate_commands_list(solver=solver, navigate_flags=navigate_flags)
 
-    def _generate_nav_files_parallel(self, work_items, unc_content, is_include_line, unc_path):
+    @staticmethod
+    def _compile_template(unc_content):
+        """Compile template lines into a render program.
+
+        Returns a list of ('text', parts) and ('include', info) items. Runs
+        of consecutive non-include lines are merged and compiled once, so
+        per-realization rendering touches each token slot instead of
+        re-scanning every line. Include items carry the original line, its
+        indentation, and the quoted path (compiled for token interpolation);
+        a malformed include line (no quoted path) keeps ``raw_path=None`` and
+        is handled per realization exactly like before.
+        """
+        program = []
+        text_run = []
+        for line in unc_content:
+            if not _is_include_line(line):
+                text_run.append(line)
+                continue
+            if text_run:
+                program.append(('text', _compile_parts(''.join(text_run))))
+                text_run = []
+            indent = line[:len(line) - len(line.lstrip())]
+            try:
+                raw_path = line.split('"')[1]
+            except IndexError:
+                raw_path = None
+            program.append(('include', {
+                'line': line,
+                'indent': indent,
+                'raw_path': raw_path,
+                'path_parts': _compile_parts(raw_path) if raw_path is not None else None,
+            }))
+        if text_run:
+            program.append(('text', _compile_parts(''.join(text_run))))
+        return program
+
+    def _generate_nav_files_parallel(self, work_items, template_program, unc_path):
         """Generate NAV files using a thread pool for I/O-bound parallelism.
 
         Accepts any iterable of work items (including generators) to avoid
@@ -318,7 +380,7 @@ class FileHandler:
             for item in work_items:
                 future = executor.submit(
                     self._generate_nav_file_for_sample,
-                    unc_path, unc_content, is_include_line,
+                    unc_path, template_program,
                     item['sample'], item['simulation_name'],
                     item['scenario_dict'], item['realization_folder'],
                     item['sample_number']
@@ -340,7 +402,7 @@ class FileHandler:
 
         self.nav_filepaths = nav_filepaths
 
-    def _generate_nav_file_for_sample(self, unc_path, unc_content, is_include_line, sample, simulation_name,
+    def _generate_nav_file_for_sample(self, unc_path, template_program, sample, simulation_name,
                                       scenario_parameters, realization_folder, sample_number):
         """
         Create one .nav file for a given sample + scenario.
@@ -348,8 +410,6 @@ class FileHandler:
         - Returns the nav filepath on success, or None on failure.
         """
         simulation_includes_folder = self._prepare_simulation_directories(realization_folder)
-
-        nav_content = []
 
         # Build unified replacements map: scenario params (strings) first, then sampled params
         replacements = {}
@@ -363,48 +423,49 @@ class FileHandler:
                 continue
             replacements[token] = self._format_value_for_template(value)
 
-        for i, line in enumerate(unc_content):
-            if is_include_line[i]:
-                # Update include path with token replacements
-                line, include_path_relative = self._update_include_path(line, replacements)
-
-                # Carry the template's indentation over to the generated line
-                indent = line[:len(line) - len(line.lstrip())]
-
-                # Resolve full include path relative to unc_path
-                full_include_path = os.path.normpath(os.path.join(os.path.dirname(unc_path), include_path_relative))
-
-                # Process include file: replace tokens and potentially write a modified .inc file
-                try:
-                    updated_line = self._process_and_update_include_file(
-                        full_include_path,
-                        sample,
-                        sample_number,
-                        simulation_includes_folder,
-                        scenario_parameters,
-                        realization_folder,
-                        indent
-                    )
-                except Exception:
-                    logger.exception("Failed to process include file: %s", full_include_path)
-                    updated_line = None
-
-                # Fall back to the template line if the include could not be handled, but still
-                # normalize the keyword so the .nav never carries a legacy spelling Navigate rejects.
-                line = updated_line if updated_line else _normalize_include_keyword(line)
-
-                nav_content.append(line)
+        unc_dir = os.path.dirname(unc_path)
+        nav_content = []
+        for kind, payload in template_program:
+            if kind == 'text':
+                nav_content.append(_render_parts(payload, replacements))
                 continue
 
-            # Normal line: perform token replacement directly
-            replaced = self._replace_tokens_in_text(line, replacements)
-            nav_content.append(replaced)
+            # Include line: interpolate tokens in the path, then process the file
+            line = payload['line']
+            include_path_relative = payload['raw_path']
+            if include_path_relative is not None:
+                interpolated = _render_parts(payload['path_parts'], replacements)
+                if interpolated != include_path_relative:
+                    line = line.replace(include_path_relative, interpolated)
+                    include_path_relative = interpolated
+            else:
+                # malformed Include line (no quoted path); handled below via fallback
+                include_path_relative = ""
+
+            full_include_path = os.path.normpath(os.path.join(unc_dir, include_path_relative))
+
+            try:
+                updated_line = self._process_and_update_include_file(
+                    full_include_path,
+                    replacements,
+                    sample_number,
+                    simulation_includes_folder,
+                    realization_folder,
+                    payload['indent']
+                )
+            except Exception:
+                logger.exception("Failed to process include file: %s", full_include_path)
+                updated_line = None
+
+            # Fall back to the template line if the include could not be handled, but still
+            # normalize the keyword so the .nav never carries a legacy spelling Navigate rejects.
+            nav_content.append(updated_line if updated_line else _normalize_include_keyword(line))
 
         # Write nav file
         nav_filename = f"{simulation_name}.nav"
         nav_filepath = os.path.join(realization_folder, nav_filename)
         try:
-            self._write_to_file(nav_filepath, nav_content)
+            self._write_to_file(nav_filepath, ''.join(nav_content))
             return nav_filepath
         except Exception:
             logger.exception("Failed writing NAV file %s", nav_filepath)
@@ -423,65 +484,37 @@ class FileHandler:
             for path in self.nav_filepaths
         ]
 
-    def _process_and_update_include_file(self, include_file_path, sample, sample_number,
-                                         simulation_includes_folder, scenario_parameters, realization_folder,
+    def _process_and_update_include_file(self, include_file_path, replacements, sample_number,
+                                         simulation_includes_folder, realization_folder,
                                          indent='\t'):
         """
         Process an include (.inc) file: replace tokens and optionally save to simulation_includes.
 
-        Returns a new `Include` line to be placed in the .nav file, or None if the include could not
-        be handled. `indent` is the leading whitespace of the template line, carried over so the
-        generated .nav keeps the template's indentation.
+        `replacements` is the realization's unified token->string mapping (scenario
+        and sampled values, pre-formatted). Returns a new `Include` line to be
+        placed in the .nav file, or None if the include could not be handled.
+        `indent` is the leading whitespace of the template line, carried over so
+        the generated .nav keeps the template's indentation.
         """
-        inc_content = self._read_include_cached(include_file_path)
+        parts = self._compiled_include(include_file_path)
 
-        modified_inc_content = []
+        # Tokens that will actually be replaced, unique, in first-appearance order
+        # (the rewritten file is named after them).
         tokens_replaced = []
-
-        # Build unified replacements mapping for the include file:
-        replacements = {}
-        for token, value in (scenario_parameters or {}).items():
-            if value is None:
-                continue
-            replacements[token] = str(value)
-        for token, value in (sample or {}).items():
-            if token == "sample":
-                continue
-            replacements[token] = self._format_value_for_template(value)
-
-        # Replace line-by-line, collecting tokens that were actually replaced
-        for inc_line in inc_content:
-            present_tokens = [m.group(1) for m in _TOKEN_RE.finditer(inc_line)]
-            if not present_tokens:
-                modified_inc_content.append(inc_line)
-                continue
-
-            # Build line-specific replacement map (only tokens that both exist in line and in replacements)
-            formatted_replacements = {}
-            tokens_replaced_this_line = []
-            for t in present_tokens:
-                if t in replacements:
-                    formatted_replacements[t] = replacements[t]
-                    tokens_replaced_this_line.append(t)
-
-            if tokens_replaced_this_line:
-                # record unique tokens for naming
-                for t in tokens_replaced_this_line:
-                    if t not in tokens_replaced:
-                        tokens_replaced.append(t)
-                # perform replacements
-                inc_line = self._replace_tokens_in_text(inc_line, formatted_replacements)
-
-            modified_inc_content.append(inc_line)
+        seen = set()
+        for i in range(1, len(parts), 2):
+            token = parts[i]
+            if token in replacements and token not in seen:
+                seen.add(token)
+                tokens_replaced.append(token)
 
         if tokens_replaced:
             # Name the file based on tokens that were actually replaced
-            # sanitize token list -> join with underscore
             combined_tokens = '_'.join(tokens_replaced)
             new_file_name = f"{combined_tokens}_sample_{sample_number}.inc"
             new_file_path = os.path.join(simulation_includes_folder, new_file_name)
             try:
-                self._write_to_file(new_file_path, modified_inc_content)
+                self._write_to_file(new_file_path, _render_parts(parts, replacements))
             except Exception:
                 logger.exception("Failed writing modified include file %s", new_file_path)
                 return None
@@ -503,31 +536,3 @@ class FileHandler:
         simulation_includes_folder = os.path.join(output_folder, "simulation_includes")
         os.makedirs(simulation_includes_folder, exist_ok=True)
         return simulation_includes_folder
-
-    def _update_include_path(self, line, replacements):
-        """
-        Replace tokens in an Include line path using replacements and return the updated line
-        and the interpolated relative include path.
-
-        Example:
-            line = '\tInclude "../inc/policy_%bio%_%el%.inc"\n'
-            replacements = {'bio': 'low_bio', 'el': 'low_el'}
-            -> returns ('\tInclude "../inc/policy_low_bio_low_el.inc"\n', '../inc/policy_low_bio_low_el.inc')
-        """
-        try:
-            include_path_relative = line.split('"')[1]
-        except IndexError:
-            # malformed Include line; return as-is
-            return line, ""
-
-        original_include_path = include_path_relative
-
-        def _repl(m):
-            token = m.group(1)
-            if token in replacements:
-                return self._format_value_for_template(replacements[token])
-            return m.group(0)
-
-        include_path_relative = _TOKEN_RE.sub(_repl, include_path_relative)
-        line = line.replace(original_include_path, include_path_relative)
-        return line, include_path_relative
