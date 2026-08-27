@@ -210,36 +210,63 @@ def _get_pueue_tasks():
         return None
 
 
+def _status_is(task, state):
+    """Check a pueue task's lifecycle state across pueue JSON dialects.
+
+    pueue 3.x reports plain strings (``"status": "Running"``); pueue 4.x
+    wraps every state in a dict carrying its metadata
+    (``"status": {"Running": {"enqueued_at": ...}}``).
+    """
+    status = task.get("status")
+    if status == state:
+        return True
+    return isinstance(status, dict) and state in status
+
+
 def _task_is_queued(task):
     """Check if a pueue task is in the Queued state."""
-    return task.get("status") == "Queued"
+    return _status_is(task, "Queued")
 
 
 def _task_is_running(task):
     """Check if a pueue task is in the Running state."""
-    return task.get("status") == "Running"
+    return _status_is(task, "Running")
+
+
+def _done_result(task):
+    """Return a finished pueue task's result payload, or None if not Done.
+
+    pueue 3.x: ``{"Done": "Success"}`` or ``{"Done": {"Failed": 1}}``.
+    pueue 4.x: ``{"Done": {..., "result": "Success"}}`` or
+    ``{"Done": {..., "result": {"Failed": 1}}}``.
+    """
+    status = task.get("status")
+    if not (isinstance(status, dict) and "Done" in status):
+        return None
+    done = status["Done"]
+    if isinstance(done, dict) and "result" in done:
+        return done["result"]
+    return done
 
 
 def _task_succeeded(task):
     """Check if a pueue task completed successfully."""
-    status = task.get("status")
-    if isinstance(status, dict) and "Done" in status:
-        result = status["Done"]
-        if isinstance(result, dict):
-            return "Success" in result
-        return result == "Success"
-    return False
+    result = _done_result(task)
+    if result is None:
+        return False
+    if isinstance(result, dict):
+        return "Success" in result
+    return result == "Success"
 
 
 def _task_failed(task):
     """Check if a pueue task failed."""
-    status = task.get("status")
-    if isinstance(status, dict) and "Done" in status:
-        result = status["Done"]
-        if isinstance(result, dict):
-            return "Success" not in result
-        return result != "Success"
-    return False
+    result = _done_result(task)
+    if result is None:
+        return False
+    if isinstance(result, dict):
+        return "Success" not in result
+    return result != "Success"
 
 
 def _report_failures(failed_tasks, output_folder):
