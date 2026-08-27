@@ -11,7 +11,22 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+### Changed
+- File generation is substantially faster: `.unc` templates and `.inc`
+  include files are tokenized once and rendered per realization instead of
+  being regex-scanned line by line for every realization. Generated files
+  are byte-identical to before.
+
 ### Fixed
+- `RandomSeed` now actually reproduces LHS studies: the seed is passed to
+  pyDOE3's `lhs()` directly (pyDOE3 >= 1.5 ignores the legacy global NumPy
+  seed, so sampled values differed between runs of the same study). This
+  also restores the documented guarantee that per-scenario sampling reuses
+  one draw matrix, so `sample_i` aligns across scenario combinations.
+  Requires `pyDOE3 >= 1.5` (now pinned).
+- `horizon --status` understands pueue 4.x task states. Under pueue 4,
+  successful runs were reported as failed (with their warning logs tailed as
+  "failure details") and queued/running counts were wrong.
 - Include directives written into generated `.nav` files now use Navigate's
   current `Include` spelling instead of the legacy all-caps `INCLUDE`, which
   Navigate's grammar rejects. Every include line in a generated `.nav` was
