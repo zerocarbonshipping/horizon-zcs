@@ -189,6 +189,30 @@ class TestDiscovery:
             holder.close()
         assert found_socket == socket_path
 
+    def test_yaml_null_values_treated_as_unset(self, tmp_path, clean_pueue_env):
+        """pueued writes unset options as YAML null; a config like
+        `unix_socket_path: null` must not resolve to a literal 'null' path
+        (regression: production fell back to the CLI with 'no pueue daemon
+        socket at null')."""
+        config = tmp_path / "pueue.yml"
+        config.write_text(
+            'shared:\n'
+            f'  pueue_directory: "{tmp_path}"\n'
+            '  runtime_directory: null\n'
+            '  unix_socket_path: null\n'
+            '  shared_secret_path: ~\n'
+            '  use_unix_socket: true\n')
+        clean_pueue_env.setenv("PUEUE_CONFIG_PATH", str(config))
+        socket_path = str(tmp_path / f"pueue_{getpass.getuser()}.socket")
+        holder = _bind_socket_node(socket_path)
+        (tmp_path / "shared_secret").write_bytes(SECRET)
+        try:
+            found_socket, found_secret = pueue_client.discover_socket_and_secret()
+        finally:
+            holder.close()
+        assert found_socket == socket_path
+        assert found_secret == str(tmp_path / "shared_secret")
+
     def test_pueue_config_path_is_authoritative(self, tmp_path, clean_pueue_env):
         """A set-but-unreadable PUEUE_CONFIG_PATH must fail discovery even
         when a daemon would be discoverable through the defaults - pueue

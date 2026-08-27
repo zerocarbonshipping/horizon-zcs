@@ -221,15 +221,55 @@ class TestCompiledRendering:
         assert _render_parts(_compile_parts("v=%A%;"), {"A": ""}) == "v=;"
 
     def test_rewritten_include_name_uses_first_appearance_order(self, tmp_path):
-        """The rewritten copy is named after the replaced tokens in the order
-        they first appear in the include file."""
+        """The rewritten copy is named after its source stem plus the replaced
+        tokens in the order they first appear in the include file."""
         _write(tmp_path / "inc" / "two.inc", "x = %B%\ny = %A%\nz = %B%\n")
         unc = _write(tmp_path / "t.unc", 'DEFINE {\n\tInclude "inc/two.inc"\n}\n')
 
         handler = _generate(unc, tmp_path / "out", [{"sample": 1, "A": 1.0, "B": 2.0}])
 
         line = _include_lines(handler.nav_filepaths[0])[0]
-        assert line.split('"')[1] == "simulation_includes/B_A_sample_1.inc"
+        assert line.split('"')[1] == "simulation_includes/two_B_A_sample_1.inc"
+
+
+class TestIncludeNameCollisions:
+    """Two different .inc files replacing the same token set used to be
+    rewritten to the same filename, silently overwriting each other inside a
+    realization (both nav lines then pointed at whichever was written last,
+    so the simulation ran with one include's content missing and the other's
+    duplicated)."""
+
+    def test_same_tokens_different_files_stay_distinct(self, tmp_path):
+        _write(tmp_path / "inc" / "fuel.inc", "fuel_price = %FOO%\n")
+        _write(tmp_path / "inc" / "demand.inc", "demand_level = %FOO%\n")
+        unc = _write(tmp_path / "t.unc",
+                     'DEFINE {\n\tInclude "inc/fuel.inc"\n\tInclude "inc/demand.inc"\n}\n')
+
+        handler = _generate(unc, tmp_path / "out", [{"sample": 1, "FOO": 42.0}])
+
+        nav = handler.nav_filepaths[0]
+        paths = [line.split('"')[1] for line in _include_lines(nav)]
+        assert len(set(paths)) == 2, f"include lines collide: {paths}"
+        contents = {}
+        for rel in paths:
+            full = os.path.join(os.path.dirname(nav), rel)
+            contents[rel] = open(full).read()
+        assert any("fuel_price = 42" in c for c in contents.values())
+        assert any("demand_level = 42" in c for c in contents.values())
+
+    def test_same_stem_in_different_dirs_stays_distinct(self, tmp_path):
+        _write(tmp_path / "a" / "policy.inc", "alpha = %FOO%\n")
+        _write(tmp_path / "b" / "policy.inc", "beta = %FOO%\n")
+        unc = _write(tmp_path / "t.unc",
+                     'DEFINE {\n\tInclude "a/policy.inc"\n\tInclude "b/policy.inc"\n}\n')
+
+        handler = _generate(unc, tmp_path / "out", [{"sample": 1, "FOO": 7.0}])
+
+        nav = handler.nav_filepaths[0]
+        paths = [line.split('"')[1] for line in _include_lines(nav)]
+        assert len(set(paths)) == 2, f"include lines collide: {paths}"
+        rendered = "".join(open(os.path.join(os.path.dirname(nav), rel)).read() for rel in paths)
+        assert "alpha = 7" in rendered and "beta = 7" in rendered
 
 
 class _RecordingSink:
@@ -273,6 +313,47 @@ class TestCommandSink:
         assert len(handler.commands) == 1
 
 
+class TestAdaptiveWorkerCount:
+    """The pool sizes itself to the output filesystem: local disks get
+    min(8, cpu); filesystems whose probed per-op latency looks
+    network-backed get min(64, 4x cpu). An explicit request always wins."""
+
+    def test_local_disk_keeps_core_count_default(self, tmp_path, mocker):
+        handler = FileHandler()
+        mocker.patch.object(FileHandler, "_probe_fs_latency", return_value=0.00005)
+        mocker.patch("os.cpu_count", return_value=16)
+        assert handler._select_worker_count(None, str(tmp_path)) == 8
+
+    def test_high_latency_fs_scales_up(self, tmp_path, mocker):
+        handler = FileHandler()
+        mocker.patch.object(FileHandler, "_probe_fs_latency", return_value=0.015)
+        mocker.patch("os.cpu_count", return_value=16)
+        assert handler._select_worker_count(None, str(tmp_path)) == 64
+
+    def test_high_latency_cap_at_64(self, tmp_path, mocker):
+        handler = FileHandler()
+        mocker.patch.object(FileHandler, "_probe_fs_latency", return_value=0.015)
+        mocker.patch("os.cpu_count", return_value=32)
+        assert handler._select_worker_count(None, str(tmp_path)) == 64
+
+    def test_explicit_request_always_wins(self, tmp_path, mocker):
+        handler = FileHandler()
+        probe = mocker.patch.object(FileHandler, "_probe_fs_latency")
+        assert handler._select_worker_count(12, str(tmp_path)) == 12
+        probe.assert_not_called()
+
+    def test_probe_failure_falls_back_to_default(self, tmp_path, mocker):
+        handler = FileHandler()
+        mocker.patch.object(FileHandler, "_probe_fs_latency", side_effect=OSError("denied"))
+        mocker.patch("os.cpu_count", return_value=4)
+        assert handler._select_worker_count(None, str(tmp_path)) == 4
+
+    def test_probe_leaves_no_file_behind(self, tmp_path):
+        latency = FileHandler._probe_fs_latency(str(tmp_path))
+        assert latency > 0
+        assert os.listdir(tmp_path) == []
+
+
 class TestGenerationWorkers:
     """The generation pool size is overridable per machine."""
 
@@ -298,6 +379,105 @@ class TestGenerationWorkers:
             max_workers=0,
         )
         assert len(handler.nav_filepaths) == 1
+
+
+class TestSharedIncludeStore:
+    """A rewritten include whose replaced tokens are all scenario tokens has
+    identical content for every sample of a combination: it is written once
+    per combination under shared_includes/<combination>/ and referenced
+    relatively, instead of copied into every realization folder."""
+
+    @staticmethod
+    def _scenario(values):
+        return ScenarioParameter(name="Policy", token="POLICY", active=True,
+                                 default=values[0], values=values)
+
+    def test_scenario_only_include_written_once_per_combo(self, tmp_path):
+        _write(tmp_path / "inc" / "policy.inc", "policy_mode = %POLICY%\n")
+        unc = _write(tmp_path / "t.unc", 'DEFINE {\n\tInclude "inc/policy.inc"\n}\n')
+
+        handler = _generate(unc, tmp_path / "out",
+                            [{"sample": i} for i in range(1, 4)],
+                            [self._scenario(["bau"])])
+
+        assert len(handler.nav_filepaths) == 3
+        shared = tmp_path / "out" / "shared_includes" / "bau"
+        files = sorted(os.listdir(shared))
+        assert files == ["policy_POLICY.inc"]
+        assert open(shared / files[0]).read() == "policy_mode = bau\n"
+        for nav in handler.nav_filepaths:
+            (line,) = _include_lines(nav)
+            rel = line.split('"')[1]
+            assert rel == "../shared_includes/bau/policy_POLICY.inc"
+            resolved = os.path.normpath(os.path.join(os.path.dirname(nav), rel))
+            assert os.path.isfile(resolved)
+        # no per-realization copies were written
+        for nav in handler.nav_filepaths:
+            assert not os.path.isdir(os.path.join(os.path.dirname(nav), "simulation_includes"))
+
+    def test_each_combo_gets_its_own_copy(self, tmp_path):
+        _write(tmp_path / "inc" / "policy.inc", "policy_mode = %POLICY%\n")
+        unc = _write(tmp_path / "t.unc", 'DEFINE {\n\tInclude "inc/policy.inc"\n}\n')
+
+        _generate(unc, tmp_path / "out", [{"sample": 1}, {"sample": 2}],
+                  [self._scenario(["bau", "levy"])])
+
+        assert open(tmp_path / "out" / "shared_includes" / "bau" / "policy_POLICY.inc").read() \
+            == "policy_mode = bau\n"
+        assert open(tmp_path / "out" / "shared_includes" / "levy" / "policy_POLICY.inc").read() \
+            == "policy_mode = levy\n"
+
+    def test_sample_dependent_include_stays_per_realization(self, tmp_path):
+        _write(tmp_path / "inc" / "mixed.inc", "mode = %POLICY%\nrate = %RATE%\n")
+        unc = _write(tmp_path / "t.unc", 'DEFINE {\n\tInclude "inc/mixed.inc"\n}\n')
+
+        handler = _generate(unc, tmp_path / "out",
+                            [{"sample": 1, "RATE": 0.5}, {"sample": 2, "RATE": 0.7}],
+                            [self._scenario(["bau"])])
+
+        assert not os.path.isdir(tmp_path / "out" / "shared_includes")
+        rendered = set()
+        for nav in handler.nav_filepaths:
+            (line,) = _include_lines(nav)
+            rel = line.split('"')[1]
+            assert rel.startswith("simulation_includes/")
+            rendered.add(open(os.path.join(os.path.dirname(nav), rel)).read())
+        assert rendered == {"mode = bau\nrate = 0.5\n", "mode = bau\nrate = 0.7\n"}
+
+    def test_opt_out_restores_per_realization_copies(self, tmp_path):
+        _write(tmp_path / "inc" / "policy.inc", "policy_mode = %POLICY%\n")
+        unc = _write(tmp_path / "t.unc", 'DEFINE {\n\tInclude "inc/policy.inc"\n}\n')
+
+        handler = FileHandler()
+        handler.generate_scenarios_and_nav_files(
+            unc_path=str(unc),
+            sampled_parameters=[{"sample": 1}, {"sample": 2}],
+            scenario_parameters=[self._scenario(["bau"])],
+            output_folder=str(tmp_path / "out"),
+            shared_includes=False,
+        )
+
+        assert not os.path.isdir(tmp_path / "out" / "shared_includes")
+        for nav in handler.nav_filepaths:
+            (line,) = _include_lines(nav)
+            assert line.split('"')[1].startswith("simulation_includes/")
+
+    def test_pre_resolved_samples_share_per_combo(self, tmp_path):
+        """Pre-resolved mode (samples already carry scenario tokens, as
+        per-scenario sampling produces) shares by combination too."""
+        _write(tmp_path / "inc" / "policy.inc", "policy_mode = %POLICY%\n")
+        unc = _write(tmp_path / "t.unc", 'DEFINE {\n\tInclude "inc/policy.inc"\n}\n')
+
+        samples = [
+            {"sample": "sample_1", "POLICY": "bau"},
+            {"sample": "sample_2", "POLICY": "bau"},
+            {"sample": "sample_1", "POLICY": "levy"},
+        ]
+        handler = _generate(unc, tmp_path / "out", samples,
+                            [self._scenario(["bau", "levy"])])
+
+        assert len(handler.nav_filepaths) == 3
+        assert sorted(os.listdir(tmp_path / "out" / "shared_includes")) == ["bau", "levy"]
 
 
 class TestLegacyTemplateNormalization:

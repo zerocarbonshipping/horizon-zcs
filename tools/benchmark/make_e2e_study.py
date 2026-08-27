@@ -5,14 +5,17 @@
 
 Copies Navigate's ``simulations/examples/example_2`` (a self-contained Pacific
 bulk scenario that solves in ~10 s with HiGHS), tokenizes two values in its
-include files, adds a scenario token and a per-realization Report, and writes
-a matching ``study.hor``. The result is a 2-scenario x 2-sample study — four
-real Navigate runs — that exercises every seam between Horizon and Navigate:
+include files plus one scenario-only marker, adds a scenario token and a
+per-realization Report, and writes a matching ``study.hor``. The result is a
+2-scenario x 2-sample study — four real Navigate runs — that exercises every
+seam between Horizon and Navigate:
 
-  deck-level token replacement, tokenized include rewriting into
-  simulation_includes/, relative include paths from the realization folder
-  back to the shared includes, pueue submission, real solves, per-realization
-  Excel reports, and `horizon -c` collection.
+  deck-level token replacement, sample-tokenized include rewriting into
+  simulation_includes/, scenario-only include rewriting into the shared
+  per-combination store (shared_includes/<combination>/), relative include
+  paths from the realization folder back to unmodified includes, pueue
+  submission, real solves, per-realization Excel reports, and `horizon -c`
+  collection.
 
 Usage:
     python tools/benchmark/make_e2e_study.py <navigate-zcs checkout> <study dir>
@@ -134,6 +137,16 @@ def main():
     _replace_once(os.path.join(args.study_dir, "includes", "bunker_logistics.inc"),
                   'set_transport_cost("*", 0.01)', 'set_transport_cost("*", %TRANSPORT_COST%)',
                   "the transport cost call")
+
+    # A scenario-only token in a third include: its rewrite has identical
+    # content for every sample of a scenario, so Horizon writes it once per
+    # combination into shared_includes/ - the smoke test proves Navigate
+    # resolves that shared relative path.
+    cii_path = os.path.join(args.study_dir, "includes", "cii.inc")
+    with open(cii_path) as fh:
+        cii_content = fh.read()
+    with open(cii_path, "w") as fh:
+        fh.write("# market scenario of this realization: %MARKET%\n" + cii_content)
 
     # Scenario token in the deck itself + a Report include so `horizon -c`
     # has something to collect. Navigate's deck grammar only allows Load and
