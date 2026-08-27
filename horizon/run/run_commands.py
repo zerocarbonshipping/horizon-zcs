@@ -58,6 +58,15 @@ _TASK_ENV_WHITELIST = (
 _TASK_ENV_EXTRA_VAR = "HORIZON_TASK_ENV"
 
 
+def _utf8_encodable(text):
+    """True when text encodes as UTF-8 (no surrogates from surrogateescape)."""
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
 def _build_task_env(full_task_env=False):
     """Build the environment for `pueue add` subprocesses.
 
@@ -136,9 +145,14 @@ class _DirectSubmitter:
     """Streams Add requests over one direct daemon connection.
 
     A single background thread owns the connection (the protocol is strict
-    request/response). Any protocol failure marks the submitter broken; the
-    commands not yet sent are handed back so the caller can resubmit them
-    via the pueue CLI - the fast path never loses a task.
+    request/response). Any failure marks the submitter broken and the
+    commands not yet sent are handed back for CLI resubmission — the fast
+    path never loses a task. The one command *in flight* when the
+    connection breaks is special: the daemon persists a task before
+    acknowledging it (pueue's add handler saves state, then responds), so
+    that command may or may not already be queued and is returned
+    separately for the caller to disambiguate rather than blindly
+    resubmit — a duplicate would run the same realization twice.
     """
 
     _SENTINEL = object()
@@ -154,6 +168,7 @@ class _DirectSubmitter:
         self._ok = 0
         self._failures = []
         self._leftover = []
+        self._unknown = None
         self._error = None
         self._thread = threading.Thread(target=self._run, name="pueue-direct-submit", daemon=True)
         self._thread.start()
@@ -162,11 +177,17 @@ class _DirectSubmitter:
         self._queue.put(command)
 
     def finish(self):
-        """Wait for the worker; returns (ok_count, failures, leftover, error)."""
+        """Wait for the worker.
+
+        Returns (ok_count, failures, leftover, unknown, error): ``leftover``
+        was never sent and is safe to resubmit; ``unknown`` (a single
+        command or None) was in flight when the connection broke and may
+        already be queued.
+        """
         self._queue.put(self._SENTINEL)
         self._thread.join()
         self._conn.close()
-        return self._ok, self._failures, self._leftover, self._error
+        return self._ok, self._failures, self._leftover, self._unknown, self._error
 
     def _run(self):
         while True:
@@ -180,7 +201,18 @@ class _DirectSubmitter:
                 success, error_msg = self._conn.add_task(
                     item, self._cwd, self._envs, self._pueue_priority, _extract_label(item))
             except PueueDirectError as exc:
+                # Connection-level failure mid-request: the daemon may have
+                # committed this task before the acknowledgement was lost.
                 self._error = exc
+                self._unknown = item
+                continue
+            except Exception as exc:
+                # Anything unexpected (e.g. a command or environment value
+                # that is not valid UTF-8 failing CBOR encoding, before any
+                # bytes reach the daemon). The worker must never die
+                # silently: mark the path broken and hand this and all
+                # remaining commands back for CLI resubmission.
+                self._error = PueueDirectError(f"unexpected error in direct submission: {exc!r}")
                 self._leftover.append(item)
                 continue
             if success:
@@ -257,6 +289,12 @@ class StreamingQueuer:
                 MKL_NUM_THREADS=str(threads_per_task),
                 NUMEXPR_NUM_THREADS=str(threads_per_task),
             )
+            # The protocol is CBOR, which requires valid UTF-8. Environment
+            # values read through surrogateescape (invalid bytes in the
+            # shell env) cannot be encoded - drop those entries instead of
+            # letting the first Add break the whole direct path.
+            direct_envs = {key: value for key, value in direct_envs.items()
+                           if _utf8_encodable(key) and _utf8_encodable(value)}
             try:
                 self._direct = _DirectSubmitter(
                     self._pueue_priority, direct_envs, os.getcwd(), expected_total)
@@ -294,7 +332,7 @@ class StreamingQueuer:
         queued_fail = 0
 
         if self._direct is not None:
-            direct_ok, failures, leftover, error = self._direct.finish()
+            direct_ok, failures, leftover, unknown, error = self._direct.finish()
             self._direct = None
             queued_ok += direct_ok
             for command, error_msg in failures:
@@ -303,12 +341,38 @@ class StreamingQueuer:
                     logger.error("Pueue error: %s", error_msg)
                 queued_fail += 1
             if error is not None:
-                if leftover:
+                if leftover or unknown:
                     logger.warning(
                         "Direct pueue submission failed mid-stream (%s); "
-                        "resubmitting %d task(s) via the pueue CLI.", error, len(leftover))
+                        "resubmitting %d undelivered task(s) via the pueue CLI.",
+                        error, len(leftover))
                 else:
                     logger.warning("Direct pueue submission failed (%s).", error)
+            if unknown is not None:
+                # The daemon persists a task before acknowledging it, so a
+                # command whose acknowledgement was lost may already be
+                # queued: resubmitting it blindly could run the same
+                # realization twice. Ask the daemon whether the label exists
+                # and only resubmit when it provably is not queued.
+                label = _extract_label(unknown)
+                verdict = _task_with_label_exists(label)
+                if verdict is True:
+                    logger.warning(
+                        "Task %r was in flight when the daemon connection broke; pueue "
+                        "reports it queued, so it is not resubmitted.", label)
+                    queued_ok += 1
+                elif verdict is False:
+                    logger.warning(
+                        "Task %r was in flight when the daemon connection broke and pueue "
+                        "does not report it; resubmitting it via the CLI.", label)
+                    leftover = [unknown] + leftover
+                else:
+                    logger.error(
+                        "Task %r was in flight when the daemon connection broke and its "
+                        "state could not be determined. It is NOT resubmitted to avoid a "
+                        "duplicate run - check `pueue status` and requeue it manually if "
+                        "missing: %s", label, unknown)
+                    queued_fail += 1
             if leftover:
                 self._start_cli_executor()
                 for command in leftover:
@@ -434,6 +498,20 @@ def check_status(output_folder):
         logger.info("All tasks completed successfully.")
     else:
         logger.info("Tasks still in progress.")
+
+
+def _task_with_label_exists(label):
+    """Ask the daemon (via the pueue CLI) whether a task with this label exists.
+
+    Returns True/False, or None when the answer cannot be determined (no
+    label to match, or the daemon state could not be read).
+    """
+    if not label:
+        return None
+    tasks = _get_pueue_tasks()
+    if tasks is None:
+        return None
+    return any(task.get("label") == label for task in tasks)
 
 
 def _get_pueue_tasks():

@@ -7,10 +7,13 @@ Runs ``create_files()`` in-process against a study (typically produced by
 ``make_study.py``) and reports wall time per phase: parse, sampling, CSV
 export, NAV generation, and queuing. Optionally wraps the run in cProfile.
 
-The queue phase talks to whatever ``pueue`` binary is first on PATH — put
-``tools/benchmark/pueue-stub`` on PATH to measure Horizon's own submission
-overhead without a daemon, or use a real (paused) pueue daemon to measure true
-submission throughput.
+The queue phase defaults to ``--via cli``: it talks to whatever ``pueue``
+binary is first on PATH — put ``tools/benchmark/pueue-stub`` there (and name
+its variables in ``HORIZON_TASK_ENV=PUEUE_STUB_LOG,PUEUE_STUB_DELAY``, since
+the minimal task environment would otherwise strip them) to measure Horizon's
+own submission overhead without a daemon. ``--via auto`` allows the direct
+daemon connection instead; use it only when you intend to submit the
+synthetic tasks to a real (paused) daemon.
 
 Relative paths inside the .hor are resolved from the current working
 directory, so run this from the study directory:
@@ -50,6 +53,11 @@ def main():
     ap.add_argument("--output-dir", required=True,
                     help="directory for generated realization folders")
     ap.add_argument("--no-queue", action="store_true", help="skip queuing entirely")
+    ap.add_argument("--via", choices=["cli", "auto"], default="cli",
+                    help="submission path. Default 'cli' keeps the benchmark on the pueue "
+                         "executable found on PATH (so the recording stub actually intercepts "
+                         "it); 'auto' allows the direct daemon connection - only use it when "
+                         "you intend to submit to a real daemon.")
     ap.add_argument("--profile", action="store_true", help="wrap the run in cProfile")
     ap.add_argument("--profile-out", default=None, help="also dump pstats data to this file")
     ap.add_argument("--top", type=int, default=30, help="profile rows to print")
@@ -87,7 +95,14 @@ def main():
 
         cf.StreamingQueuer = _NullQueuer
     else:
+        force_cli = args.via == "cli"
+
         class _TimedQueuer(rc.StreamingQueuer):
+            def __init__(self, **kwargs):
+                if force_cli:
+                    kwargs["pueue_cli"] = True
+                super().__init__(**kwargs)
+
             def finish(self):
                 t0 = time.perf_counter()
                 try:

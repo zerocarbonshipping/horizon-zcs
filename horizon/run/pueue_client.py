@@ -24,6 +24,7 @@ import logging
 import os
 import socket
 import struct
+import sys
 
 from horizon.run import _cbor
 
@@ -69,76 +70,110 @@ def _read_shared_settings(config_path):
     return settings
 
 
-def _candidate_data_dirs():
-    dirs = []
-    xdg_data = os.environ.get("XDG_DATA_HOME")
-    if xdg_data:
-        dirs.append(os.path.join(xdg_data, "pueue"))
-    home = os.path.expanduser("~")
-    dirs.append(os.path.join(home, ".local", "share", "pueue"))
-    dirs.append(os.path.join(home, "Library", "Application Support", "pueue"))
-    return dirs
+def _read_config_settings():
+    """Locate and read the pueue config, mirroring ``Settings::read``.
 
-
-def discover_socket_and_secret():
-    """Locate the daemon's unix socket and shared secret.
-
-    Honors PUEUE_CONFIG_PATH and the standard config locations, then falls
-    back to pueue's default data directories. Raises PueueDirectError when
-    nothing usable is found.
+    PUEUE_CONFIG_PATH is authoritative, exactly as in pueue: when it is set,
+    that specific file must be readable — a missing or unreadable file makes
+    the direct path unavailable rather than silently discovering (and
+    submitting to) a different daemon than the user selected. Without it,
+    the standard config locations are tried and an absent config just means
+    defaults.
     """
-    if os.name != "posix":
-        raise PueueDirectError("unix sockets are POSIX-only; Windows uses the CLI path")
+    explicit = os.environ.get("PUEUE_CONFIG_PATH")
+    if explicit:
+        if not os.path.isfile(explicit):
+            raise PueueDirectError(
+                f"PUEUE_CONFIG_PATH points at {explicit}, which does not exist")
+        return _read_shared_settings(explicit)
 
-    settings = {}
+    home = os.path.expanduser("~")
     config_candidates = []
-    if os.environ.get("PUEUE_CONFIG_PATH"):
-        config_candidates.append(os.environ["PUEUE_CONFIG_PATH"])
     xdg_config = os.environ.get("XDG_CONFIG_HOME")
     if xdg_config:
         config_candidates.append(os.path.join(xdg_config, "pueue", "pueue.yml"))
-    home = os.path.expanduser("~")
     config_candidates.append(os.path.join(home, ".config", "pueue", "pueue.yml"))
     config_candidates.append(os.path.join(home, "Library", "Application Support", "pueue", "pueue.yml"))
 
     for candidate in config_candidates:
         if os.path.isfile(candidate):
-            settings = _read_shared_settings(candidate)
-            break
+            return _read_shared_settings(candidate)
+    return {}
+
+
+def _pueue_directory(settings):
+    """Mirror ``Shared::pueue_directory``: config value, else the platform
+    data dir ($XDG_DATA_HOME/pueue, ~/Library/Application Support/pueue on
+    macOS, ~/.local/share/pueue elsewhere)."""
+    if settings.get("pueue_directory"):
+        return os.path.expanduser(settings["pueue_directory"])
+    xdg_data = os.environ.get("XDG_DATA_HOME")
+    if xdg_data:
+        return os.path.join(xdg_data, "pueue")
+    home = os.path.expanduser("~")
+    if sys.platform == "darwin":
+        return os.path.join(home, "Library", "Application Support", "pueue")
+    return os.path.join(home, ".local", "share", "pueue")
+
+
+def _runtime_directory(settings, pueue_dir):
+    """Mirror ``Shared::runtime_directory``: config value, else the platform
+    runtime dir ($XDG_RUNTIME_DIR — Linux/BSD only, like dirs::runtime_dir),
+    else the pueue directory."""
+    if settings.get("runtime_directory"):
+        return os.path.expanduser(settings["runtime_directory"])
+    if sys.platform != "darwin":
+        xdg_runtime = os.environ.get("XDG_RUNTIME_DIR")
+        if xdg_runtime:
+            return xdg_runtime
+    return pueue_dir
+
+
+def discover_socket_and_secret():
+    """Locate the daemon's unix socket and shared secret.
+
+    Mirrors pueue 4's own resolution (pueue_lib settings.rs) so Horizon
+    connects to exactly the daemon the pueue CLI would talk to:
+
+      socket  ``unix_socket_path`` from config, else
+              ``<runtime_directory>/pueue_<user>.socket`` where
+              runtime_directory = config value > $XDG_RUNTIME_DIR >
+              pueue_directory;
+      secret  ``shared_secret_path`` from config, else
+              ``<pueue_directory>/shared_secret``.
+
+    Raises PueueDirectError when the daemon is not reachable this way.
+    """
+    if os.name != "posix":
+        raise PueueDirectError("unix sockets are POSIX-only; Windows uses the CLI path")
+
+    settings = _read_config_settings()
 
     if settings.get("use_unix_socket", "").lower() == "false":
         raise PueueDirectError("pueue is configured for TCP; only unix sockets are supported")
 
-    data_dirs = []
-    if settings.get("pueue_directory"):
-        data_dirs.append(os.path.expanduser(settings["pueue_directory"]))
-    data_dirs.extend(_candidate_data_dirs())
+    pueue_dir = _pueue_directory(settings)
 
-    socket_candidates = []
     if settings.get("unix_socket_path"):
-        socket_candidates.append(os.path.expanduser(settings["unix_socket_path"]))
-    try:
-        user = getpass.getuser()
-    except Exception:
-        user = ""
-    for directory in data_dirs:
-        if user:
-            socket_candidates.append(os.path.join(directory, f"pueue_{user}.socket"))
+        socket_path = os.path.expanduser(settings["unix_socket_path"])
+    else:
+        try:
+            user = getpass.getuser()
+        except Exception:
+            raise PueueDirectError("cannot determine the username for the default socket path")
+        socket_path = os.path.join(_runtime_directory(settings, pueue_dir),
+                                   f"pueue_{user}.socket")
 
-    socket_path = next((p for p in socket_candidates if _is_socket(p)), None)
-    if socket_path is None:
-        raise PueueDirectError("no pueue daemon socket found")
+    if not _is_socket(socket_path):
+        raise PueueDirectError(f"no pueue daemon socket at {socket_path}")
 
-    secret_candidates = []
     if settings.get("shared_secret_path"):
-        secret_candidates.append(os.path.expanduser(settings["shared_secret_path"]))
-    secret_candidates.append(os.path.join(os.path.dirname(socket_path), "shared_secret"))
-    for directory in data_dirs:
-        secret_candidates.append(os.path.join(directory, "shared_secret"))
+        secret_path = os.path.expanduser(settings["shared_secret_path"])
+    else:
+        secret_path = os.path.join(pueue_dir, "shared_secret")
 
-    secret_path = next((p for p in secret_candidates if os.path.isfile(p)), None)
-    if secret_path is None:
-        raise PueueDirectError("no pueue shared_secret found next to the daemon socket")
+    if not os.path.isfile(secret_path):
+        raise PueueDirectError(f"no pueue shared_secret at {secret_path}")
 
     return socket_path, secret_path
 

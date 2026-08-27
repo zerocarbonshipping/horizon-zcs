@@ -27,28 +27,39 @@ All scripts run inside the normal dev environment (`pip install -e ".[dev]"`).
 # 1. build a study (2000 realizations)
 python tools/benchmark/make_study.py /tmp/study --preset medium --fresh
 
-# 2. put the recording stub on PATH as `pueue` (or use a real paused daemon)
+# 2. put the recording stub on PATH as `pueue`
 mkdir -p /tmp/stubbin && cp tools/benchmark/pueue-stub /tmp/stubbin/pueue
 export PATH="/tmp/stubbin:$PATH"
 export PUEUE_STUB_LOG=/tmp/queue.log
+# the stub reads its variables from the task env, which is minimal by
+# default - name them so they survive the whitelist:
+export HORIZON_TASK_ENV=PUEUE_STUB_LOG,PUEUE_STUB_DELAY
 
 # 3. run and time it (relative paths in the .hor resolve from the cwd)
 cd /tmp/study
 python <repo>/tools/benchmark/bench_generation.py study.hor --output-dir /tmp/study_out
 
 # queue throughput separately, at higher task counts
-python <repo>/tools/benchmark/bench_queue.py 2000
+python <repo>/tools/benchmark/bench_queue.py 2000 --via cli
 ```
 
-For true submission throughput, run against a real daemon instead of the
-stub — `pueued -d`, then `pueue pause` so the tasks don't execute, and
+Both tools default to (`bench_generation.py`) or are shown here with
+(`bench_queue.py --via cli`) the CLI submission path, which is what the
+PATH stub can intercept. **Auto mode discovers a daemon socket directly and
+bypasses the `pueue` executable entirely** — on a workstation with `pueued`
+running it would enqueue the synthetic `navigate` tasks in your real
+daemon.
+
+For true submission throughput, deliberately run against a real daemon:
+`pueued -d`, then `pueue pause` so the tasks don't execute,
+`bench_queue.py 2000 --via auto` (direct connection) or `--via cli`, and
 `pueue reset --force` between runs (the daemon rewrites its full state on
 every add, so leftover tasks slow every later submission).
 
 ## Verifying a change produces identical output
 
 ```bash
-# on the baseline commit
+# on the baseline commit (stub on PATH and HORIZON_TASK_ENV set as above)
 cd /tmp/study && rm -rf /tmp/study_out output /tmp/queue.log
 python <repo>/tools/benchmark/bench_generation.py study.hor --output-dir /tmp/study_out
 python <repo>/tools/benchmark/manifest.py snapshot /tmp/study_out output -o /tmp/golden.json
