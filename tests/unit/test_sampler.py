@@ -505,3 +505,55 @@ class TestSamplingIntegration:
         for sample in samples:
             if inactive_continuous_param.token in sample:
                 assert sample[inactive_continuous_param.token] == inactive_continuous_param.default
+
+
+# ============================================================================
+# LHS Reproducibility (regression tests)
+# ============================================================================
+
+def _make_params(low=0.0, high=1.0):
+    """Fresh parameter objects per call, like two separate horizon runs."""
+    mid = (low + high) / 2.0
+    return [
+        ContinuousParameter(name="A", token="A", active=True, default=mid,
+                            low_val=low, mid_val=mid, high_val=high,
+                            distribution="uniform", decimals=6),
+        ContinuousParameter(name="B", token="B", active=True, default=mid,
+                            low_val=low, mid_val=mid, high_val=high,
+                            distribution="uniform", decimals=6),
+        DiscreteParameter(name="D", token="D", active=True, default=2,
+                          values=[1, 2, 3], probabilities=[0.2, 0.5, 0.3]),
+    ]
+
+
+@pytest.mark.unit
+class TestLHSReproducibility:
+    """RandomSeed must reproduce LHS studies (regression: pyDOE3 >= 1.5 draws
+    from its own Generator and ignores numpy.random.seed, so the seed has to
+    be passed to lhs() explicitly)."""
+
+    def test_lhs_reproducible_across_runs(self):
+        """Two runs with the same seed and fresh parameter objects match."""
+        run1 = ParameterSampler().sample_latin_hypercube(_make_params(), 12, seed=42)
+        run2 = ParameterSampler().sample_latin_hypercube(_make_params(), 12, seed=42)
+        assert run1 == run2
+
+    def test_lhs_different_seeds_differ(self):
+        """Different seeds should give different random draws (samples 4+)."""
+        run1 = ParameterSampler().sample_latin_hypercube(_make_params(), 12, seed=1)
+        run2 = ParameterSampler().sample_latin_hypercube(_make_params(), 12, seed=2)
+        assert run1[3:] != run2[3:]
+
+    def test_lhs_draws_align_across_scenario_resolutions(self):
+        """Per-scenario sampling reuses one draw matrix: the same sample index
+        must land on the same quantile even when a scenario override changes
+        the parameter bounds."""
+        seed = 42
+        narrow = ParameterSampler().sample_latin_hypercube(_make_params(0.0, 1.0), 12, seed=seed)
+        wide = ParameterSampler().sample_latin_hypercube(_make_params(10.0, 20.0), 12, seed=seed)
+
+        for i in range(3, 12):  # samples 4+ are the random draws
+            for token in ("A", "B"):
+                u_narrow = narrow[i][token]  # low=0, range=1 -> value == quantile
+                u_wide = (wide[i][token] - 10.0) / 10.0
+                assert u_narrow == pytest.approx(u_wide, abs=1e-5)

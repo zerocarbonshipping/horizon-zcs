@@ -220,7 +220,13 @@ class ParameterSampler:
         if remaining == 1:
             lhs_matrix = np.full((1, dim), 0.5)
         else:
-            lhs_matrix = lhs(dim, samples=remaining, criterion="maximin")
+            # The seed must be passed to lhs() explicitly: pyDOE3 >= 1.5 draws
+            # from its own numpy Generator and ignores the legacy global
+            # numpy.random.seed() state, so seeding only via _set_random_seed
+            # leaves LHS studies irreproducible. Passing it here also keeps
+            # the draw matrix identical across per-scenario sampling runs, so
+            # sample_i aligns across scenario combinations as documented.
+            lhs_matrix = lhs(dim, samples=remaining, criterion="maximin", seed=seed)
 
         lhs_matrix = np.clip(lhs_matrix, 0.0, 1.0)
 

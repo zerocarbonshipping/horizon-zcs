@@ -67,12 +67,12 @@ File contents and paths must match byte for byte; queue submissions are
 compared as an unordered set because the generation thread pool does not
 submit in a deterministic order.
 
-> **Reproducibility caveat:** with pyDOE3 >= 1.5 the LHS sampler ignores
-> `numpy.random.seed`, so two runs of the *same* commit produce different
-> samples 4+ and golden comparison fails from the start. Until the
-> reproducibility fix from the performance plan lands, run golden checks
-> with `SamplingMethod = MC` in the study's `.hor` (MC sampling is seeded
-> correctly), or compare only the file *sets*, not hashes.
+> **Reproducibility note:** golden comparison relies on `RandomSeed` making
+> sampling deterministic. LHS reproducibility requires the seed to reach
+> `pyDOE3.lhs(seed=...)` (fixed in Phase 0.1 of the performance plan;
+> `pyproject.toml` pins `pyDOE3 >= 1.5` accordingly). If a golden check
+> shows every sample_4+ realization changed, suspect the sampler's seeding
+> before suspecting the change under test.
 
 ## Real-Navigate smoke test
 
