@@ -527,6 +527,43 @@ def _make_params(low=0.0, high=1.0):
 
 
 @pytest.mark.unit
+class TestDrawMatrixReuse:
+    """A sampler instance computes the seeded draw matrix once and reuses it
+    across scenario combinations (maximin LHS is O(n^2) per call, so
+    per-combination recomputation dominated sampling time)."""
+
+    def test_seeded_lhs_computed_once_per_sampler(self, mocker):
+        import horizon.parameters.sampler as sampler_module
+        real_lhs = sampler_module.lhs
+        spy = mocker.patch.object(sampler_module, "lhs", side_effect=real_lhs)
+
+        sampler = ParameterSampler()
+        run1 = sampler.sample_latin_hypercube(_make_params(0.0, 1.0), 12, seed=42)
+        run2 = sampler.sample_latin_hypercube(_make_params(10.0, 20.0), 12, seed=42)
+
+        assert spy.call_count == 1
+        # and the reused matrix still maps through each resolution's bounds
+        assert run1[3]["A"] != run2[3]["A"]
+
+    def test_unseeded_lhs_never_cached(self, mocker):
+        import horizon.parameters.sampler as sampler_module
+        real_lhs = sampler_module.lhs
+        spy = mocker.patch.object(sampler_module, "lhs", side_effect=real_lhs)
+
+        sampler = ParameterSampler()
+        sampler.sample_latin_hypercube(_make_params(), 12, seed=None)
+        sampler.sample_latin_hypercube(_make_params(), 12, seed=None)
+
+        assert spy.call_count == 2
+
+    def test_different_seeds_not_conflated(self):
+        sampler = ParameterSampler()
+        run1 = sampler.sample_latin_hypercube(_make_params(), 12, seed=1)
+        run2 = sampler.sample_latin_hypercube(_make_params(), 12, seed=2)
+        assert run1[3:] != run2[3:]
+
+
+@pytest.mark.unit
 class TestLHSReproducibility:
     """RandomSeed must reproduce LHS studies (regression: pyDOE3 >= 1.5 draws
     from its own Generator and ignores numpy.random.seed, so the seed has to

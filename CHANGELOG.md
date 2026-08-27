@@ -20,6 +20,12 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   `simulation_includes/` is only created when an include is actually
   rewritten for that realization — realizations without tokenized includes
   no longer contain an empty `simulation_includes/` folder.
+- Per-scenario sampling computes the seeded LHS/MC draw matrix once and
+  reuses it across scenario combinations (it is identical by design) instead
+  of recomputing it per combination — maximin LHS is quadratic in the sample
+  count, so large studies save most of their sampling time. Scenario
+  include/exclude rules are likewise evaluated once per combination instead
+  of once per sample.
 
 ### Fixed
 - `RandomSeed` now actually reproduces LHS studies: the seed is passed to

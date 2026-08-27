@@ -83,9 +83,15 @@ def _format_duration(seconds):
     return "%d minutes, %d seconds" % (minutes, secs)
 
 
-def sample_parameters(parameters, number_of_samples, sampling_method, random_seed):
-    """Facade to ParameterSampler."""
-    sampler = ParameterSampler()
+def sample_parameters(parameters, number_of_samples, sampling_method, random_seed, sampler=None):
+    """Facade to ParameterSampler.
+
+    Pass a shared ``sampler`` when calling repeatedly (per-scenario sampling):
+    the instance caches its seeded draw matrix, so scenario combinations reuse
+    one matrix instead of recomputing the identical one per combination.
+    """
+    if sampler is None:
+        sampler = ParameterSampler()
     if sampling_method == "LHS":
         return sampler.sample_latin_hypercube(parameters, number_of_samples, seed=random_seed)
     elif sampling_method == "MC":
@@ -134,6 +140,11 @@ def _sample_for_active_combos(scenario_parameters, parameters, number_of_samples
     total_combos = 0
     skipped_combos = 0
 
+    # One sampler shared across combinations: it caches the seeded draw
+    # matrix, which is identical for every combination by design (that is
+    # what keeps sample_i aligned across scenarios).
+    shared_sampler = ParameterSampler()
+
     # If there are no active tokens, product(*) yields one empty tuple -> single iteration (desired).
     for combo_values in product(*active_value_lists):
         total_combos += 1
@@ -167,7 +178,8 @@ def _sample_for_active_combos(scenario_parameters, parameters, number_of_samples
         # Use shared deterministic seed so sample_i corresponds across scenarios
         seed_for_combo = random_seed
 
-        sampled_for_combo = sample_parameters(params_for_scenario, number_of_samples, sampling_method, seed_for_combo)
+        sampled_for_combo = sample_parameters(params_for_scenario, number_of_samples, sampling_method,
+                                              seed_for_combo, sampler=shared_sampler)
 
         # Annotate samples with full scenario_map and sample numbers 1..N
         for i, row in enumerate(sampled_for_combo):

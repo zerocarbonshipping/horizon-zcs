@@ -268,10 +268,19 @@ class FileHandler:
         def _generate_work_items():
             if pre_resolved:
                 logger.debug("Samples appear pre-resolved with scenario tokens; generating one NAV per sample.")
+                # The include/exclude decision depends only on the scenario
+                # combination, which repeats for every sample - cache it per
+                # combination instead of re-evaluating the rules per sample.
+                skip_cache = {}
                 for sample_idx, sample in enumerate(sampled_parameters, start=1):
                     scenario_dict = {k: sample[k] for k in adjusted_scenario_keys}
 
-                    if should_skip_combination(scenario_dict, exclusion_rules, inclusion_rules):
+                    combo_key = tuple(scenario_dict.values())
+                    skip = skip_cache.get(combo_key)
+                    if skip is None:
+                        skip = should_skip_combination(scenario_dict, exclusion_rules, inclusion_rules)
+                        skip_cache[combo_key] = skip
+                    if skip:
                         logger.debug("Skipping scenario combination %s (filtered by inclusion/exclusion rules)", scenario_dict)
                         self.skipped_count += 1
                         continue
