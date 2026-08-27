@@ -63,7 +63,10 @@ def _read_shared_settings(config_path):
                 if section == "shared" and ":" in stripped:
                     key, _, value = stripped.partition(":")
                     value = value.strip().strip('"').strip("'")
-                    if value:
+                    # pueued writes unset options as YAML null (e.g.
+                    # `unix_socket_path: null`); treat every null form as
+                    # absent rather than as a literal path string.
+                    if value and value not in ("null", "Null", "NULL", "~"):
                         settings[key.strip()] = value
     except OSError as exc:
         raise PueueDirectError(f"cannot read pueue config {config_path}: {exc}")
