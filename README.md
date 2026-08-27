@@ -109,6 +109,7 @@ See `horizon --help` for the full list. The most used flags:
 | `--priority {low,normal,high}` | Pueue scheduling priority for queued runs. |
 | `--solver {auto,gurobi,highs}` | Solver backend passed through to Navigate. |
 | `--navigate-flags "..."` | Extra flags appended to each `navigate` command (e.g. `"-d ./assumptions -s"`). |
+| `--full-task-env` | Forward your entire environment to each queued task. By default only the variables a Navigate run needs are forwarded (plus any named in `HORIZON_TASK_ENV`, comma-separated), which keeps pueue's state small and submission fast. |
 | `--output-dir DIR` | Directory for generated scenario folders (default: next to the `.unc` file). |
 | `--dry-run` | Validate the configuration and preview what would be generated. |
 | `--status DIR` | Check pueue task status and report failures for an output directory. |

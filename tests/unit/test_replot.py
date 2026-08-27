@@ -96,7 +96,7 @@ class TestReplotBatch:
 
         from horizon.__main__ import _replot_batch
 
-        args = SimpleNamespace(arguments=[str(d)], priority="normal")
+        args = SimpleNamespace(arguments=[str(d)], priority="normal", full_task_env=False)
 
         with patch("horizon.run.run_commands.run_commands") as mock_run:
             _replot_batch(args)
@@ -119,7 +119,7 @@ class TestReplotBatch:
 
         from horizon.__main__ import _replot_batch
 
-        args = SimpleNamespace(arguments=dirs, priority="normal")
+        args = SimpleNamespace(arguments=dirs, priority="normal", full_task_env=False)
 
         with patch("horizon.run.run_commands.run_commands") as mock_run:
             _replot_batch(args)
@@ -139,7 +139,7 @@ class TestReplotBatch:
 
         from horizon.__main__ import _replot_batch
 
-        args = SimpleNamespace(arguments=[str(d)], priority="normal")
+        args = SimpleNamespace(arguments=[str(d)], priority="normal", full_task_env=False)
 
         with pytest.raises(SystemExit):
             _replot_batch(args)
@@ -150,7 +150,7 @@ class TestReplotBatch:
 
         from horizon.__main__ import _replot_batch
 
-        args = SimpleNamespace(arguments=[str(tmp_path / "does_not_exist")], priority="normal")
+        args = SimpleNamespace(arguments=[str(tmp_path / "does_not_exist")], priority="normal", full_task_env=False)
 
         with pytest.raises(SystemExit):
             _replot_batch(args)
@@ -161,7 +161,7 @@ class TestReplotBatch:
 
         from horizon.__main__ import _replot_batch
 
-        args = SimpleNamespace(arguments=[], priority="normal")
+        args = SimpleNamespace(arguments=[], priority="normal", full_task_env=False)
 
         with pytest.raises(SystemExit):
             _replot_batch(args)
@@ -184,6 +184,7 @@ class TestReplotBatch:
         args = SimpleNamespace(
             arguments=[str(valid_dir), str(invalid_dir), str(missing_dir)],
             priority="high",
+            full_task_env=False,
         )
 
         with patch("horizon.run.run_commands.run_commands") as mock_run:

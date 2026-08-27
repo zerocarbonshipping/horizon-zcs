@@ -31,6 +31,15 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   The first simulations start seconds after `horizon` is invoked, and total
   submission wall time becomes max(generation, queuing) instead of their
   sum.
+- Queued tasks now carry a minimal environment instead of the submitting
+  shell's entire environment. pueue stores the full client environment in
+  every task and rewrites its whole state file on every add, so the
+  environment payload was the main driver of daemon state size (7x smaller
+  in our benchmark) and submission slowdown on large studies. The default
+  whitelist covers what a Navigate run needs (PATH, HOME, locale, Python
+  env, `ASSUMPTIONS_DATA_DIR`, Gurobi licensing, thread limits, ...);
+  extend it with `HORIZON_TASK_ENV=VAR1,VAR2` or disable trimming with
+  `horizon --full-task-env`.
 
 ### Fixed
 - `RandomSeed` now actually reproduces LHS studies: the seed is passed to

@@ -235,7 +235,7 @@ def _validate_tokens(unc_file_path, scenario_parameters, parameters):
 
 
 def create_files(hor_file_path, max_files=None, priority="normal", solver=None,
-                 navigate_flags=None, output_dir=None, dry_run=False):
+                 navigate_flags=None, output_dir=None, dry_run=False, full_task_env=False):
     """
     Main entrypoint to create files based on the .hor configuration.
 
@@ -247,6 +247,8 @@ def create_files(hor_file_path, max_files=None, priority="normal", solver=None,
         navigate_flags: optional extra flags to pass to each navigate command
         output_dir: optional directory for generated scenario folders (default: next to .unc file)
         dry_run: if True, validate and preview without generating files or running simulations
+        full_task_env: forward the entire environment to each pueue task instead of the
+            whitelist (see run_commands; extend the whitelist with HORIZON_TASK_ENV)
     Returns:
         sample_only (bool) if we terminated early because SampleOnly=True, otherwise None
     """
@@ -388,7 +390,7 @@ def create_files(hor_file_path, max_files=None, priority="normal", solver=None,
     # Queue each realization the moment its .nav is written: the first
     # simulations start while the rest of the study is still generating, and
     # total wall time becomes max(generation, queuing) instead of their sum.
-    queuer = StreamingQueuer(priority=priority)
+    queuer = StreamingQueuer(priority=priority, full_task_env=full_task_env)
 
     try:
         file_handler.generate_scenarios_and_nav_files(

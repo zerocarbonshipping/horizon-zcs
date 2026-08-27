@@ -21,6 +21,56 @@ PRIORITY_MAP = {
 
 _PROGRESS_HEARTBEAT_INTERVAL = 50
 
+# Environment variables forwarded to pueue tasks by default. pueue stores the
+# submitting client's *entire* environment inside every task and rewrites the
+# whole task list to disk on every add, so on typical shells each task drags
+# multiple kilobytes of unrelated variables into the daemon state - the state
+# file grows with it, and every subsequent add, status call, and horizon
+# --status slows down. This whitelist keeps what a navigate run (and the pueue
+# client itself) actually needs; extend per setup with HORIZON_TASK_ENV, or
+# disable trimming entirely with `horizon --full-task-env`.
+_TASK_ENV_WHITELIST = (
+    # process basics and shells
+    "PATH", "HOME", "SHELL", "USER", "LOGNAME", "TMPDIR", "TEMP", "TMP", "TZ",
+    # locale
+    "LANG", "LC_ALL", "LC_CTYPE",
+    # dynamic linking and Python resolution
+    "LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH", "PYTHONPATH", "PYTHONHOME",
+    # Python environments
+    "VIRTUAL_ENV", "CONDA_PREFIX", "CONDA_DEFAULT_ENV", "CONDA_EXE",
+    # Navigate and solver licensing
+    "ASSUMPTIONS_DATA_DIR", "GRB_LICENSE_FILE", "GUROBI_HOME",
+    # pueue client and config discovery
+    "PUEUE_CONFIG_PATH", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_RUNTIME_DIR",
+    # Windows process and client basics
+    "SYSTEMROOT", "SYSTEMDRIVE", "COMSPEC", "PATHEXT", "WINDIR", "OS",
+    "USERPROFILE", "APPDATA", "LOCALAPPDATA", "PROGRAMDATA",
+    "NUMBER_OF_PROCESSORS",
+)
+
+# Comma-separated variable names in this env var are forwarded in addition to
+# the whitelist (e.g. HPC module systems, proxies, extra license servers).
+_TASK_ENV_EXTRA_VAR = "HORIZON_TASK_ENV"
+
+
+def _build_task_env(full_task_env=False):
+    """Build the environment for `pueue add` subprocesses.
+
+    Returns None with ``full_task_env=True`` (inherit everything, pueue's
+    stock behavior), otherwise the whitelist plus any HORIZON_TASK_ENV
+    additions. pueue captures the client environment as the task
+    environment, so trimming the client env is what trims the per-task
+    payload stored in the daemon state.
+    """
+    if full_task_env:
+        return None
+    env = {key: os.environ[key] for key in _TASK_ENV_WHITELIST if key in os.environ}
+    extra = os.environ.get(_TASK_ENV_EXTRA_VAR, "")
+    for name in (part.strip() for part in extra.split(",")):
+        if name and name in os.environ:
+            env[name] = os.environ[name]
+    return env
+
 
 def _extract_label(command: str) -> str:
     """Extract realization folder name from a navigate command for pueue label.
@@ -48,8 +98,12 @@ def _extract_label(command: str) -> str:
         return ""
 
 
-def _queue_single_command(command: str, pueue_priority: int, env_vars: str) -> tuple:
+def _queue_single_command(command: str, pueue_priority: int, env_vars: str, task_env=None) -> tuple:
     """Queue a single command via pueue.
+
+    ``task_env`` is the environment for the pueue client subprocess - pueue
+    stores the client's environment as the task's environment, so this is
+    what the navigate run will see. None inherits the full parent env.
 
     Returns
     -------
@@ -63,7 +117,7 @@ def _queue_single_command(command: str, pueue_priority: int, env_vars: str) -> t
             pueue_cmd += ['--label', label]
         pueue_cmd += ['--', f'{env_vars} {command}']
 
-        result = subprocess.run(pueue_cmd, capture_output=True, text=True)
+        result = subprocess.run(pueue_cmd, capture_output=True, text=True, env=task_env)
 
         if result.returncode == 0:
             return (True, "")
@@ -91,13 +145,14 @@ class StreamingQueuer:
     while preventing over-subscription on large runs.
     """
 
-    def __init__(self, priority: str = "normal"):
+    def __init__(self, priority: str = "normal", full_task_env: bool = False):
         self._priority = priority
         self._pueue_priority = PRIORITY_MAP[priority]
         self._executor = None
         self._future_to_cmd = {}
         self._env_vars = ""
         self._expected = 0
+        self._task_env = _build_task_env(full_task_env)
 
     def start(self, expected_total: int) -> None:
         """Size the per-task thread env for ``expected_total`` tasks and
@@ -122,7 +177,7 @@ class StreamingQueuer:
     def submit(self, command: str) -> None:
         """Queue one command; ``start()`` must have been called."""
         future = self._executor.submit(
-            _queue_single_command, command, self._pueue_priority, self._env_vars)
+            _queue_single_command, command, self._pueue_priority, self._env_vars, self._task_env)
         self._future_to_cmd[future] = command
 
     def finish(self) -> tuple:
@@ -170,7 +225,7 @@ class StreamingQueuer:
         return (queued_ok, queued_fail)
 
 
-def run_commands(commands: List[str], priority: str = "normal") -> None:
+def run_commands(commands: List[str], priority: str = "normal", full_task_env: bool = False) -> None:
     """
     Run multiple navigation commands using pueue with adaptive thread allocation.
 
@@ -186,8 +241,11 @@ def run_commands(commands: List[str], priority: str = "normal") -> None:
         List of navigation commands to execute.
     priority : str
         Pueue scheduling priority ('low', 'normal', or 'high').
+    full_task_env : bool
+        Forward the entire environment to each task instead of the
+        whitelist (see _TASK_ENV_WHITELIST / HORIZON_TASK_ENV).
     """
-    queuer = StreamingQueuer(priority=priority)
+    queuer = StreamingQueuer(priority=priority, full_task_env=full_task_env)
     queuer.start(len(commands))
     for command in commands:
         queuer.submit(command)
