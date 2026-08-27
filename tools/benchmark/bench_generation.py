@@ -60,15 +60,43 @@ def main():
     # Instrument the seams create_files already has. This is a dev tool; the
     # monkeypatching mirrors the call graph in create_files() and needs
     # updating if those seams move.
+    #
+    # Queuing is streamed: submissions happen during the generate phase, so
+    # "generate" includes overlapped submission work and "queue(drain)" is
+    # only the wait for outstanding submissions at the end. TOTAL is the
+    # honest cross-commit comparison number.
     cf.parse_hor_file = _timed("parse", cf.parse_hor_file)
     cf.sample_parameters = _timed("sample", cf.sample_parameters)
     cf.output_sampled_parameters_to_csv = _timed("csv", cf.output_sampled_parameters_to_csv)
     FileHandler.generate_scenarios_and_nav_files = _timed(
         "generate", FileHandler.generate_scenarios_and_nav_files)
+
     if args.no_queue:
-        cf.run_commands = lambda commands, priority="normal": PHASES.setdefault("queue(skipped)", 0.0)
+        class _NullQueuer:
+            def __init__(self, *a, **kw):
+                PHASES.setdefault("queue(skipped)", 0.0)
+
+            def start(self, expected_total):
+                pass
+
+            def submit(self, command):
+                pass
+
+            def finish(self):
+                return (0, 0)
+
+        cf.StreamingQueuer = _NullQueuer
     else:
-        cf.run_commands = _timed("queue", rc.run_commands)
+        class _TimedQueuer(rc.StreamingQueuer):
+            def finish(self):
+                t0 = time.perf_counter()
+                try:
+                    return super().finish()
+                finally:
+                    PHASES["queue(drain)"] = PHASES.get("queue(drain)", 0.0) + (
+                        time.perf_counter() - t0)
+
+        cf.StreamingQueuer = _TimedQueuer
 
     profiler = cProfile.Profile() if args.profile else None
     t0 = time.perf_counter()

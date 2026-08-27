@@ -42,7 +42,7 @@ from horizon.parameters.sampler import ParameterSampler, resolve_parameters_for_
 from horizon.parser.exclusions import get_scenario_label, should_skip_combination
 from horizon.parser.parser import parse_hor_file
 from horizon.plot.plot import analyze_sampled_parameters
-from horizon.run.run_commands import run_commands
+from horizon.run.run_commands import StreamingQueuer
 
 logger = logging.getLogger(__name__)
 
@@ -385,17 +385,30 @@ def create_files(hor_file_path, max_files=None, priority="normal", solver=None,
     file_handler = FileHandler()
     logger.info("Starting file creation in %s", output_folder)
 
-    # Call the file handler to create nav files
-    file_handler.generate_scenarios_and_nav_files(
-        unc_file_path,
-        sampled_parameters,
-        scenario_parameters,
-        output_folder,
-        exclusion_rules=exclusion_rules,
-        inclusion_rules=inclusion_rules,
-        solver=solver,
-        navigate_flags=navigate_flags,
-    )
+    # Queue each realization the moment its .nav is written: the first
+    # simulations start while the rest of the study is still generating, and
+    # total wall time becomes max(generation, queuing) instead of their sum.
+    queuer = StreamingQueuer(priority=priority)
+
+    try:
+        file_handler.generate_scenarios_and_nav_files(
+            unc_file_path,
+            sampled_parameters,
+            scenario_parameters,
+            output_folder,
+            exclusion_rules=exclusion_rules,
+            inclusion_rules=inclusion_rules,
+            solver=solver,
+            navigate_flags=navigate_flags,
+            command_sink=queuer,
+        )
+    finally:
+        # Wait for the already-submitted tasks even if generation failed
+        # midway - they are queued in pueue either way and must be reported.
+        try:
+            queuer.finish()
+        except Exception:
+            logger.exception("Failed to finish queue submission.")
 
     # Log generated files
     if logger.isEnabledFor(logging.DEBUG):
@@ -405,16 +418,10 @@ def create_files(hor_file_path, max_files=None, priority="normal", solver=None,
     skip_note = " (%d combination(s) skipped by filters)" % file_handler.skipped_count if file_handler.skipped_count > 0 else ""
     logger.info("Generated %d NAV file(s) in %s%s", len(file_handler.nav_filepaths), output_folder, skip_note)
 
-    logger.info("Prepared %d navigate command(s) for queuing", len(file_handler.commands))
+    logger.info("Queued %d navigate command(s)", len(file_handler.commands))
     if logger.isEnabledFor(logging.DEBUG):
         for cmd in file_handler.commands:
             logger.debug("Command: %s", cmd)
-
-    # Run commands
-    try:
-        run_commands(file_handler.commands, priority=priority)
-    except Exception:
-        logger.exception("Failed to run commands.")
 
     # Timing
     end_time = time.time()

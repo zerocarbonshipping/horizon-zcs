@@ -26,6 +26,11 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   count, so large studies save most of their sampling time. Scenario
   include/exclude rules are likewise evaluated once per combination instead
   of once per sample.
+- Queue submission is streamed: each realization is submitted to pueue the
+  moment its `.nav` is written, instead of after all files are generated.
+  The first simulations start seconds after `horizon` is invoked, and total
+  submission wall time becomes max(generation, queuing) instead of their
+  sum.
 
 ### Fixed
 - `RandomSeed` now actually reproduces LHS studies: the seed is passed to

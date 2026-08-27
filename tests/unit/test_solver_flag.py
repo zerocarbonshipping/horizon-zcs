@@ -124,10 +124,10 @@ class TestSolverCommandGeneration:
 class TestSolverIntegration:
     """Test that create_files threads solver through to the file handler."""
 
-    @patch("horizon.test_manager.create_files.run_commands")
+    @patch("horizon.test_manager.create_files.StreamingQueuer")
     @patch("horizon.test_manager.create_files.FileHandler")
     @patch("horizon.test_manager.create_files.parse_hor_file")
-    def test_solver_passed_to_generate(self, mock_parse, mock_fh_cls, mock_run):
+    def test_solver_passed_to_generate(self, mock_parse, mock_fh_cls, mock_queuer):
         """create_files passes solver kwarg to generate_scenarios_and_nav_files."""
         from horizon.test_manager.create_files import create_files
 
@@ -165,10 +165,10 @@ class TestSolverIntegration:
         call_kwargs = mock_fh.generate_scenarios_and_nav_files.call_args
         assert call_kwargs.kwargs.get("solver") == "highs"
 
-    @patch("horizon.test_manager.create_files.run_commands")
+    @patch("horizon.test_manager.create_files.StreamingQueuer")
     @patch("horizon.test_manager.create_files.FileHandler")
     @patch("horizon.test_manager.create_files.parse_hor_file")
-    def test_solver_none_by_default(self, mock_parse, mock_fh_cls, mock_run):
+    def test_solver_none_by_default(self, mock_parse, mock_fh_cls, mock_queuer):
         """create_files passes solver=None when not specified."""
         from horizon.test_manager.create_files import create_files
 

@@ -73,60 +73,76 @@ def _queue_single_command(command: str, pueue_priority: int, env_vars: str) -> t
         return (False, str(e))
 
 
-def run_commands(commands: List[str], priority: str = "normal") -> None:
-    """
-    Run multiple navigation commands using pueue with adaptive thread allocation.
+class StreamingQueuer:
+    """Submits navigate commands to pueue as they are produced.
+
+    Lets queuing overlap file generation: the file handler calls ``submit()``
+    the moment each .nav is written, so the first simulations start while the
+    rest of the study is still being generated, and total wall time becomes
+    max(generation, queuing) instead of their sum.
+
+    Protocol: ``start(expected_total)`` once (the per-task thread-limit
+    environment is derived from the expected task count, exactly like the
+    batch path always did), then ``submit(command)`` per task, then
+    ``finish()`` to wait for all submissions and log the summary.
 
     Thread count per task is computed as ``max(2, cpu_count // num_tasks)``,
-    capped at ``cpu_count``. This gives small runs more threads per task while
-    preventing over-subscription on large runs.
-
-    Each task is labelled with its realization folder name for readable
-    ``pueue status`` output.
-
-    Parameters
-    ----------
-    commands : List[str]
-        List of navigation commands to execute.
-    priority : str
-        Pueue scheduling priority ('low', 'normal', or 'high').
+    capped at ``cpu_count``. This gives small runs more threads per task
+    while preventing over-subscription on large runs.
     """
-    pueue_priority = PRIORITY_MAP[priority]
 
-    # Adaptive thread count based on job count vs available cores
-    cpu_count = os.cpu_count() or 4
-    num_tasks = len(commands)
-    threads_per_task = max(2, cpu_count // max(num_tasks, 1))
-    threads_per_task = min(threads_per_task, cpu_count)
+    def __init__(self, priority: str = "normal"):
+        self._priority = priority
+        self._pueue_priority = PRIORITY_MAP[priority]
+        self._executor = None
+        self._future_to_cmd = {}
+        self._env_vars = ""
+        self._expected = 0
 
-    env_vars = (
-        f"OMP_NUM_THREADS={threads_per_task} "
-        f"MKL_NUM_THREADS={threads_per_task} "
-        f"NUMEXPR_NUM_THREADS={threads_per_task}"
-    )
-    logger.info(
-        "Queuing %d tasks with %d threads each (%d CPUs available)",
-        num_tasks, threads_per_task, cpu_count,
-    )
+    def start(self, expected_total: int) -> None:
+        """Size the per-task thread env for ``expected_total`` tasks and
+        start accepting submissions."""
+        cpu_count = os.cpu_count() or 4
+        threads_per_task = max(2, cpu_count // max(expected_total, 1))
+        threads_per_task = min(threads_per_task, cpu_count)
 
-    queued_ok = 0
-    queued_fail = 0
+        self._env_vars = (
+            f"OMP_NUM_THREADS={threads_per_task} "
+            f"MKL_NUM_THREADS={threads_per_task} "
+            f"NUMEXPR_NUM_THREADS={threads_per_task}"
+        )
+        self._expected = expected_total
+        logger.info(
+            "Queuing %d tasks with %d threads each (%d CPUs available)",
+            expected_total, threads_per_task, cpu_count,
+        )
+        self._executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=min(16, cpu_count))
 
-    max_workers = min(16, cpu_count)
+    def submit(self, command: str) -> None:
+        """Queue one command; ``start()`` must have been called."""
+        future = self._executor.submit(
+            _queue_single_command, command, self._pueue_priority, self._env_vars)
+        self._future_to_cmd[future] = command
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-        future_to_cmd = {
-            executor.submit(_queue_single_command, command, pueue_priority, env_vars): command
-            for command in commands
-        }
+    def finish(self) -> tuple:
+        """Wait for all submissions, log the outcome, and return
+        ``(queued_ok, queued_fail)``. Safe to call when ``start()`` never
+        ran (returns ``(0, 0)``)."""
+        if self._executor is None:
+            return (0, 0)
 
+        queued_ok = 0
+        queued_fail = 0
         completed = 0
-        for future in concurrent.futures.as_completed(future_to_cmd):
-            command = future_to_cmd[future]
+        num_tasks = len(self._future_to_cmd)
+
+        for future in concurrent.futures.as_completed(self._future_to_cmd):
+            command = self._future_to_cmd[future]
             success, error_msg = future.result()
 
             if success:
-                logger.debug("Successfully queued command (priority=%s): %s", priority, command)
+                logger.debug("Successfully queued command (priority=%s): %s", self._priority, command)
                 queued_ok += 1
             else:
                 logger.error("Failed to queue command: %s", command)
@@ -141,10 +157,41 @@ def run_commands(commands: List[str], priority: str = "normal") -> None:
                     and completed < num_tasks):
                 logger.info("Queuing progress: %d/%d tasks submitted...", completed, num_tasks)
 
-    if queued_fail:
-        logger.warning("Queued %d/%d task(s) (priority=%s), %d failed", queued_ok, num_tasks, priority, queued_fail)
-    else:
-        logger.info("Successfully queued %d/%d task(s) (priority=%s)", queued_ok, num_tasks, priority)
+        self._executor.shutdown(wait=True)
+        self._executor = None
+        self._future_to_cmd = {}
+
+        if queued_fail:
+            logger.warning("Queued %d/%d task(s) (priority=%s), %d failed",
+                           queued_ok, num_tasks, self._priority, queued_fail)
+        else:
+            logger.info("Successfully queued %d/%d task(s) (priority=%s)",
+                        queued_ok, num_tasks, self._priority)
+        return (queued_ok, queued_fail)
+
+
+def run_commands(commands: List[str], priority: str = "normal") -> None:
+    """
+    Run multiple navigation commands using pueue with adaptive thread allocation.
+
+    Batch form of :class:`StreamingQueuer` (same submission engine, same
+    thread-limit environment, same logging): submit everything, then wait.
+
+    Each task is labelled with its realization folder name for readable
+    ``pueue status`` output.
+
+    Parameters
+    ----------
+    commands : List[str]
+        List of navigation commands to execute.
+    priority : str
+        Pueue scheduling priority ('low', 'normal', or 'high').
+    """
+    queuer = StreamingQueuer(priority=priority)
+    queuer.start(len(commands))
+    for command in commands:
+        queuer.submit(command)
+    queuer.finish()
 
 
 def check_status(output_folder):

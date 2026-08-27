@@ -232,6 +232,47 @@ class TestCompiledRendering:
         assert line.split('"')[1] == "simulation_includes/B_A_sample_1.inc"
 
 
+class _RecordingSink:
+    """Minimal command_sink implementing the StreamingQueuer protocol."""
+
+    def __init__(self):
+        self.started = []
+        self.commands = []
+
+    def start(self, expected_total):
+        self.started.append(expected_total)
+
+    def submit(self, command):
+        self.commands.append(command)
+
+
+class TestCommandSink:
+    """generate_scenarios_and_nav_files streams commands into a sink so
+    queuing can overlap generation."""
+
+    def test_sink_gets_expected_total_and_every_command(self, template_project, tmp_path):
+        sink = _RecordingSink()
+        handler = FileHandler()
+        handler.generate_scenarios_and_nav_files(
+            unc_path=str(template_project),
+            sampled_parameters=[{"sample": 1, "LEN": 250.0}, {"sample": 2, "LEN": 300.0}],
+            scenario_parameters=[ScenarioParameter(name="Policy", token="POLICY", active=True,
+                                                   default="strict", values=["strict"])],
+            output_folder=str(tmp_path / "out"),
+            solver="highs",
+            command_sink=sink,
+        )
+
+        assert sink.started == [2]
+        # the streamed commands are exactly the batch command list
+        assert sorted(sink.commands) == sorted(handler.commands)
+        assert all(cmd.endswith("--solver highs") for cmd in sink.commands)
+
+    def test_without_sink_commands_are_still_built(self, template_project, tmp_path):
+        handler = _generate(template_project, tmp_path / "out", [{"sample": 1, "LEN": 250.0}])
+        assert len(handler.commands) == 1
+
+
 class TestLegacyTemplateNormalization:
     """Templates still using the old all-caps INCLUDE are normalized."""
 

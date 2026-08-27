@@ -205,7 +205,7 @@ class FileHandler:
     # -------------------------
     def generate_scenarios_and_nav_files(self, unc_path, sampled_parameters, scenario_parameters, output_folder,
                                          exclusion_rules=None, inclusion_rules=None, solver=None,
-                                         navigate_flags=None):
+                                         navigate_flags=None, command_sink=None):
         """
         Generate .nav files for all realizations.
 
@@ -223,6 +223,12 @@ class FileHandler:
             Exclusion rules from Exclude() directives. Each dict maps token names to values.
         inclusion_rules : list[dict] or None
             Inclusion rules from Include() directives. Each dict maps token names to values.
+        command_sink : object or None
+            Optional streaming submitter (see run_commands.StreamingQueuer):
+            ``start(expected_total)`` is called once before generation begins
+            and ``submit(command)`` as each .nav completes, so queuing
+            overlaps generation. ``self.commands`` is still populated either
+            way; without a sink the caller queues it afterwards as before.
         """
         # Realization folders are created under output_folder; absolutize once
         # so every derived path (and the navigate commands) is absolute.
@@ -263,24 +269,37 @@ class FileHandler:
             and all(all(k in s for k in adjusted_scenario_keys) for s in sampled_parameters)
         )
 
+        # The include/exclude decision depends only on the scenario
+        # combination, which repeats for every sample - evaluate the rules
+        # once per combination. Doing it up front also yields the expected
+        # realization count, which a streaming command sink needs before the
+        # first submission (the per-task thread env is sized from it).
+        skip_by_combo = {}
+        if pre_resolved:
+            for sample in sampled_parameters:
+                combo_key = tuple(sample[k] for k in adjusted_scenario_keys)
+                if combo_key not in skip_by_combo:
+                    skip_by_combo[combo_key] = should_skip_combination(
+                        dict(zip(adjusted_scenario_keys, combo_key)), exclusion_rules, inclusion_rules)
+            expected_navs = sum(
+                1 for sample in sampled_parameters
+                if not skip_by_combo[tuple(sample[k] for k in adjusted_scenario_keys)])
+        else:
+            for combination in itertools.product(*adjusted_scenario_values):
+                skip_by_combo[combination] = should_skip_combination(
+                    dict(zip(adjusted_scenario_keys, combination)), exclusion_rules, inclusion_rules)
+            active_combos = sum(1 for skip in skip_by_combo.values() if not skip)
+            expected_navs = active_combos * len(sampled_parameters)
+
         # Generate work items lazily using a generator to avoid
         # materializing all realizations in memory at once
         def _generate_work_items():
             if pre_resolved:
                 logger.debug("Samples appear pre-resolved with scenario tokens; generating one NAV per sample.")
-                # The include/exclude decision depends only on the scenario
-                # combination, which repeats for every sample - cache it per
-                # combination instead of re-evaluating the rules per sample.
-                skip_cache = {}
                 for sample_idx, sample in enumerate(sampled_parameters, start=1):
                     scenario_dict = {k: sample[k] for k in adjusted_scenario_keys}
 
-                    combo_key = tuple(scenario_dict.values())
-                    skip = skip_cache.get(combo_key)
-                    if skip is None:
-                        skip = should_skip_combination(scenario_dict, exclusion_rules, inclusion_rules)
-                        skip_cache[combo_key] = skip
-                    if skip:
+                    if skip_by_combo[tuple(scenario_dict.values())]:
                         logger.debug("Skipping scenario combination %s (filtered by inclusion/exclusion rules)", scenario_dict)
                         self.skipped_count += 1
                         continue
@@ -320,7 +339,7 @@ class FileHandler:
                 for combination in itertools.product(*adjusted_scenario_values):
                     scenario_dict = dict(zip(adjusted_scenario_keys, combination))
 
-                    if should_skip_combination(scenario_dict, exclusion_rules, inclusion_rules):
+                    if skip_by_combo[combination]:
                         logger.debug("Skipping scenario combination %s (filtered by inclusion/exclusion rules)", scenario_dict)
                         self.skipped_count += 1
                         continue
@@ -344,8 +363,15 @@ class FileHandler:
                             'sample_number': sample_idx,
                         }
 
+        solver_flag = f' --solver {solver}' if solver else ''
+        extra_flags = f' {navigate_flags}' if navigate_flags else ''
+        if command_sink is not None:
+            command_sink.start(expected_navs)
+
         # Generate NAV files in parallel, consuming the generator on demand
-        self._generate_nav_files_parallel(_generate_work_items(), template_program, unc_path)
+        self._generate_nav_files_parallel(_generate_work_items(), template_program, unc_path,
+                                          command_sink=command_sink,
+                                          solver_flag=solver_flag, extra_flags=extra_flags)
 
         # After nav files created, prepare command list
         self.generate_commands_list(solver=solver, navigate_flags=navigate_flags)
@@ -386,12 +412,15 @@ class FileHandler:
             program.append(('text', _compile_parts(''.join(text_run))))
         return program
 
-    def _generate_nav_files_parallel(self, work_items, template_program, unc_path):
+    def _generate_nav_files_parallel(self, work_items, template_program, unc_path,
+                                     command_sink=None, solver_flag='', extra_flags=''):
         """Generate NAV files using a thread pool for I/O-bound parallelism.
 
         Accepts any iterable of work items (including generators) to avoid
         materializing all realizations in memory at once. Items are submitted
-        to the thread pool as they are yielded.
+        to the thread pool as they are yielded. With a ``command_sink``, each
+        completed .nav's navigate command is submitted immediately, so
+        queuing (and the first simulations) overlap generation.
         """
         max_workers = min(8, os.cpu_count() or 4)
         nav_filepaths = []
@@ -415,6 +444,9 @@ class FileHandler:
                     nav_filepath = future.result()
                     if nav_filepath:
                         nav_filepaths.append(nav_filepath)
+                        if command_sink is not None:
+                            command_sink.submit(
+                                self._build_command(nav_filepath, solver_flag, extra_flags))
                         completed += 1
                         if completed % _PROGRESS_HEARTBEAT_INTERVAL == 0:
                             logger.info("File creation progress: %d NAV files generated...", completed)
@@ -495,21 +527,26 @@ class FileHandler:
             logger.exception("Failed writing NAV file %s", nav_filepath)
             return None
 
-    def generate_commands_list(self, solver=None, navigate_flags=None):
-        """Generate list of commands to run NavigaTE on all generated .nav files.
+    @staticmethod
+    def _build_command(path, solver_flag, extra_flags):
+        """Build one navigate command for a generated .nav file.
 
-        nav_filepaths from generation are already absolute (the output folder
-        is absolutized at generation entry); isabs is a pure string check, so
+        Paths from generation are already absolute (the output folder is
+        absolutized at generation entry); isabs is a pure string check, so
         the common case pays no per-path abspath round trip.
         """
+        return 'navigate "{}"{}{}'.format(
+            (path if os.path.isabs(path) else os.path.abspath(path)).replace(os.sep, '/'),
+            solver_flag,
+            extra_flags
+        )
+
+    def generate_commands_list(self, solver=None, navigate_flags=None):
+        """Generate list of commands to run NavigaTE on all generated .nav files."""
         solver_flag = f' --solver {solver}' if solver else ''
         extra_flags = f' {navigate_flags}' if navigate_flags else ''
         self.commands = [
-            'navigate "{}"{}{}'.format(
-                (path if os.path.isabs(path) else os.path.abspath(path)).replace(os.sep, '/'),
-                solver_flag,
-                extra_flags
-            )
+            self._build_command(path, solver_flag, extra_flags)
             for path in self.nav_filepaths
         ]
 
