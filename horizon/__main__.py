@@ -49,8 +49,15 @@ def main():
     cli_parser.add_argument("--gen-workers", type=int, default=None, metavar="N",
                             help="Thread-pool size for .nav file generation. Default: min(8, CPU "
                                  "count), measured optimal at core count on laptop-class machines. "
-                                 "Worth benchmarking on many-core hosts or network filesystems "
-                                 "(see tools/benchmark).")
+                                 "Raise it (e.g. 32) on network filesystems, where generation is "
+                                 "bound by per-file round trips (see tools/benchmark).")
+    cli_parser.add_argument("--no-shared-includes", action="store_true",
+                            help="Copy every rewritten include into its realization folder, as "
+                                 "before. By default, rewritten includes whose content only "
+                                 "depends on the scenario are written once per scenario "
+                                 "combination under shared_includes/ and referenced from there, "
+                                 "which saves one file creation per include per realization on "
+                                 "include-heavy studies.")
     cli_parser.add_argument("--output-dir", type=str, default=None,
                             help="Directory for generated scenario folders (default: next to .unc file)")
     cli_parser.add_argument("--report-name", type=str, default=None,
@@ -179,7 +186,8 @@ def main():
         create_files(file_name, priority=args.priority, solver=args.solver,
                      navigate_flags=args.navigate_flags, output_dir=args.output_dir,
                      dry_run=args.dry_run, full_task_env=args.full_task_env,
-                     pueue_cli=args.pueue_cli, gen_workers=args.gen_workers)
+                     pueue_cli=args.pueue_cli, gen_workers=args.gen_workers,
+                     shared_includes=not args.no_shared_includes)
 
 
 def _replot_batch(args):

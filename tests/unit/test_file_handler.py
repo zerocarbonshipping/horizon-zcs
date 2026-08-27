@@ -340,6 +340,105 @@ class TestGenerationWorkers:
         assert len(handler.nav_filepaths) == 1
 
 
+class TestSharedIncludeStore:
+    """A rewritten include whose replaced tokens are all scenario tokens has
+    identical content for every sample of a combination: it is written once
+    per combination under shared_includes/<combination>/ and referenced
+    relatively, instead of copied into every realization folder."""
+
+    @staticmethod
+    def _scenario(values):
+        return ScenarioParameter(name="Policy", token="POLICY", active=True,
+                                 default=values[0], values=values)
+
+    def test_scenario_only_include_written_once_per_combo(self, tmp_path):
+        _write(tmp_path / "inc" / "policy.inc", "policy_mode = %POLICY%\n")
+        unc = _write(tmp_path / "t.unc", 'DEFINE {\n\tInclude "inc/policy.inc"\n}\n')
+
+        handler = _generate(unc, tmp_path / "out",
+                            [{"sample": i} for i in range(1, 4)],
+                            [self._scenario(["bau"])])
+
+        assert len(handler.nav_filepaths) == 3
+        shared = tmp_path / "out" / "shared_includes" / "bau"
+        files = sorted(os.listdir(shared))
+        assert files == ["policy_POLICY.inc"]
+        assert open(shared / files[0]).read() == "policy_mode = bau\n"
+        for nav in handler.nav_filepaths:
+            (line,) = _include_lines(nav)
+            rel = line.split('"')[1]
+            assert rel == "../shared_includes/bau/policy_POLICY.inc"
+            resolved = os.path.normpath(os.path.join(os.path.dirname(nav), rel))
+            assert os.path.isfile(resolved)
+        # no per-realization copies were written
+        for nav in handler.nav_filepaths:
+            assert not os.path.isdir(os.path.join(os.path.dirname(nav), "simulation_includes"))
+
+    def test_each_combo_gets_its_own_copy(self, tmp_path):
+        _write(tmp_path / "inc" / "policy.inc", "policy_mode = %POLICY%\n")
+        unc = _write(tmp_path / "t.unc", 'DEFINE {\n\tInclude "inc/policy.inc"\n}\n')
+
+        _generate(unc, tmp_path / "out", [{"sample": 1}, {"sample": 2}],
+                  [self._scenario(["bau", "levy"])])
+
+        assert open(tmp_path / "out" / "shared_includes" / "bau" / "policy_POLICY.inc").read() \
+            == "policy_mode = bau\n"
+        assert open(tmp_path / "out" / "shared_includes" / "levy" / "policy_POLICY.inc").read() \
+            == "policy_mode = levy\n"
+
+    def test_sample_dependent_include_stays_per_realization(self, tmp_path):
+        _write(tmp_path / "inc" / "mixed.inc", "mode = %POLICY%\nrate = %RATE%\n")
+        unc = _write(tmp_path / "t.unc", 'DEFINE {\n\tInclude "inc/mixed.inc"\n}\n')
+
+        handler = _generate(unc, tmp_path / "out",
+                            [{"sample": 1, "RATE": 0.5}, {"sample": 2, "RATE": 0.7}],
+                            [self._scenario(["bau"])])
+
+        assert not os.path.isdir(tmp_path / "out" / "shared_includes")
+        rendered = set()
+        for nav in handler.nav_filepaths:
+            (line,) = _include_lines(nav)
+            rel = line.split('"')[1]
+            assert rel.startswith("simulation_includes/")
+            rendered.add(open(os.path.join(os.path.dirname(nav), rel)).read())
+        assert rendered == {"mode = bau\nrate = 0.5\n", "mode = bau\nrate = 0.7\n"}
+
+    def test_opt_out_restores_per_realization_copies(self, tmp_path):
+        _write(tmp_path / "inc" / "policy.inc", "policy_mode = %POLICY%\n")
+        unc = _write(tmp_path / "t.unc", 'DEFINE {\n\tInclude "inc/policy.inc"\n}\n')
+
+        handler = FileHandler()
+        handler.generate_scenarios_and_nav_files(
+            unc_path=str(unc),
+            sampled_parameters=[{"sample": 1}, {"sample": 2}],
+            scenario_parameters=[self._scenario(["bau"])],
+            output_folder=str(tmp_path / "out"),
+            shared_includes=False,
+        )
+
+        assert not os.path.isdir(tmp_path / "out" / "shared_includes")
+        for nav in handler.nav_filepaths:
+            (line,) = _include_lines(nav)
+            assert line.split('"')[1].startswith("simulation_includes/")
+
+    def test_pre_resolved_samples_share_per_combo(self, tmp_path):
+        """Pre-resolved mode (samples already carry scenario tokens, as
+        per-scenario sampling produces) shares by combination too."""
+        _write(tmp_path / "inc" / "policy.inc", "policy_mode = %POLICY%\n")
+        unc = _write(tmp_path / "t.unc", 'DEFINE {\n\tInclude "inc/policy.inc"\n}\n')
+
+        samples = [
+            {"sample": "sample_1", "POLICY": "bau"},
+            {"sample": "sample_2", "POLICY": "bau"},
+            {"sample": "sample_1", "POLICY": "levy"},
+        ]
+        handler = _generate(unc, tmp_path / "out", samples,
+                            [self._scenario(["bau", "levy"])])
+
+        assert len(handler.nav_filepaths) == 3
+        assert sorted(os.listdir(tmp_path / "out" / "shared_includes")) == ["bau", "levy"]
+
+
 class TestLegacyTemplateNormalization:
     """Templates still using the old all-caps INCLUDE are normalized."""
 

@@ -126,13 +126,21 @@ defaults adapt to the machine, and two knobs cover the extremes:
 
 - **File generation** uses a thread pool of `min(8, CPU count)` workers —
   measured optimal at core count on a 4-core machine (serial is ~2.4x
-  slower, twice the cores ~1.75x slower). On many-core hosts or network
-  filesystems it is worth measuring your own optimum with
-  [`tools/benchmark/`](tools/benchmark/README.md) and setting
-  `--gen-workers N`. For scale: 10 000 realizations generate in ~15 s and
-  ~160 MB of RAM on a 4-core machine — memory is not the constraint, disk
-  is (that study writes ~0.7 GB of `.nav`/`.inc` files before Navigate
-  produces any results).
+  slower, twice the cores ~1.75x slower). For scale: 10 000 realizations
+  generate in ~15 s and ~160 MB of RAM on a 4-core machine — memory is not
+  the constraint, disk is (that study writes ~0.7 GB of `.nav`/`.inc` files
+  before Navigate produces any results).
+
+- **Network storage** (an output directory on NFS/SMB) changes the game:
+  every file creation is a metadata round trip, so include-heavy decks are
+  bound by files-per-realization, not CPU. Two things address this. First,
+  rewritten includes whose content only varies per scenario are written once
+  per scenario combination into `shared_includes/` instead of into every
+  realization folder (on by default; `--no-shared-includes` restores full
+  copies). Second, raise `--gen-workers` (e.g. 32): threads blocked on
+  round trips cost nothing, so more in-flight operations directly raise
+  throughput — measure your optimum with
+  [`tools/benchmark/`](tools/benchmark/README.md).
 
 - **Queue submission** uses a direct connection to the pueue daemon when a
   pueue >= 4 unix socket is found, and the pueue CLI otherwise (or with

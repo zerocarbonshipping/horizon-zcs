@@ -152,11 +152,14 @@ class FileHandler:
         self.commands = []
         self.skipped_count = 0
         self._include_cache = {}
-        # Rendered include lines for includes used unmodified, keyed by
-        # (include path, indent). Valid because every realization folder of a
-        # run sits directly under the same output folder, so the relative
-        # path is the same for all of them.
+        # Rendered include lines for includes used unmodified or shared,
+        # keyed by (include path, indent). Valid because every realization
+        # folder of a run sits directly under the same output folder, so the
+        # relative path is the same for all of them.
         self._include_line_cache = {}
+        # Shared-include store state; configured per generate call.
+        self._shared_written = set()
+        self._shared_cfg = {'enabled': False, 'root': '', 'scenario_keys': set()}
         self._include_lock = threading.Lock()
 
     # -------------------------
@@ -216,7 +219,8 @@ class FileHandler:
     # -------------------------
     def generate_scenarios_and_nav_files(self, unc_path, sampled_parameters, scenario_parameters, output_folder,
                                          exclusion_rules=None, inclusion_rules=None, solver=None,
-                                         navigate_flags=None, command_sink=None, max_workers=None):
+                                         navigate_flags=None, command_sink=None, max_workers=None,
+                                         shared_includes=True):
         """
         Generate .nav files for all realizations.
 
@@ -247,13 +251,23 @@ class FileHandler:
             (2x cores ~1.75x slower) cost real time. Worth measuring per
             machine on many-core hosts and network filesystems
             (``horizon --gen-workers``, benchmark in tools/benchmark/).
+        shared_includes : bool
+            When True (default), a rewritten include whose replaced tokens
+            are all scenario tokens — identical content for every sample of
+            a scenario combination — is written once per combination under
+            ``<output_folder>/shared_includes/<combination>/`` and referenced
+            relatively, instead of being copied into every realization
+            folder. Include-heavy decks on network filesystems save one file
+            creation per such include per realization. Sample-dependent
+            rewrites always stay per-realization in simulation_includes/.
         """
         # Realization folders are created under output_folder; absolutize once
         # so every derived path (and the navigate commands) is absolute.
         output_folder = os.path.abspath(output_folder)
-        # The rendered include lines depend on the output folder, which can
-        # differ between calls on a reused handler.
+        # The rendered include lines and the shared-include registry depend on
+        # the output folder, which can differ between calls on a reused handler.
         self._include_line_cache = {}
+        self._shared_written = set()
 
         # Read the UNC template once and compile it into a render program:
         # runs of plain lines become compiled literal/token segments, include
@@ -287,6 +301,14 @@ class FileHandler:
             and sampled_parameters
             and all(all(k in s for k in adjusted_scenario_keys) for s in sampled_parameters)
         )
+
+        # Configuration for the scenario-shared include store (read-only
+        # during generation; see the shared_includes parameter).
+        self._shared_cfg = {
+            'enabled': bool(shared_includes),
+            'root': os.path.join(output_folder, "shared_includes"),
+            'scenario_keys': set(adjusted_scenario_keys) | {"SCENARIO"},
+        }
 
         # The include/exclude decision depends only on the scenario
         # combination, which repeats for every sample - evaluate the rules
@@ -351,6 +373,7 @@ class FileHandler:
                         'scenario_dict': scenario_dict,
                         'realization_folder': realization_folder,
                         'sample_number': sample_number_for_includes,
+                        'combo_name': scenario_combination_name,
                     }
 
             else:
@@ -380,6 +403,7 @@ class FileHandler:
                             'scenario_dict': scenario_dict,
                             'realization_folder': realization_folder,
                             'sample_number': sample_idx,
+                            'combo_name': scenario_combination_name,
                         }
 
         solver_flag = f' --solver {solver}' if solver else ''
@@ -493,7 +517,7 @@ class FileHandler:
                     unc_path, template_program,
                     item['sample'], item['simulation_name'],
                     item['scenario_dict'], item['realization_folder'],
-                    item['sample_number']
+                    item['sample_number'], item['combo_name']
                 )
                 future_to_name[future] = item['simulation_name']
 
@@ -516,7 +540,8 @@ class FileHandler:
         self.nav_filepaths = nav_filepaths
 
     def _generate_nav_file_for_sample(self, unc_path, template_program, sample, simulation_name,
-                                      scenario_parameters, realization_folder, sample_number):
+                                      scenario_parameters, realization_folder, sample_number,
+                                      combo_name=None):
         """
         Create one .nav file for a given sample + scenario.
         - Copies & replaces tokens in included .inc files when needed into simulation_includes/
@@ -586,6 +611,7 @@ class FileHandler:
                     payload['indent'],
                     name_stem or "include",
                     _ensure_includes_dir,
+                    combo_name,
                 )
             except Exception:
                 logger.exception("Failed to process include file: %s", full_include_path)
@@ -604,6 +630,45 @@ class FileHandler:
         except Exception:
             logger.exception("Failed writing NAV file %s", nav_filepath)
             return None
+
+    def _shared_include_line(self, parts, replacements, tokens_replaced, name_stem,
+                             combo_name, indent, realization_folder):
+        """Write a scenario-only rewritten include once per scenario combination.
+
+        The file lands in ``<output>/shared_includes/<combination>/`` and every
+        realization of the combination references it relatively - realization
+        folders already reference unmodified includes outside themselves, so
+        this adds no new portability constraint, and include-heavy decks save
+        one file creation per shared include per realization (the dominant
+        generation cost on network filesystems).
+
+        Concurrent first-writers may race on the same file; each writes the
+        identical content to a private temp file and atomically renames it
+        into place, so the shared file is complete the moment any thread
+        returns a line referencing it (the streamed queue can start Navigate
+        runs while generation continues).
+        """
+        shared_dir = os.path.join(self._shared_cfg['root'], combo_name)
+        file_name = f"{name_stem}_{'_'.join(tokens_replaced)}.inc"
+        shared_path = os.path.join(shared_dir, file_name)
+
+        with self._include_lock:
+            already_written = shared_path in self._shared_written
+        if not already_written:
+            os.makedirs(shared_dir, exist_ok=True)
+            tmp_path = f"{shared_path}.{threading.get_ident()}.tmp"
+            self._write_to_file(tmp_path, _render_parts(parts, replacements))
+            os.replace(tmp_path, shared_path)
+            with self._include_lock:
+                self._shared_written.add(shared_path)
+
+        cache_key = (shared_path, indent)
+        line = self._include_line_cache.get(cache_key)
+        if line is None:
+            rel = os.path.relpath(shared_path, realization_folder).replace(os.sep, '/')
+            line = _format_include_line(rel, indent)
+            self._include_line_cache[cache_key] = line
+        return line
 
     @staticmethod
     def _build_command(path, solver_flag, extra_flags):
@@ -631,7 +696,7 @@ class FileHandler:
     def _process_and_update_include_file(self, include_file_path, replacements, sample_number,
                                          simulation_includes_folder, realization_folder,
                                          indent='\t', name_stem="include",
-                                         ensure_includes_dir=None):
+                                         ensure_includes_dir=None, combo_name=None):
         """
         Process an include (.inc) file: replace tokens and optionally save to simulation_includes.
 
@@ -642,7 +707,8 @@ class FileHandler:
         the generated .nav keeps the template's indentation. `name_stem` is the
         collision-safe stem for the rewritten copy (see _annotate_include_names);
         `ensure_includes_dir` creates simulation_includes/ at most once per
-        realization.
+        realization; `combo_name` names the realization's scenario combination
+        for the shared include store.
         """
         parts = self._compiled_include(include_file_path)
 
@@ -657,9 +723,19 @@ class FileHandler:
                 tokens_replaced.append(token)
 
         if tokens_replaced:
-            # Name the file by its source stem plus the replaced tokens: the
-            # stem is what keeps two different .inc files that replace the
-            # same token set from overwriting each other.
+            # A rewrite that replaces only scenario tokens has identical
+            # content for every sample of the combination: write it once per
+            # combination in the shared store instead of once per realization.
+            if (self._shared_cfg['enabled'] and combo_name
+                    and set(tokens_replaced) <= self._shared_cfg['scenario_keys']):
+                return self._shared_include_line(
+                    parts, replacements, tokens_replaced, name_stem,
+                    combo_name, indent, realization_folder)
+
+            # Sample-dependent rewrite: one copy per realization, named by the
+            # source stem plus the replaced tokens (the stem is what keeps two
+            # different .inc files replacing the same token set from
+            # overwriting each other).
             combined_tokens = '_'.join(tokens_replaced)
             new_file_name = f"{name_stem}_{combined_tokens}_sample_{sample_number}.inc"
             new_file_path = os.path.join(simulation_includes_folder, new_file_name)
