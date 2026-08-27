@@ -17,10 +17,40 @@ from horizon.parser.exclusions import get_scenario_label, should_skip_combinatio
 # Token pattern: matches %token_name%
 _TOKEN_RE = re.compile(r'%([A-Za-z0-9_]+)%')
 
+# Include directive at the start of a line, e.g. `    Include "includes/a.inc"`.
+# Matched case-insensitively so legacy templates using the old all-caps
+# `INCLUDE` spelling are still recognised; the emitted .nav is always written
+# with the spelling below.
+_INCLUDE_LINE_RE = re.compile(r'^(\s*)Include\b', re.IGNORECASE)
+
+# Spelling Navigate's grammar accepts for the deck-level include directive.
+# Navigate parses `Include` in Title case only; anything else is a deck syntax
+# error, so every include line Horizon writes must use exactly this.
+_INCLUDE_KEYWORD = 'Include'
+
 logger = logging.getLogger(__name__)
 
 
 _PROGRESS_HEARTBEAT_INTERVAL = 50
+
+
+def _is_include_line(line):
+    """Return True if `line` is a deck-level include directive."""
+    return _INCLUDE_LINE_RE.match(line) is not None
+
+
+def _normalize_include_keyword(line):
+    """Rewrite the leading include keyword to Navigate's `Include` spelling.
+
+    Leaves indentation and the rest of the line untouched, so a legacy
+    `\\tINCLUDE "a.inc"` template line becomes `\\tInclude "a.inc"`.
+    """
+    return _INCLUDE_LINE_RE.sub(lambda m: f'{m.group(1)}{_INCLUDE_KEYWORD}', line, count=1)
+
+
+def _format_include_line(path, indent='\t'):
+    """Build an include line for a .nav file in Navigate's current format."""
+    return f'{indent}{_INCLUDE_KEYWORD} "{path}"\n'
 
 
 def extract_template_tokens(unc_path):
@@ -41,8 +71,8 @@ def extract_template_tokens(unc_path):
         with open(unc_path, 'r') as fh:
             for line in fh:
                 tokens.update(m.group(1) for m in _TOKEN_RE.finditer(line))
-                # Follow INCLUDE directives to scan .inc files
-                if line.strip().upper().startswith('INCLUDE'):
+                # Follow Include directives to scan .inc files
+                if _is_include_line(line):
                     try:
                         include_path_relative = line.split('"')[1]
                         # Only follow includes that don't themselves contain tokens
@@ -73,7 +103,7 @@ class FileHandler:
       the handler will not expand scenario combinations and will generate one nav per
       sample. Otherwise, it will generate the cartesian product of scenario parameter values
       and iterate `sampled_parameters` per combination.
-    - INCLUDE lines in the .unc file are processed: path tokens are interpolated,
+    - Include lines in the .unc file are processed: path tokens are interpolated,
       the target .inc file is read and tokens within it are replaced, and a modified
       .inc file is written to `simulation_includes` if any tokens were replaced.
     """
@@ -171,7 +201,7 @@ class FileHandler:
         except FileNotFoundError:
             raise FileOperationError(f"UNC template file not found: {unc_path}")
 
-        is_include_line = [line.strip().upper().startswith('INCLUDE') for line in unc_content]
+        is_include_line = [_is_include_line(line) for line in unc_content]
 
         # Build adjusted lists of scenario tokens and values:
         adjusted_scenario_values = []
@@ -338,6 +368,9 @@ class FileHandler:
                 # Update include path with token replacements
                 line, include_path_relative = self._update_include_path(line, replacements)
 
+                # Carry the template's indentation over to the generated line
+                indent = line[:len(line) - len(line.lstrip())]
+
                 # Resolve full include path relative to unc_path
                 full_include_path = os.path.normpath(os.path.join(os.path.dirname(unc_path), include_path_relative))
 
@@ -349,14 +382,16 @@ class FileHandler:
                         sample_number,
                         simulation_includes_folder,
                         scenario_parameters,
-                        realization_folder
+                        realization_folder,
+                        indent
                     )
                 except Exception:
                     logger.exception("Failed to process include file: %s", full_include_path)
                     updated_line = None
 
-                if updated_line:
-                    line = updated_line
+                # Fall back to the template line if the include could not be handled, but still
+                # normalize the keyword so the .nav never carries a legacy spelling Navigate rejects.
+                line = updated_line if updated_line else _normalize_include_keyword(line)
 
                 nav_content.append(line)
                 continue
@@ -389,11 +424,14 @@ class FileHandler:
         ]
 
     def _process_and_update_include_file(self, include_file_path, sample, sample_number,
-                                         simulation_includes_folder, scenario_parameters, realization_folder):
+                                         simulation_includes_folder, scenario_parameters, realization_folder,
+                                         indent='\t'):
         """
         Process an include (.inc) file: replace tokens and optionally save to simulation_includes.
 
-        Returns a new INCLUDE line to be placed in the .nav file, or None if the include could not be handled.
+        Returns a new `Include` line to be placed in the .nav file, or None if the include could not
+        be handled. `indent` is the leading whitespace of the template line, carried over so the
+        generated .nav keeps the template's indentation.
         """
         inc_content = self._read_include_cached(include_file_path)
 
@@ -448,14 +486,14 @@ class FileHandler:
                 logger.exception("Failed writing modified include file %s", new_file_path)
                 return None
             new_include_path_relative = os.path.join("simulation_includes", new_file_name).replace(os.sep, '/')
-            return f'\tINCLUDE "{new_include_path_relative}"\n'
+            return _format_include_line(new_include_path_relative, indent)
         else:
             # No tokens changed: include original file with a relative path from the .nav file's directory
             original_rel = os.path.relpath(
                 include_file_path,
                 realization_folder
             ).replace(os.sep, '/')
-            return f'\tINCLUDE "{original_rel}"\n'
+            return _format_include_line(original_rel, indent)
 
     @staticmethod
     def _prepare_simulation_directories(output_folder):
@@ -468,18 +506,18 @@ class FileHandler:
 
     def _update_include_path(self, line, replacements):
         """
-        Replace tokens in an INCLUDE line path using replacements and return the updated line
+        Replace tokens in an Include line path using replacements and return the updated line
         and the interpolated relative include path.
 
         Example:
-            line = '\tINCLUDE "../inc/policy_%bio%_%el%.inc"\n'
+            line = '\tInclude "../inc/policy_%bio%_%el%.inc"\n'
             replacements = {'bio': 'low_bio', 'el': 'low_el'}
-            -> returns ('\tINCLUDE "../inc/policy_low_bio_low_el.inc"\n', '../inc/policy_low_bio_low_el.inc')
+            -> returns ('\tInclude "../inc/policy_low_bio_low_el.inc"\n', '../inc/policy_low_bio_low_el.inc')
         """
         try:
             include_path_relative = line.split('"')[1]
         except IndexError:
-            # malformed INCLUDE line; return as-is
+            # malformed Include line; return as-is
             return line, ""
 
         original_include_path = include_path_relative

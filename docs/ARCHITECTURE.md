@@ -71,7 +71,7 @@ rules.
 
 ### File handler (`horizon/file_handler/`)
 
-Generates `.nav` files from the `.unc` template: processes `INCLUDE`
+Generates `.nav` files from the `.unc` template: processes `Include`
 directives (tokenizing `.inc` files as well), replaces `%TOKEN%`
 placeholders with sampled values, creates one directory per realization, and
 builds the corresponding `navigate` command list. Scenario and sample tokens
