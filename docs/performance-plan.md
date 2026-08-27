@@ -5,6 +5,15 @@ SPDX-License-Identifier: CC-BY-4.0
 
 # Performance plan: file generation and queuing
 
+> **Status.** Phases 0–2 have landed on this branch, one commit per step,
+> each through the full verification protocol below. Measured on the
+> benchmark container (2 000 realizations): generation 5.3 s → 1.7 s,
+> queue submission via real pueue 4.0.4 129 s → 12.8 s (direct daemon
+> connection, minimal task env) and overlapped with generation;
+> `state.json` 17.2 MB → 2.0 MB. Still open: 1.5 (pool tuning — measure on
+> a Windows workstation), 2.3's TCP+TLS variant for Windows (Windows uses
+> the CLI fallback until then), 2.4 (docs/groups), and Phase 3.
+
 Goal: make `horizon my_study.hor` — parse, sample, generate `.nav` files,
 queue via pueue — as fast as the machine allows, in steps that are each
 independently verifiable and revertable. Earlier work (thread pools for

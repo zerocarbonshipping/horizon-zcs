@@ -37,6 +37,9 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("count", type=int, help="number of commands to submit")
     ap.add_argument("--priority", choices=["low", "normal", "high"], default="normal")
+    ap.add_argument("--via", choices=["auto", "cli"], default="auto",
+                    help="'auto' uses the direct daemon connection when one is found "
+                         "(with CLI fallback); 'cli' forces one pueue process per task")
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s - %(message)s")
@@ -50,7 +53,7 @@ def main():
     ]
 
     t0 = time.perf_counter()
-    run_commands(commands, priority=args.priority)
+    run_commands(commands, priority=args.priority, pueue_cli=(args.via == "cli"))
     dt = time.perf_counter() - t0
     print(f"\nsubmitted {args.count} tasks in {dt:.2f} s  ({args.count / dt:.0f} tasks/s)")
 

@@ -40,6 +40,13 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   env, `ASSUMPTIONS_DATA_DIR`, Gurobi licensing, thread limits, ...);
   extend it with `HORIZON_TASK_ENV=VAR1,VAR2` or disable trimming with
   `horizon --full-task-env`.
+- Tasks are submitted over a single direct connection to the pueue daemon
+  when a pueue >= 4 unix socket is found (POSIX only), instead of spawning
+  one `pueue add` client process per task — 2000 tasks queue in ~13 s where
+  the CLI path took ~129 s in our benchmark. Any problem with the direct
+  connection (older pueue, TCP-configured daemon, protocol error mid-run)
+  falls back to the pueue CLI automatically without losing tasks;
+  `horizon --pueue-cli` forces the CLI path outright.
 
 ### Fixed
 - `RandomSeed` now actually reproduces LHS studies: the seed is passed to

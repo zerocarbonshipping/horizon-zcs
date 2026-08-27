@@ -7,9 +7,14 @@ import concurrent.futures
 import json
 import logging
 import os
+import queue
 import subprocess
+import threading
 from collections import Counter
 from typing import List
+
+from horizon.run import pueue_client
+from horizon.run.pueue_client import PueueDirectError
 
 logger = logging.getLogger(__name__)
 
@@ -127,6 +132,67 @@ def _queue_single_command(command: str, pueue_priority: int, env_vars: str, task
         return (False, str(e))
 
 
+class _DirectSubmitter:
+    """Streams Add requests over one direct daemon connection.
+
+    A single background thread owns the connection (the protocol is strict
+    request/response). Any protocol failure marks the submitter broken; the
+    commands not yet sent are handed back so the caller can resubmit them
+    via the pueue CLI - the fast path never loses a task.
+    """
+
+    _SENTINEL = object()
+
+    def __init__(self, pueue_priority, envs, cwd, expected_total):
+        # Raises PueueDirectError when no daemon is reachable.
+        self._conn = pueue_client.connect()
+        self._pueue_priority = pueue_priority
+        self._envs = envs
+        self._cwd = cwd
+        self._expected = expected_total
+        self._queue = queue.SimpleQueue()
+        self._ok = 0
+        self._failures = []
+        self._leftover = []
+        self._error = None
+        self._thread = threading.Thread(target=self._run, name="pueue-direct-submit", daemon=True)
+        self._thread.start()
+
+    def submit(self, command):
+        self._queue.put(command)
+
+    def finish(self):
+        """Wait for the worker; returns (ok_count, failures, leftover, error)."""
+        self._queue.put(self._SENTINEL)
+        self._thread.join()
+        self._conn.close()
+        return self._ok, self._failures, self._leftover, self._error
+
+    def _run(self):
+        while True:
+            item = self._queue.get()
+            if item is self._SENTINEL:
+                return
+            if self._error is not None:
+                self._leftover.append(item)
+                continue
+            try:
+                success, error_msg = self._conn.add_task(
+                    item, self._cwd, self._envs, self._pueue_priority, _extract_label(item))
+            except PueueDirectError as exc:
+                self._error = exc
+                self._leftover.append(item)
+                continue
+            if success:
+                self._ok += 1
+                if (self._expected > _PROGRESS_HEARTBEAT_INTERVAL
+                        and self._ok % _PROGRESS_HEARTBEAT_INTERVAL == 0
+                        and self._ok < self._expected):
+                    logger.info("Queuing progress: %d/%d tasks submitted...", self._ok, self._expected)
+            else:
+                self._failures.append((item, error_msg))
+
+
 class StreamingQueuer:
     """Submits navigate commands to pueue as they are produced.
 
@@ -134,6 +200,11 @@ class StreamingQueuer:
     the moment each .nav is written, so the first simulations start while the
     rest of the study is still being generated, and total wall time becomes
     max(generation, queuing) instead of their sum.
+
+    Submission goes over a direct connection to the pueue daemon when one is
+    reachable (one connection for the whole study - no per-task process
+    spawn or client handshake); otherwise, and on any protocol failure, over
+    the pueue CLI. ``pueue_cli=True`` forces the CLI path.
 
     Protocol: ``start(expected_total)`` once (the per-task thread-limit
     environment is derived from the expected task count, exactly like the
@@ -145,14 +216,18 @@ class StreamingQueuer:
     while preventing over-subscription on large runs.
     """
 
-    def __init__(self, priority: str = "normal", full_task_env: bool = False):
+    def __init__(self, priority: str = "normal", full_task_env: bool = False,
+                 pueue_cli: bool = False):
         self._priority = priority
         self._pueue_priority = PRIORITY_MAP[priority]
         self._executor = None
         self._future_to_cmd = {}
         self._env_vars = ""
         self._expected = 0
+        self._full_task_env = full_task_env
         self._task_env = _build_task_env(full_task_env)
+        self._force_cli = pueue_cli
+        self._direct = None
 
     def start(self, expected_total: int) -> None:
         """Size the per-task thread env for ``expected_total`` tasks and
@@ -171,11 +246,42 @@ class StreamingQueuer:
             "Queuing %d tasks with %d threads each (%d CPUs available)",
             expected_total, threads_per_task, cpu_count,
         )
-        self._executor = concurrent.futures.ThreadPoolExecutor(
-            max_workers=min(16, cpu_count))
+
+        if not self._force_cli:
+            # The direct path sets the task environment explicitly, so the
+            # thread limits travel as environment entries instead of a
+            # POSIX-shell prefix in the command string.
+            direct_envs = dict(os.environ) if self._full_task_env else dict(self._task_env)
+            direct_envs.update(
+                OMP_NUM_THREADS=str(threads_per_task),
+                MKL_NUM_THREADS=str(threads_per_task),
+                NUMEXPR_NUM_THREADS=str(threads_per_task),
+            )
+            try:
+                self._direct = _DirectSubmitter(
+                    self._pueue_priority, direct_envs, os.getcwd(), expected_total)
+                logger.info("Submitting over a direct pueue daemon connection "
+                            "(protocol %s).", self._direct._conn.daemon_version)
+            except PueueDirectError as exc:
+                logger.debug("Direct pueue submission unavailable (%s); using the pueue CLI.", exc)
+
+        if self._direct is None:
+            self._start_cli_executor()
+
+    def _start_cli_executor(self):
+        if self._executor is None:
+            cpu_count = os.cpu_count() or 4
+            self._executor = concurrent.futures.ThreadPoolExecutor(
+                max_workers=min(16, cpu_count))
 
     def submit(self, command: str) -> None:
         """Queue one command; ``start()`` must have been called."""
+        if self._direct is not None:
+            self._direct.submit(command)
+            return
+        self._submit_cli(command)
+
+    def _submit_cli(self, command: str) -> None:
         future = self._executor.submit(
             _queue_single_command, command, self._pueue_priority, self._env_vars, self._task_env)
         self._future_to_cmd[future] = command
@@ -184,11 +290,35 @@ class StreamingQueuer:
         """Wait for all submissions, log the outcome, and return
         ``(queued_ok, queued_fail)``. Safe to call when ``start()`` never
         ran (returns ``(0, 0)``)."""
-        if self._executor is None:
-            return (0, 0)
-
         queued_ok = 0
         queued_fail = 0
+
+        if self._direct is not None:
+            direct_ok, failures, leftover, error = self._direct.finish()
+            self._direct = None
+            queued_ok += direct_ok
+            for command, error_msg in failures:
+                logger.error("Failed to queue command: %s", command)
+                if error_msg:
+                    logger.error("Pueue error: %s", error_msg)
+                queued_fail += 1
+            if error is not None:
+                if leftover:
+                    logger.warning(
+                        "Direct pueue submission failed mid-stream (%s); "
+                        "resubmitting %d task(s) via the pueue CLI.", error, len(leftover))
+                else:
+                    logger.warning("Direct pueue submission failed (%s).", error)
+            if leftover:
+                self._start_cli_executor()
+                for command in leftover:
+                    self._submit_cli(command)
+
+        if self._executor is None:
+            if queued_ok or queued_fail:
+                self._log_summary(queued_ok, queued_fail)
+            return (queued_ok, queued_fail)
+
         completed = 0
         num_tasks = len(self._future_to_cmd)
 
@@ -216,16 +346,21 @@ class StreamingQueuer:
         self._executor = None
         self._future_to_cmd = {}
 
+        self._log_summary(queued_ok, queued_fail)
+        return (queued_ok, queued_fail)
+
+    def _log_summary(self, queued_ok, queued_fail):
+        num_tasks = queued_ok + queued_fail
         if queued_fail:
             logger.warning("Queued %d/%d task(s) (priority=%s), %d failed",
                            queued_ok, num_tasks, self._priority, queued_fail)
         else:
             logger.info("Successfully queued %d/%d task(s) (priority=%s)",
                         queued_ok, num_tasks, self._priority)
-        return (queued_ok, queued_fail)
 
 
-def run_commands(commands: List[str], priority: str = "normal", full_task_env: bool = False) -> None:
+def run_commands(commands: List[str], priority: str = "normal", full_task_env: bool = False,
+                 pueue_cli: bool = False) -> None:
     """
     Run multiple navigation commands using pueue with adaptive thread allocation.
 
@@ -244,8 +379,11 @@ def run_commands(commands: List[str], priority: str = "normal", full_task_env: b
     full_task_env : bool
         Forward the entire environment to each task instead of the
         whitelist (see _TASK_ENV_WHITELIST / HORIZON_TASK_ENV).
+    pueue_cli : bool
+        Force submission through the pueue CLI instead of the direct
+        daemon connection.
     """
-    queuer = StreamingQueuer(priority=priority, full_task_env=full_task_env)
+    queuer = StreamingQueuer(priority=priority, full_task_env=full_task_env, pueue_cli=pueue_cli)
     queuer.start(len(commands))
     for command in commands:
         queuer.submit(command)
