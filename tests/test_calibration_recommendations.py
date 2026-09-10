@@ -111,11 +111,11 @@ def _write_excel_report(path, param_token, param_value, regulation):
     ws.title = "Global"
 
     # Row 1: scope
-    ws.append(["Scope", "Year", "TotalEquivalentWTW", "Expenses",
+    ws.append(["Scope", "Year", "TotalEquivalentWtw", "Expenses",
                "ConsumedEnergy", "ConsumedEnergy", "ConsumedEnergy", "ConsumedEnergy",
                "InstalledPower", "InstalledPower", "InstalledPower", "InstalledPower"])
     # Row 2: metric names (same as row 1 for real format)
-    ws.append(["", "", "TotalEquivalentWTW", "Expenses",
+    ws.append(["", "", "TotalEquivalentWtw", "Expenses",
                "ConsumedEnergy", "ConsumedEnergy", "ConsumedEnergy", "ConsumedEnergy",
                "InstalledPower", "InstalledPower", "InstalledPower", "InstalledPower"])
     # Row 3: sub-metrics (fuel types)
@@ -222,7 +222,7 @@ class TestScoringFunctions:
         # Linear decline to final_wtw
         vals = np.linspace(100, final_wtw, n)
         report = {
-            "TotalEquivalentWTW": pd.DataFrame({"Total": vals}, index=years),
+            "TotalEquivalentWtw": pd.DataFrame({"Total": vals}, index=years),
         }
         if fuel_shares:
             total = 1000.0
@@ -297,7 +297,7 @@ class TestScoringFunctions:
         import pandas as pd
         years = list(range(2024, 2051))
         vals = np.linspace(100, 50, len(years))
-        report = {"TotalEquivalentWTW": pd.DataFrame({"Total": vals}, index=years)}
+        report = {"TotalEquivalentWtw": pd.DataFrame({"Total": vals}, index=years)}
         data = {"0.5": report}
         score = _score_trajectory_smoothness(data)
         assert score > 0.99, f"Linear trajectory should be perfectly smooth, got {score}"
@@ -308,7 +308,7 @@ class TestScoringFunctions:
         vals = np.linspace(100, 50, len(years))
         # Add high-frequency noise
         vals += np.random.default_rng(42).normal(0, 10, len(years))
-        report = {"TotalEquivalentWTW": pd.DataFrame({"Total": vals}, index=years)}
+        report = {"TotalEquivalentWtw": pd.DataFrame({"Total": vals}, index=years)}
         data = {"0.5": report}
         score = _score_trajectory_smoothness(data)
         assert score < 0.8, f"Jagged trajectory should score low, got {score}"
