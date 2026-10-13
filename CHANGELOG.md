@@ -29,6 +29,10 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   `min(8, CPU)` to `min(64, 4×CPU)` there, where generation is bound by
   file-creation round trips and blocked threads are free. `--gen-workers`
   still overrides.
+- **Breaking**: the default emissions metric key is `TotalEquivalentWtw`
+  (formerly `TotalEquivalentWTW`), following navigate-zcs renaming its
+  report properties — the key must match the report column navigate writes.
+  Configs and `--metric` arguments using the old spelling find no column.
 - File generation is substantially faster: `.unc` templates and `.inc`
   include files are tokenized once and rendered per realization instead of
   being regex-scanned line by line for every realization. Generated files

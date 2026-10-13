@@ -187,17 +187,17 @@ SensitivityAnalysis {
     OutputDir = "prcc_analysis"             # optional
 
     Metric "Emissions reduction" {
-        key = "TotalEquivalentWTW"
+        key = "TotalEquivalentWtw"
         aggregation = difference            # last year minus first year
     }
 
     Metric "Lifetime emissions" {
-        key = "TotalEquivalentWTW"
+        key = "TotalEquivalentWtw"
         aggregation = cumulative            # sum over all years
     }
 
     Metric "Final year emissions" {
-        key = "TotalEquivalentWTW"
+        key = "TotalEquivalentWtw"
         year = 2050
         aggregation = point                 # value at a specific year (default)
     }
@@ -218,10 +218,10 @@ Sensitivity analysis can also run without a `.sen` file:
 
 ```bash
 horizon --sensitivity-analysis --samples-csv samples.csv \
-        --metric "TotalEquivalentWTW:difference" \
+        --metric "TotalEquivalentWtw:difference" \
         --metric "Expenses:cumulative" \
         --report-csv report.csv source_dir output_dir
 ```
 
-Default metrics when none are given: `TotalEquivalentWTW:difference`,
-`Expenses:difference`, `TotalEquivalentWTW:cumulative`.
+Default metrics when none are given: `TotalEquivalentWtw:difference`,
+`Expenses:difference`, `TotalEquivalentWtw:cumulative`.
