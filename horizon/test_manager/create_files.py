@@ -236,7 +236,7 @@ def _validate_tokens(unc_file_path, scenario_parameters, parameters):
 
 def create_files(hor_file_path, max_files=None, priority="normal", solver=None,
                  navigate_flags=None, output_dir=None, dry_run=False, full_task_env=False,
-                 pueue_cli=False, gen_workers=None):
+                 pueue_cli=False, gen_workers=None, shared_includes=True):
     """
     Main entrypoint to create files based on the .hor configuration.
 
@@ -254,6 +254,9 @@ def create_files(hor_file_path, max_files=None, priority="normal", solver=None,
             daemon connection
         gen_workers: generation thread-pool size (default: min(8, cpu_count);
             see FileHandler.generate_scenarios_and_nav_files)
+        shared_includes: write scenario-only rewritten includes once per scenario
+            combination under shared_includes/ instead of into every realization
+            folder (default True; see FileHandler.generate_scenarios_and_nav_files)
     Returns:
         sample_only (bool) if we terminated early because SampleOnly=True, otherwise None
     """
@@ -409,6 +412,7 @@ def create_files(hor_file_path, max_files=None, priority="normal", solver=None,
             navigate_flags=navigate_flags,
             command_sink=queuer,
             max_workers=gen_workers,
+            shared_includes=shared_includes,
         )
     finally:
         # Wait for the already-submitted tasks even if generation failed

@@ -12,6 +12,23 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 ## [Unreleased]
 
 ### Changed
+- Rewritten includes whose content depends only on the scenario (all replaced
+  tokens are scenario tokens) are written once per scenario combination under
+  `shared_includes/<combination>/` and referenced from there, instead of
+  being copied into every realization folder. Include-heavy studies save one
+  file creation per such include per realization — the dominant generation
+  cost on network filesystems. Sample-dependent rewrites stay per-realization
+  in `simulation_includes/`; `--no-shared-includes` restores full
+  per-realization copies.
+- Rewritten include filenames now carry the source file's stem (e.g.
+  `policy_POLICY_sample_1.inc` instead of `POLICY_sample_1.inc`), with a
+  short hash suffix when two sources share a stem or the include path is
+  tokenized.
+- The generation thread pool sizes itself to the output filesystem: a
+  startup latency probe detects network storage and raises the pool from
+  `min(8, CPU)` to `min(64, 4×CPU)` there, where generation is bound by
+  file-creation round trips and blocked threads are free. `--gen-workers`
+  still overrides.
 - File generation is substantially faster: `.unc` templates and `.inc`
   include files are tokenized once and rendered per realization instead of
   being regex-scanned line by line for every realization. Generated files
@@ -54,6 +71,16 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   `horizon --pueue-cli` forces the CLI path outright.
 
 ### Fixed
+- Two different `.inc` files replacing the same token set were rewritten to
+  the same `simulation_includes/` filename, silently overwriting each other:
+  both nav `Include` lines then pointed at whichever copy was written last,
+  so the simulation ran with one include's content missing and the other's
+  duplicated. Any study with two or more includes tokenized by the same
+  scenario parameter was affected.
+- The direct pueue daemon connection now engages with pueued-generated
+  configs: unset options written as YAML `null` (e.g.
+  `unix_socket_path: null`) were read as literal paths, so discovery failed
+  and submission silently used the slower CLI path.
 - `RandomSeed` now actually reproduces LHS studies: the seed is passed to
   pyDOE3's `lhs()` directly (pyDOE3 >= 1.5 ignores the legacy global NumPy
   seed, so sampled values differed between runs of the same study). This

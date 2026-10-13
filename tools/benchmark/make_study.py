@@ -37,13 +37,17 @@ PRESETS = {
 
 def make_study(root, n_scen=3, scen_values=2, n_cont=12, n_disc=4, n_samples=250,
                template_lines=800, n_includes=12, tokenized_includes=4, include_lines=60,
-               seed=42, sample_only=False, overrides=True):
+               seed=42, sample_only=False, overrides=True, scenario_includes=0):
     """Write the study files and return a dict describing the scale.
 
     With ``overrides=True`` (default) the first continuous parameter carries a
     scenario override, so Horizon takes the per-scenario sampling path. With
     ``overrides=False`` it takes the legacy path: sample once, and let the
     file handler expand the scenario combinations itself.
+
+    ``scenario_includes`` adds that many include files tokenized with a
+    scenario token only — the shape of production decks whose policy/regulation
+    packages vary per scenario but not per sample.
     """
     random.seed(seed)
     os.makedirs(root, exist_ok=True)
@@ -136,6 +140,21 @@ def make_study(root, n_scen=3, scen_values=2, n_cont=12, n_disc=4, n_samples=250
         with open(os.path.join(inc_dir, name), "w") as fh:
             fh.writelines(lines)
 
+    # Scenario-only tokenized includes: content varies per scenario, not per
+    # sample (production decks carry many of these - policy and regulation
+    # packages parameterized on the scenario branch).
+    scenario_include_names = []
+    for i in range(scenario_includes):
+        name = f"scen_inc_{i:02d}.inc"
+        scenario_include_names.append(name)
+        lines = [f"# scenario include {i}\n", "DEFINE {\n",
+                 f"    # branch: %{scen_tokens[0]}%\n"]
+        for ln in range(include_lines):
+            lines.append(f"    set_policy_{ln}({random.random():.6f})\n")
+        lines.append("}\n")
+        with open(os.path.join(inc_dir, name), "w") as fh:
+            fh.writelines(lines)
+
     # One include whose *path* is scenario-dependent (exercises token
     # interpolation in Include paths); one static file per scenario value.
     for j in range(scen_values):
@@ -150,6 +169,8 @@ def make_study(root, n_scen=3, scen_values=2, n_cont=12, n_disc=4, n_samples=250
     for tok in all_sample_tokens:
         lines.append(f"    set_{tok.lower()}(%{tok}%)\n")
     lines.append(f'    Include "includes/branch_%{scen_tokens[0]}%.inc"\n')
+    for name in scenario_include_names:
+        lines.append(f'    Include "includes/{name}"\n')
     body_lines = max(0, template_lines - len(lines) - len(include_names) - 4)
     token_cursor = 0
     for ln in range(body_lines):
@@ -188,6 +209,9 @@ def main():
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--no-overrides", action="store_true",
                     help="no scenario overrides: exercises the legacy sampling path")
+    ap.add_argument("--scenario-includes", type=int, default=0,
+                    help="additional includes tokenized with a scenario token only "
+                         "(production decks carry many; eligible for the shared store)")
     ap.add_argument("--fresh", action="store_true", help="delete the study directory first")
     args = ap.parse_args()
 
@@ -195,7 +219,8 @@ def main():
                   n_disc=args.disc, n_samples=args.samples, template_lines=args.template_lines,
                   n_includes=args.includes, tokenized_includes=args.tokenized_includes,
                   include_lines=args.include_lines, seed=args.seed,
-                  overrides=not args.no_overrides)
+                  overrides=not args.no_overrides,
+                  scenario_includes=args.scenario_includes)
     if args.preset:
         kwargs.update(PRESETS[args.preset])
 
