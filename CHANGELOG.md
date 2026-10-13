@@ -73,6 +73,11 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 - Include-line detection is word-boundary aware, so an attribute such as
   `IncludeRate = 5` is no longer mistaken for an include directive.
 
+## [1.0.1] - 2026-10-13
+
+### Fixed
+- Generated `.nav` files now always emit the `Include` keyword in Title case, as required by navigate-zcs; 1.0.0 emitted `INCLUDE`, which navigate rejects.
+
 ## [1.0.0] - 2026-08-17
 
 Initial public release of Horizon, an open-source uncertainty analysis tool
