@@ -67,8 +67,8 @@ def main():
                             help="Run PRCC sensitivity analysis.  Optionally provide a .sen "
                                  "config file path (e.g. --sensitivity-analysis config.sen).")
     cli_parser.add_argument("--metric", type=str, action="append", default=None,
-                            help="Metric for PRCC analysis (e.g., 'TotalEquivalentWTW@2050', "
-                                 "'Expenses:difference', 'TotalEquivalentWTW:cumulative'). Repeatable.")
+                            help="Metric for PRCC analysis (e.g., 'TotalEquivalentWtw@2050', "
+                                 "'Expenses:difference', 'TotalEquivalentWtw:cumulative'). Repeatable.")
     cli_parser.add_argument("--samples-csv", type=str, default=None,
                             help="Path to the parameter samples CSV file (e.g. samples.csv).")
     cli_parser.add_argument("--report-csv", type=str, default=None,
