@@ -1,0 +1,6 @@
+73f8e78	ok	5427	0.19	4.41	9.39	kept	A: remove --no-shared-includes
+a7aeff1	ok	5388	0.18	4.52	9.13	kept	B: remove fs latency probe and adaptive worker count
+87d9781	ok	5388	0.13	4.46	8.62	kept	C: all-caps INCLUDE raises FileOperationError instead of being normalised
+6d4f362	ok	5289	0.19	4.72	9.62	kept	D: remove dead code: histograms plot, generate_commands_list/commands, calibration legacy path, round-2 table
+491b65f	ok	5289	0.20	4.23	8.18	kept	E: drop literal noqa text from calibration cards
+d00366b	ok	5285	0.21	4.37	9.72	kept	F: collected-report loader keeps the spec's label (labelled point metrics found)
