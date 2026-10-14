@@ -23,9 +23,9 @@ The short format removed most of the redundancy (421 -> 212 lines). What is left
 4. One new compatibility trap: a legacy file (with `Parameters = [...]` lists) and no `distribution` is now silently
    sampled log-triangular instead of uniform.
 
-Proposed next step: a compact distribution call, a few more defaults, a `Format = 2` marker instead of the header,
+Proposed next step: an optional compact distribution call, a few more defaults, legacy-default pinning,
 `= (low, mid, high)` / `= base` one-line overrides, strict key and override validation, and `horizon check / fmt / --explain`.
-Rewritten october/run.hor: **105 lines vs 212** (code lines 128 -> 38). Sections 2-3 measure the current state, section 5 has the
+Rewritten october/run.hor: **103 lines vs 212** (code lines 128 -> 37). Sections 2-3 measure the current state, section 5 has the
 proposals, section 7 the full file. The rewrite was verified identical to the current file (resolved parameters, emissions samples, drawn samples) for all 10 policies.
 
 ## 2. Already done (credit, not re-proposed)
@@ -110,6 +110,19 @@ ContinuousParameter "vessel_wacc_multiplier" = LOG-TRIANGULAR(0.6, 1.0, 1.8)
 ContinuousParameter "epc_interpolator" = UNIFORM(0.0, 1.0) { emissions_low = MAXIMUM }
 DiscreteParameter "plant_lead_time" = DISCRETE([3, 4, 5, 6], [0.15, 0.35, 0.35, 0.15]) { default = 4 }
 ```
+**Both forms stay valid, per block, in the same file.** The one-line call is an alternative
+spelling of `low_val`/`mid_val`/`high_val`/`distribution` (or `values`/`probabilities`); it parses to
+the same parameter. Users who prefer the current block form keep writing it; `horizon fmt` can convert
+either way. Only mixing the two *inside one block* (a call plus `low_val = ...`) is an error.
+
+`emissions_low`, `default`, `active`, `decimals` and `if` overrides are not distribution data, so they
+stay attributes, in an optional `{ ... }` after the call: on the same line when short
+(`{ emissions_low = MAXIMUM }`), as a normal block when there are several or there are overrides
+(see `operational_ee` in section 8). A parameter with only defaults is just the call. Rejected
+alternatives: `emissions_low` as a fourth call argument (mixes sampling and reporting concerns and
+breaks the fixed arity check) and a sign shorthand such as `-LOG-TRIANGULAR(...)` (cryptic for
+humans and agents). In the October study 8 of 17 parameters carry `emissions_low = MAXIMUM`.
+
 Grammar: `Kind "id" [= DIST(args)] [{ attrs }]`; args are `low, high` (UNIFORM, LOG-UNIFORM), `low, mode, high` (the triangulars)
 or `values[, probabilities]` (DISCRETE). Attributes inside `{ }` are separated by newline or comma.
 Removes: 53 -> 0 bound lines, the 14 implicit-distribution blocks now state theirs, comment/code drift becomes visible.
@@ -129,25 +142,16 @@ checked by the parser (a missing mode for TRIANGULAR is an error instead of an i
 Keep required: `NumberOfSamples` (it multiplies run cost), discrete `default` (ties like [0.35, 0.35] are ambiguous).
 Compat: only turns errors or boilerplate into defaults. Log the inferred value in `--explain`.
 
-### N3. `Format = 2` instead of the 8-line header; pin legacy defaults
-Before (8 comment lines in every file, tied to a tool version):
-```
-# Format notes (requires horizon with the short .hor format):
-# - Every parameter block below is part of the run. ...
-# ... 6 bullets
-```
-After:
-```
-Format = 2                      # short .hor format; defaults: docs/configuration.md
-```
-- `Format = 2` is a top-level key (the current parser already ignores it, so files with it parse today; tested).
-  A horizon that knows a later format reads the key to pick defaults; a missing key with parameter lists in the Horizon block means format 1.
-- Fixes the silent flip: in format 1 (legacy lists present, or no `Format`) a missing `distribution` stays UNIFORM, as before
-  PR #18; in format 2 it is LOG-TRIANGULAR. Add a regression test with the legacy sample from section 4, and put "was uniform" in the
-  deprecation warning with the one-line remedy (`distribution = UNIFORM`).
-- Better still for the long term: warn (error in `check`) when `distribution` is omitted and the block has only `default`
-  and no `mid_val` (the case where the default distribution silently decides the shape).
-Agent value: the rules are read from docs/tool, not copied; the file states which rule set applies.
+### N3. Pin the legacy default (no version marker)
+The format-notes header is temporary while the format evolves, so no `Format` key is proposed; the
+rules live in `docs/configuration.md`.
+One compatibility trap still needs a fix: a legacy file (parameter lists in the Horizon block) without
+`distribution` is now sampled LOG-TRIANGULAR instead of UNIFORM. The parser already detects legacy
+files (the lists trigger the deprecation warning), so: keep UNIFORM as the missing-distribution default
+when the legacy lists are present, add a regression test with the legacy sample from section 4, and
+name the remedy in the deprecation warning (`distribution = UNIFORM`, or remove the lists to get the
+new default). Longer term: `check` warns when `distribution` is omitted and the block has a `default`
+but no `mid_val` (the case where the default distribution silently decides the shape).
 
 ### N4. One-line overrides, `= base`, validated conditions
 Before (12 lines, one 201-char):
@@ -244,7 +248,7 @@ If more parameters become policy-dependent, define groups once (`groups = { weak
 
 ## 6. Syntax decision (unchanged): stay with the brace syntax
 
-The short format is the evidence: after removing redundancy the custom syntax gets a 17-parameter study into 105 lines, in the same
+The short format is the evidence: after removing redundancy the custom syntax gets a 17-parameter study into 103 lines, in the same
 `Kind "name" { Attr = value }` shape as `.nav`, `.unc`, `.inc` and `.sen`, with the same highlighters (UDL, VS Code extension) and the same
 function-call shape (`TRIANGULAR(...)`, `Forecast("x")`) the agents already write in `.nav`. TOML would not be shorter (overrides need
 `[[...override]]` tables with `when = {...}`), YAML adds indentation and implicit-typing risks (`no`, `3` vs `3.0`) and JSON has no comments for the
@@ -252,18 +256,18 @@ research notes. Machine-readability comes from `--dump-json` and the schema, not
 
 ## 7. Suggested order and compatibility summary
 
-1. N0 now (no release). 2. N5 + N3 (regression test for the legacy default flip) + N2: one parser release, golden tests that every current
+1. N0 now (no release). 2. N5 + N3 (legacy default pinning and regression test) + N2: one parser release, golden tests that every current
 file (simulations october, examples/, tests/ fixtures) resolves identically. 3. N1 + N4 (grammar additions, long forms remain). 4. N6 (`check`, `--explain`, `fmt`),
 N7. 5. N8-N10 on demand. Everything is additive except N5 (typos become errors) and the N3 legacy pinning (restores old behaviour).
 Keep long-form keys indefinitely; `fmt --compact` and `migrate` convert on request.
 
 ## 8. Rewritten october/run.hor (next-step format)
 
-Line count: **105 lines vs 212** (code 38 vs 128, comments 42 vs 53, blank 25 vs 31; 5,574 vs 7,244 bytes; longest line 124 vs 201 characters).
-Differences from the current file, all by design: no 8-line notes (replaced by `Format = 2`), no `SamplingMethod`, `UncFilePath`, `OutputPath`
+Line count: **103 lines vs 212** (code 37 vs 128, comments 42 vs 53, blank 24 vs 31; longest line 124 vs 201 characters).
+Differences from the current file, all by design: no 8-line notes (temporary; rules live in the docs), no `SamplingMethod`, `UncFilePath`, `OutputPath`
 (defaults), no `default` on the scenario (first value) or on `epc_interpolator` (midpoint), no `emissions_low = MINIMUM`, ASCII arrows in comments.
 All research comments are kept verbatim, including the two stale "Triangular" remarks, which should be corrected separately (they describe log-triangular blocks).
-Requires N1 (call form), N2 (defaults), N3 (`Format`), N4 (`= (...)`, `= base`) and unquoted scenario values. It does not parse with the current horizon-zcs.
+Requires N1 (call form), N2 (defaults), N4 (`= (...)`, `= base`) and unquoted scenario values. It does not parse with the current horizon-zcs.
 
 Verification: a scratch converter turned this file into the current short syntax (applying the proposed defaults), then the current
 `parse_hor_file`, `resolve_parameters_for_scenario` and `ParameterSampler` (`_emissions_sample`, `sample_group` with seed 69, 30 draws) compared the original
@@ -272,8 +276,6 @@ Result: 0 differences. (`pyDOE3` is not installed here, so it was stubbed; LHS w
 rewrite preserves the study under those rules, not that they are implemented.
 
 ```
-Format = 2                       # short .hor format; defaults are listed in docs/configuration.md
-
 Horizon {
     NumberOfSamples = 300        # per scenario combination: 10 policies x 300 = 3000 runs
     RandomSeed = 69
