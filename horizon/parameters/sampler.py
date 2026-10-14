@@ -346,7 +346,6 @@ class ParameterSampler:
     # ------------------------------------------------------------------
 
     def _discrete_ppf(self, p, u):
-        self._validate_discrete(p)
         cdf = np.cumsum(p.probabilities)
         idx = np.searchsorted(cdf, u, side="right")
         return p.values[min(idx, len(p.values) - 1)]
@@ -392,21 +391,12 @@ class ParameterSampler:
 
     @staticmethod
     def _validate_positive_bounds(p, require_mid=False):
-        if p.low_val is None or p.high_val is None:
-            raise ValueError(f"Missing bounds for '{p.token}'.")
         if p.low_val <= 0 or p.high_val <= 0:
             raise ValueError(f"Log distributions require positive bounds for '{p.token}'.")
         if p.low_val >= p.high_val:
             raise ValueError(f"Require low_val < high_val for '{p.token}'.")
-        if require_mid:
-            if p.mid_val is None:
-                # assume arithmetic average if mid_val is missing, and log this
-                avg = (p.low_val + p.high_val) / 2.0
-                p.mid_val = avg
-                logger.debug("Parameter '%s' missing mid_val: assuming mid_val = %s (average) for log-triangular",
-                             p.token, avg)
-            if p.mid_val <= 0:
-                raise ValueError(f"Log-triangular requires mid_val > 0 for '{p.token}'.")
+        if require_mid and p.mid_val <= 0:
+            raise ValueError(f"Log-triangular requires mid_val > 0 for '{p.token}'.")
 
     @staticmethod
     def _min_value(p):
