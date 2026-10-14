@@ -54,9 +54,8 @@ from horizon.sensitivity.prcc import compute_prcc
 logger = logging.getLogger(__name__)
 
 MetricSpec = namedtuple(
-    "MetricSpec", ["metric_key", "year", "display_name", "aggregation"],
+    "MetricSpec", ["metric_key", "year", "display_name", "aggregation"], defaults=("point",),
 )
-MetricSpec.__new__.__defaults__ = ("point",)  # backward compatible
 
 # Valid aggregation modes
 _AGGREGATIONS = {"point", "difference", "cumulative"}
@@ -368,33 +367,35 @@ def _resolve_metric_specs(raw_specs, probe_year_fn):
     return specs
 
 
+def _last_year(cells, parse):
+    """Year of the last cell that *parse* understands, or None."""
+    return next((y for y in map(parse, reversed(cells)) if y is not None), None)
+
+
 def _probe_final_year(ensemble_dir, folder_names):
     """Open the first available report and return the last year on the Global sheet."""
     for fname in folder_names[:50]:
-        folder_path = os.path.join(ensemble_dir, fname)
-        report_path = _find_report(folder_path)
+        report_path = _find_report(os.path.join(ensemble_dir, fname))
         if report_path is None:
             continue
+
         df = _read_global_sheet(report_path)
-        if df is None or len(df) < 5:
+        if df is None:
             continue
-        for row_idx in range(len(df) - 1, 3, -1):
-            y = _parse_year(df.iloc[row_idx, 0])
-            if y is not None:
-                return y
+
+        year = _last_year(df.iloc[4:, 0].tolist(), _parse_year)
+        if year is not None:
+            return year
+
     return None
 
 
 def _final_year_from_collected(collected_df):
-    """Extract the final year from the last data row of a collected report DataFrame."""
-    if collected_df is None or len(collected_df) < 6:
+    """Final year of a collected report DataFrame (data rows start at row 5)."""
+    if collected_df is None:
         return None
-    # Data rows start at row 5; scan backwards for a parseable year
-    for row_idx in range(len(collected_df) - 1, 4, -1):
-        y = _parse_year_from_date_str(collected_df.iloc[row_idx, 0])
-        if y is not None:
-            return y
-    return None
+
+    return _last_year(collected_df.iloc[5:, 0].tolist(), _parse_year_from_date_str)
 
 
 def _parse_year_from_date_str(cell_value):
