@@ -181,7 +181,7 @@ ContinuousParameter "OP_EE" {
     }
 }
 """ + HORIZON_BLOCK
-        with pytest.raises(ValueError, match="Missing low_val, high_val, or decimals"):
+        with pytest.raises(ValueError, match="Missing low_val or high_val"):
             _parse(tmp_path, content)
 
     def test_mid_val_only_in_if_block_does_not_leak(self, tmp_path):

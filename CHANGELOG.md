@@ -21,6 +21,12 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   warning. Two blocks with the same name now raise an error. A
   `DiscreteParameter` without `default` now raises an error instead of writing
   an empty value.
+- `distribution` is a keyword (`LOG-TRIANGULAR`, `TRIANGULAR`, `LOG-UNIFORM`,
+  `UNIFORM`) and defaults to `LOG-TRIANGULAR` when omitted (was `uniform`).
+  Quoted lowercase names still work; unknown names raise an error.
+- `decimals` is optional. Without it the rounding step is at most 1/10,000 of
+  the range, and log distributions keep 4 significant digits at `low_val`.
+  `if` blocks that change bounds or distribution recompute it.
 - Rewritten includes whose content depends only on the scenario (all replaced
   tokens are scenario tokens) are written once per scenario combination under
   `shared_includes/<combination>/` and referenced from there, instead of

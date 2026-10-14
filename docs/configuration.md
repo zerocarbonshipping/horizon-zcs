@@ -21,8 +21,7 @@ ContinuousParameter "FUEL_PRICE" {
     low_val = 0.8
     mid_val = 1.0
     high_val = 1.5
-    decimals = 2
-    distribution = "triangular"
+    distribution = TRIANGULAR
 }
 
 Horizon {
@@ -81,13 +80,26 @@ ScenarioParameter "POLICY" {
 }
 ```
 
-**`ContinuousParameter`** — numeric parameters sampled from a distribution:
-`uniform`, `triangular`, `log-uniform`, or `log-triangular`. `low_val` and
-`high_val` bound the range; `triangular` distributions also take `mid_val`
-(the mode). If `mid_val` is omitted it is inferred: the arithmetic mean
-`(low + high) / 2` for `triangular`, the geometric mean `sqrt(low * high)`
-for `log-triangular` (which requires positive bounds). `decimals` controls
-rounding of sampled values.
+**`ContinuousParameter`** — numeric parameters sampled from a distribution.
+`distribution` is a keyword: `LOG-TRIANGULAR` (default when omitted),
+`TRIANGULAR`, `LOG-UNIFORM` or `UNIFORM`. Quoted lowercase names
+(`"triangular"`) still work. `low_val` and `high_val` bound the range;
+triangular distributions also take `mid_val` (the mode). If `mid_val` is
+omitted it is inferred: the arithmetic mean `(low + high) / 2` for
+`TRIANGULAR`, the geometric mean `sqrt(low * high)` for `LOG-TRIANGULAR`.
+Log distributions require positive bounds.
+
+Sampled values are rounded. `decimals` is optional; without it Horizon picks
+the number of decimals from the bounds:
+
+- the rounding step is at most 1/10,000 of the range (`high_val - low_val`), and
+- for log distributions, values keep 4 significant digits at `low_val`, where
+  log sampling puts most of its values.
+
+Examples: 100–200 gives 2 decimals, 0.0001–0.001 gives 8, a log-triangular
+0.001–0.12 gives 6. If an `if` block changes the bounds or distribution, the
+decimals are recomputed for that scenario. Set `decimals` only to force a
+fixed number.
 
 **`DiscreteParameter`** — parameters drawn from a fixed set of values, with
 optional probabilities (uniform if omitted):

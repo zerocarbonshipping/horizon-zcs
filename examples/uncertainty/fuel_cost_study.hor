@@ -24,8 +24,7 @@ ContinuousParameter "FUEL_PRICE" {
     default = 1.0
     low_val = 0.8
     high_val = 1.5
-    decimals = 2
-    distribution = "uniform"
+    distribution = UNIFORM
 
     # under a carbon levy, fuel prices shift upward
     if POLICY = carbon_levy {
@@ -40,8 +39,7 @@ ContinuousParameter "DEMAND_GROWTH" {
     low_val = 0.01
     mid_val = 0.025
     high_val = 0.04
-    decimals = 3
-    distribution = "triangular"
+    distribution = TRIANGULAR
 }
 
 DiscreteParameter "RENEWAL" {

@@ -16,8 +16,16 @@ import re
 
 import numpy as np
 
-from horizon.exceptions import ParseError, ValidationError
-from horizon.parameters.parameter import ContinuousParameter, DiscreteParameter, ScenarioParameter
+from horizon.exceptions import ParameterError, ParseError, ValidationError
+from horizon.parameters.parameter import (
+    DEFAULT_DISTRIBUTION,
+    ContinuousParameter,
+    DiscreteParameter,
+    ScenarioParameter,
+    auto_decimals,
+    normalize_distribution,
+    round_value,
+)
 from horizon.parser.exclusions import parse_all_exclusions, parse_all_inclusions
 from horizon.parser.parser_patterns import (
     active_pattern,
@@ -51,11 +59,6 @@ _num_int_re = re.compile(r'^-?\d+$')
 
 
 _valid_token_re = re.compile(r'^[A-Za-z0-9_]+$')
-
-
-def _format_default(value, decimals):
-    """Format a mid_val used as default the way the sampler rounds values."""
-    return int(round(value)) if decimals == 0 else round(value, decimals)
 
 
 def _coerce_literal(s):
@@ -470,32 +473,30 @@ def create_parameter(param_type, name, token, active, default, block_content):
         attributes["emissions_low"] = low_case.group(1) if low_case else None
         attributes["emissions_high"] = high_case.group(1) if high_case else None
 
+        # distribution is a keyword (LOG-TRIANGULAR, TRIANGULAR, LOG-UNIFORM, UNIFORM);
+        # quoted lowercase names still work. Default: log-triangular.
         distribution_search = distribution_pattern.search(base_content)
-        if distribution_search:
-            raw_dist = distribution_search.group(1).strip()
-            # remove surrounding quotes if present (single or double)
-            if (raw_dist.startswith('"') and raw_dist.endswith('"')) or (
-                    raw_dist.startswith("'") and raw_dist.endswith("'")):
-                distribution = raw_dist[1:-1]
-            else:
-                distribution = raw_dist
-        else:
-            distribution = 'uniform'
+        try:
+            distribution = normalize_distribution(
+                distribution_search.group(1) if distribution_search else DEFAULT_DISTRIBUTION)
+        except ParameterError as e:
+            raise ParseError(f"Parameter '{token}': {e}")
 
         low_m = low_val_pattern.search(base_content)
         mid_m = mid_val_pattern.search(base_content)
         high_m = high_val_pattern.search(base_content)
         dec_m = decimals_pattern.search(base_content)
 
-        if not low_m or not high_m or not dec_m:
-            raise ValueError(f"Missing low_val, high_val, or decimals for ContinuousParameter '{token}'.")
+        if not low_m or not high_m:
+            raise ValueError(f"Missing low_val or high_val for ContinuousParameter '{token}'.")
 
         # Parse numeric values with error handling
         try:
             low_val = float(low_m.group(1))
             mid_val = float(mid_m.group(1)) if mid_m else None
             high_val = float(high_m.group(1))
-            decimals = int(dec_m.group(1))
+            # decimals is optional: without it, decimals follow the bounds (auto_decimals)
+            decimals = int(dec_m.group(1)) if dec_m else auto_decimals(low_val, high_val, distribution)
         except ValueError as e:
             raise ParseError(f"Invalid numeric value in parameter '{token}': {e}")
 
@@ -512,13 +513,13 @@ def create_parameter(param_type, name, token, active, default, block_content):
                 raise ParseError(
                     f"Parameter '{token}' has no mid_val and no default. Set default explicitly."
                 )
-            attributes["default"] = _format_default(mid_val, decimals)
+            attributes["default"] = round_value(mid_val, decimals)
 
         attributes.update({
             "low_val": low_val,
             "mid_val": mid_val,
             "high_val": high_val,
-            "decimals": decimals,
+            "decimals": decimals if dec_m else None,
             "distribution": distribution,
             "default_from_mid": default_from_mid,
         })

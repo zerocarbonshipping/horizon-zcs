@@ -551,3 +551,95 @@ ContinuousParameter "a" {
 """)
         assert params[0].default == 0.12
         assert resolve_parameters_for_scenario(params, {"policy": "b"})[0].default == 0.1235
+
+
+class TestDistributionAndDecimals:
+    """distribution keyword (default log-triangular) and automatic decimals."""
+
+    @pytest.mark.parametrize("raw, expected", [
+        ("LOG-TRIANGULAR", "log-triangular"),
+        ("TRIANGULAR", "triangular"),
+        ("LOG_UNIFORM", "log-uniform"),
+        ('"uniform"', "uniform"),
+    ])
+    def test_distribution_keyword(self, tmp_path, raw, expected):
+        _, params = _parse(tmp_path, f"""
+ContinuousParameter "a" {{
+    low_val = 1.0
+    mid_val = 2.0
+    high_val = 4.0
+    distribution = {raw}
+}}
+""")
+        assert params[0].distribution == expected
+
+    def test_distribution_defaults_to_log_triangular(self, tmp_path):
+        _, params = _parse(tmp_path, """
+ContinuousParameter "a" {
+    low_val = 1.0
+    mid_val = 2.0
+    high_val = 4.0
+}
+""")
+        assert params[0].distribution == "log-triangular"
+
+    def test_unknown_distribution_raises(self, tmp_path):
+        with pytest.raises(ParseError, match="Unknown distribution"):
+            _parse(tmp_path, """
+ContinuousParameter "a" {
+    low_val = 1.0
+    mid_val = 2.0
+    high_val = 4.0
+    distribution = NORMAL
+}
+""")
+
+    @pytest.mark.parametrize("low, high, dist, expected", [
+        (100, 200, "UNIFORM", 2),             # step 0.01 on a range of 100
+        (0.0001, 0.001, "UNIFORM", 8),        # tiny range needs many decimals
+        (1000.0, 1000.5, "UNIFORM", 5),       # narrow range far from zero
+        (0.001, 0.12, "LOG-TRIANGULAR", 6),   # 4 significant digits at the low bound
+        (25, 100, "LOG-TRIANGULAR", 3),
+    ])
+    def test_auto_decimals(self, tmp_path, low, high, dist, expected):
+        _, params = _parse(tmp_path, f"""
+ContinuousParameter "a" {{
+    low_val = {low}
+    high_val = {high}
+    default = {low}
+    distribution = {dist}
+}}
+""")
+        assert params[0].decimals == expected
+        assert params[0].decimals_auto
+
+    def test_explicit_decimals_kept(self, tmp_path):
+        _, params = _parse(tmp_path, """
+ContinuousParameter "a" {
+    low_val = 25
+    mid_val = 50
+    high_val = 100
+    decimals = 0
+}
+""")
+        assert params[0].decimals == 0 and params[0].default == 50
+
+    def test_override_bounds_recompute_auto_decimals(self, tmp_path):
+        from horizon.parameters.sampler import resolve_parameters_for_scenario
+        _, params = _parse(tmp_path, """
+ContinuousParameter "a" {
+    low_val = 100
+    mid_val = 150
+    high_val = 200
+    distribution = TRIANGULAR
+    if policy = b {
+        low_val = 0.001
+        mid_val = 0.002
+        high_val = 0.01
+    }
+}
+""")
+        resolved = resolve_parameters_for_scenario(params, {"policy": "b"})[0]
+        assert params[0].decimals == 2
+        assert resolved.decimals == 7
+        assert resolved.default == 0.002

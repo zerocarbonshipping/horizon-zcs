@@ -15,7 +15,43 @@ Overrides are stored as a list on the parameter instance. Each override is expec
 to be a dict of the form parsed by the parser's parse_overrides() helper:
     { "conditions": [...], "attrs": {...}, "start": int, "end": int }
 """
+import math
+
 from horizon.exceptions import ParameterError
+
+DISTRIBUTIONS = ("uniform", "triangular", "log-uniform", "log-triangular")
+DEFAULT_DISTRIBUTION = "log-triangular"
+
+# Auto decimals: the rounding step is at most 1/RANGE_STEPS of the range, and log
+# distributions also keep LOG_SIGNIFICANT_DIGITS significant digits at the low bound,
+# where log sampling puts most of its values.
+RANGE_STEPS = 10_000
+LOG_SIGNIFICANT_DIGITS = 4
+
+
+def normalize_distribution(value):
+    """Map a .hor distribution value (LOG-TRIANGULAR, "log-triangular", LOG_TRIANGULAR) to its canonical name."""
+    name = str(value).strip().strip('"').strip("'").lower().replace("_", "-")
+    if name not in DISTRIBUTIONS:
+        raise ParameterError(
+            f"Unknown distribution '{value}'. Use one of: {', '.join(d.upper() for d in DISTRIBUTIONS)}"
+        )
+    return name
+
+
+def auto_decimals(low_val, high_val, distribution):
+    """Number of decimals that keeps rounding small against the range (and, for log
+    distributions, against the low bound)."""
+    width = abs(high_val - low_val)
+    decimals = math.ceil(math.log10(RANGE_STEPS / width)) if width > 0 else 0
+    if distribution.startswith("log") and low_val > 0:
+        decimals = max(decimals, LOG_SIGNIFICANT_DIGITS - 1 - math.floor(math.log10(low_val)))
+    return max(0, decimals)
+
+
+def round_value(value, decimals):
+    """Round like the sampler does; whole numbers stay int when decimals is 0."""
+    return int(round(value)) if decimals == 0 else round(value, decimals)
 
 
 class BaseParameter:
@@ -89,7 +125,7 @@ class ContinuousParameter(BaseParameter):
     """
 
     def __init__(self, name, token, active, default, low_val, mid_val, high_val,
-                 distribution='uniform', decimals=2, emissions_low=None, emissions_high=None,
+                 distribution=DEFAULT_DISTRIBUTION, decimals=None, emissions_low=None, emissions_high=None,
                  overrides=None, default_from_mid=False):
 
         super().__init__(name, token, active, default)
@@ -98,19 +134,28 @@ class ContinuousParameter(BaseParameter):
         self.low_val = low_val
         self.mid_val = mid_val
         self.high_val = high_val
-        self.distribution = distribution
-        self.decimals = decimals
+        self.distribution = normalize_distribution(distribution)
+        # True when no decimals were set in the .hor file, so decimals follow the bounds
+        self.decimals_auto = decimals is None
+        self.decimals = auto_decimals(low_val, high_val, self.distribution) if decimals is None else decimals
         self.emissions_low = emissions_low
         self.emissions_high = emissions_high
         self.overrides = overrides or []
 
     def shallow_copy_with_overrides(self, attrs):
-        """Like BaseParameter.shallow_copy_with_overrides, but an override that changes
-        mid_val also moves default when the .hor file did not set default explicitly."""
+        """Like BaseParameter.shallow_copy_with_overrides, plus the implicit settings follow
+        the override: auto decimals are recomputed from new bounds or distribution, and an
+        implicit default follows a new mid_val or new decimals."""
+        attrs = dict(attrs)
+        if "distribution" in attrs:
+            attrs["distribution"] = normalize_distribution(attrs["distribution"])
+        if (self.decimals_auto and "decimals" not in attrs
+                and any(k in attrs for k in ("low_val", "high_val", "distribution"))):
+            attrs["decimals"] = auto_decimals(attrs.get("low_val", self.low_val),
+                                              attrs.get("high_val", self.high_val),
+                                              attrs.get("distribution", self.distribution))
         if self.default_from_mid and ("mid_val" in attrs or "decimals" in attrs) and "default" not in attrs:
-            decimals = attrs.get("decimals", self.decimals)
-            mid = attrs.get("mid_val", self.mid_val)
-            attrs = {**attrs, "default": int(round(mid)) if decimals == 0 else round(mid, decimals)}
+            attrs["default"] = round_value(attrs.get("mid_val", self.mid_val), attrs.get("decimals", self.decimals))
         return super().shallow_copy_with_overrides(attrs)
 
     def __repr__(self):
