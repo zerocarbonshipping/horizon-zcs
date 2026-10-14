@@ -5,3 +5,4 @@ de362b0	ok	6643	1.50	5.67	kept	baseline
 2141b93	ok	6550	1.87	5.36	kept	_emissions_sample: replace nested directive helpers with opposite-directive lookup
 95c05b9	ok	6675	1.67	5.76	kept	merged new base
 e78a7ee	ok	6587	1.99	6.87	kept	parser: one brace matcher, base_content computed once, create_parameter flattened, unified exclude/include validation, drop unused override start/end
+513130d	ok	6584	1.86	6.62	kept	Horizon block settings via one setting() helper
