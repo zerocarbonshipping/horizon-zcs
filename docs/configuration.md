@@ -40,8 +40,9 @@ block to leave it out completely. Two blocks with the same name are an error,
 also across parameter types.
 
 Older files list parameters in the `Horizon` block
-(`Parameters = [ContinuousParameter("FUEL_PRICE")]`). That list still filters
-the study, but it is deprecated and logs a warning.
+(`Parameters = [ContinuousParameter("FUEL_PRICE")]`). If a file has such a
+list, it is read the old way: only listed blocks take part, for scenario and
+sample parameters alike. This is deprecated and logs a warning.
 
 ### Shared parameter fields
 
@@ -50,7 +51,7 @@ the study, but it is deprecated and logs a warning.
 | `token` | no | Placeholder name in the `.unc` template (`%TOKEN%`). Defaults to the block name, which must then use only letters, digits and `_`. |
 | `name` | no | Display name. Defaults to the block name. |
 | `active` | no | `FALSE` fixes the parameter at `default`. Default `TRUE`. |
-| `default` | see below | Value for `sample_1` and for inactive parameters. For `ContinuousParameter` it defaults to `mid_val`; if there is no `mid_val`, `default` is required. |
+| `default` | see below | Value for `sample_1` and for inactive parameters. For `ContinuousParameter` it defaults to `mid_val`; if there is no `mid_val`, `default` is required. Required for `DiscreteParameter`. |
 
 ### Horizon block keys
 

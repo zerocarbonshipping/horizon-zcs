@@ -378,22 +378,38 @@ def parse_hor_file(file_path):
     exclusion_rules = parse_all_exclusions(horizon_content)
     inclusion_rules = parse_all_inclusions(horizon_content)
 
+    # Every defined parameter block is part of the run; active = FALSE fixes it at its default.
+    # Legacy files list parameters in the Horizon block (ScenarioParameters = [...],
+    # Parameters = [...]). If either list is present the file is treated as legacy: both
+    # kinds are filtered as before (a missing list means none of that kind), with a warning.
+    if scenario_param_tokens or parameter_tokens:
+        logger.warning(
+            "Parameter lists in the Horizon block are deprecated: in the new format every defined "
+            "parameter block is included. Remove the ScenarioParameters/Parameters lists, and delete or "
+            "comment out blocks you do not want."
+        )
+        filtered_scenario_parameters = [p for p in scenario_parameters if p.token in scenario_param_tokens]
+        filtered_parameters = [p for p in parameters if p.token in parameter_tokens]
+    else:
+        filtered_scenario_parameters = scenario_parameters
+        filtered_parameters = parameters
+    known_scenario_tokens = [sp.token for sp in filtered_scenario_parameters]
+
     # Build scenario value lookup for validation
     all_scenario_values = {}
     if exclusion_rules or inclusion_rules:
-        for sp in scenario_parameters:
-            if sp.token in scenario_param_tokens:
-                all_scenario_values[sp.token] = sp.values
+        for sp in filtered_scenario_parameters:
+            all_scenario_values[sp.token] = sp.values
 
     # Validate exclusion rules against known scenario tokens and values
     if exclusion_rules:
         for rule in exclusion_rules:
             for token, value in rule.items():
-                if token not in scenario_param_tokens:
+                if token not in known_scenario_tokens:
                     logger.warning(
                         "Exclude rule references unknown scenario token '%s'. "
                         "Known tokens: %s. This rule will never match.",
-                        token, scenario_param_tokens
+                        token, known_scenario_tokens
                     )
                 elif token in all_scenario_values and value not in all_scenario_values[token]:
                     logger.warning(
@@ -408,11 +424,11 @@ def parse_hor_file(file_path):
             for token, value in rule.items():
                 if token == "_name":
                     continue  # reserved label key, not a scenario token
-                if token not in scenario_param_tokens:
+                if token not in known_scenario_tokens:
                     logger.warning(
                         "Include rule references unknown scenario token '%s'. "
                         "Known tokens: %s. This rule will never match.",
-                        token, scenario_param_tokens
+                        token, known_scenario_tokens
                     )
                 elif token in all_scenario_values and value not in all_scenario_values[token]:
                     logger.warning(
@@ -420,26 +436,6 @@ def parse_hor_file(file_path):
                         "but known values are: %s. This rule may never match.",
                         value, token, all_scenario_values[token]
                     )
-
-    # Every defined parameter block is part of the run; active = FALSE fixes it at its default.
-    # Legacy files may still list parameters in the Horizon block (ScenarioParameters = [...],
-    # Parameters = [...]). Such a list still filters the run, with a deprecation warning.
-    if scenario_param_tokens:
-        logger.warning(
-            "ScenarioParameters list in the Horizon block is deprecated: every defined ScenarioParameter "
-            "block is now included. Remove the list, and delete or comment out blocks you do not want."
-        )
-        filtered_scenario_parameters = [p for p in scenario_parameters if p.token in scenario_param_tokens]
-    else:
-        filtered_scenario_parameters = scenario_parameters
-    if parameter_tokens:
-        logger.warning(
-            "Parameters list in the Horizon block is deprecated: every defined parameter block is now "
-            "included. Remove the list, and delete or comment out blocks you do not want."
-        )
-        filtered_parameters = [p for p in parameters if p.token in parameter_tokens]
-    else:
-        filtered_parameters = parameters
 
     return (unc_file_path, output_path, number_of_samples, filtered_scenario_parameters, filtered_parameters,
             sampling_method, plot, max_parallel_workers, random_seed, sample_only, exclusion_rules, inclusion_rules)
@@ -536,6 +532,9 @@ def create_parameter(param_type, name, token, active, default, block_content):
         return ContinuousParameter(**attributes)
 
     elif param_type == "DiscreteParameter":
+        if attributes["default"] is None:
+            raise ParseError(f"Parameter '{token}' has no default. Set default explicitly.")
+
         # pick up any per-parameter overrides
         low_case = emission_low_pattern.search(base_content)
         high_case = emission_high_pattern.search(base_content)

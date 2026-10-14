@@ -107,9 +107,9 @@ class ContinuousParameter(BaseParameter):
     def shallow_copy_with_overrides(self, attrs):
         """Like BaseParameter.shallow_copy_with_overrides, but an override that changes
         mid_val also moves default when the .hor file did not set default explicitly."""
-        if self.default_from_mid and "mid_val" in attrs and "default" not in attrs:
+        if self.default_from_mid and ("mid_val" in attrs or "decimals" in attrs) and "default" not in attrs:
             decimals = attrs.get("decimals", self.decimals)
-            mid = attrs["mid_val"]
+            mid = attrs.get("mid_val", self.mid_val)
             attrs = {**attrs, "default": int(round(mid)) if decimals == 0 else round(mid, decimals)}
         return super().shallow_copy_with_overrides(attrs)
 

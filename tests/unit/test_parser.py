@@ -484,3 +484,70 @@ ContinuousParameter "b" {
 """, horizon_extra='Parameters = [ContinuousParameter("a")]')
         assert [p.token for p in params] == ["a"]
         assert "deprecated" in caplog.text
+
+    def test_legacy_list_of_one_kind_filters_both_kinds(self, tmp_path):
+        scen, params = _parse(tmp_path, """
+ScenarioParameter "S" {
+    values = ["a", "b"]
+    default = "a"
+}
+ContinuousParameter "X" {
+    low_val = 0.0
+    mid_val = 0.5
+    high_val = 1.0
+    decimals = 2
+}
+""", horizon_extra='ScenarioParameters = [ScenarioParameter("S")]')
+        assert [s.token for s in scen] == ["S"]
+        assert params == []
+
+    def test_rules_validated_against_defined_scenarios(self, tmp_path, caplog):
+        _parse(tmp_path, """
+ScenarioParameter "POLICY" {
+    values = ["baseline", "carbon_levy"]
+    default = "baseline"
+}
+""", horizon_extra="Exclude(POLICY = carbon_levy)\n    Exclude(POLICY = typo)")
+        assert "unknown scenario token" not in caplog.text
+        assert "'typo'" in caplog.text
+
+    def test_discrete_without_default_raises(self, tmp_path):
+        with pytest.raises(ParseError, match="has no default"):
+            _parse(tmp_path, """
+DiscreteParameter "D" {
+    values = [1, 2]
+    probabilities = [0.5, 0.5]
+}
+""")
+
+    def test_explicit_default_in_override_wins(self, tmp_path):
+        from horizon.parameters.sampler import resolve_parameters_for_scenario
+        _, params = _parse(tmp_path, """
+ContinuousParameter "a" {
+    low_val = 0.10
+    mid_val = 0.15
+    high_val = 0.20
+    decimals = 3
+    if policy = bau {
+        mid_val = 0.18
+        default = 0.11
+    }
+}
+""")
+        assert resolve_parameters_for_scenario(params, {"policy": "bau"})[0].default == 0.11
+
+    def test_decimals_override_rerounds_implicit_default(self, tmp_path):
+        from horizon.parameters.sampler import resolve_parameters_for_scenario
+        _, params = _parse(tmp_path, """
+ContinuousParameter "a" {
+    low_val = 0.1
+    mid_val = 0.123456
+    high_val = 0.2
+    decimals = 2
+    if policy = b {
+        decimals = 4
+    }
+}
+""")
+        assert params[0].default == 0.12
+        assert resolve_parameters_for_scenario(params, {"policy": "b"})[0].default == 0.1235

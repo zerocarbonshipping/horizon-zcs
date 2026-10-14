@@ -16,8 +16,11 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   block name. A `ContinuousParameter` without `default` uses `mid_val` (also
   inside `if` overrides); without either, parsing fails. Every defined block
   takes part in the study, so the `ScenarioParameters` / `Parameters` lists in
-  the `Horizon` block are no longer needed. A list still filters the study but
-  logs a deprecation warning. Two blocks with the same name now raise an error.
+  the `Horizon` block are no longer needed. A file with either list is read
+  the old way (only listed blocks of both kinds) and logs a deprecation
+  warning. Two blocks with the same name now raise an error. A
+  `DiscreteParameter` without `default` now raises an error instead of writing
+  an empty value.
 - Rewritten includes whose content depends only on the scenario (all replaced
   tokens are scenario tokens) are written once per scenario combination under
   `shared_includes/<combination>/` and referenced from there, instead of
