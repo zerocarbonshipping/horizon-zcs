@@ -5,3 +5,4 @@ f7699e8	ok	6549	1.86	5.93	kept	sensitivity: share one metric aggregation helper 
 096df42	ok	6433	2.13	6.29	kept	sensitivity: shared MetricSpec builder, string defaults, single-pass .sen block split
 1d2f4dc	ok	6410	1.77	6.60	kept	sensitivity: vectorise lowess/binned means, tidy label matching, report lookup, scenario groups
 74ccaae	ok	6212	1.59	6.33	kept	plot: unify CDF/PDF via sampling-space mapping, flatten sampling diagnostics, share bin and label helpers
+d2f0b92	ok	6180	1.73	6.06	kept	sensitivity: reuse _load_parameter_matrix for early validation, drop redundant frames and tornado ticks
