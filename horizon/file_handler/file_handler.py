@@ -157,9 +157,9 @@ class FileHandler:
         self.commands = []
         self.skipped_count = 0
         self._include_cache = {}
-        # Shared-include store state; configured per generate call.
         self._shared_written = set()
-        self._shared_cfg = {'enabled': False, 'root': '', 'scenario_keys': set()}
+        self._shared_root = None
+        self._shared_scenario_keys = set()
 
     @staticmethod
     def _format_value_for_template(v):
@@ -235,7 +235,8 @@ class FileHandler:
         except FileNotFoundError:
             raise FileOperationError(f"UNC template file not found: {unc_path}")
 
-        template_program = self._compile_template(unc_content, unc_path)
+        unc_dir = os.path.dirname(unc_path)
+        template_program = self._compile_template(unc_content, unc_dir)
 
         # inactive scenario parameters contribute only their default value
         scenario_keys = [scenario.token for scenario in scenario_parameters]
@@ -248,11 +249,8 @@ class FileHandler:
         pre_resolved = bool(scenario_keys) and bool(sampled_parameters) and all(
             all(k in s for k in scenario_keys) for s in sampled_parameters)
 
-        self._shared_cfg = {
-            'enabled': bool(shared_includes),
-            'root': os.path.join(output_folder, "shared_includes"),
-            'scenario_keys': set(scenario_keys) | {"SCENARIO"},
-        }
+        self._shared_root = os.path.join(output_folder, "shared_includes") if shared_includes else None
+        self._shared_scenario_keys = set(scenario_keys) | {"SCENARIO"}
 
         # The include/exclude decision depends only on the scenario
         # combination, so evaluate the rules once per combination. This also
@@ -301,17 +299,34 @@ class FileHandler:
         if command_sink is not None:
             command_sink.start(expected_navs)
 
-        # Generate NAV files in parallel, consuming the generator on demand
-        self._generate_nav_files_parallel(_generate_work_items(), template_program, unc_path,
-                                          command_sink=command_sink, solver=solver,
-                                          navigate_flags=navigate_flags,
-                                          max_workers=max_workers, output_folder=output_folder)
+        def generate(item):
+            try:
+                return self._generate_nav_file_for_sample(unc_dir, template_program, *item, output_folder)
+            except Exception:
+                logger.exception("Failed generating NAV file for %s", item[1])
+                return None
 
+        # generate in a thread pool; the queue sees each .nav as soon as it is
+        # written so the first simulations start while generation continues
+        nav_filepaths = []
+        with concurrent.futures.ThreadPoolExecutor(
+                max_workers=self._select_worker_count(max_workers, output_folder)) as executor:
+            for nav_filepath in executor.map(generate, _generate_work_items()):
+                if nav_filepath is None:
+                    continue
+
+                nav_filepaths.append(nav_filepath)
+                if command_sink is not None:
+                    command_sink.submit(self._build_command(nav_filepath, solver, navigate_flags))
+                if len(nav_filepaths) % _PROGRESS_HEARTBEAT_INTERVAL == 0:
+                    logger.info("File creation progress: %d NAV files generated...", len(nav_filepaths))
+
+        self.nav_filepaths = nav_filepaths
         # After nav files created, prepare command list
         self.generate_commands_list(solver=solver, navigate_flags=navigate_flags)
 
     @staticmethod
-    def _compile_template(unc_content, unc_path):
+    def _compile_template(unc_content, unc_dir):
         """Compile template lines into a render program.
 
         Returns a list of ('text', parts) and ('include', info) items. Runs
@@ -348,7 +363,6 @@ class FileHandler:
         if text_run:
             program.append(('text', _compile_parts(''.join(text_run))))
 
-        unc_dir = os.path.dirname(unc_path)
         includes = [payload for kind, payload in program if kind == 'include']
         stem_sources = collections.defaultdict(set)
         for payload in includes:
@@ -402,40 +416,7 @@ class FileHandler:
                     latency * 1000)
         return min(64, cpu_count * 4)
 
-    def _generate_nav_files_parallel(self, work_items, template_program, unc_path,
-                                     command_sink=None, solver=None, navigate_flags=None,
-                                     max_workers=None, output_folder=None):
-        """Generate NAV files using a thread pool for I/O-bound parallelism.
-
-        Accepts any iterable of work items (including generators) to avoid
-        materializing all realizations in memory at once. Items are submitted
-        to the thread pool as they are yielded. With a ``command_sink``, each
-        completed .nav's navigate command is submitted immediately, so
-        queuing (and the first simulations) overlap generation.
-        """
-        def generate(item):
-            try:
-                return self._generate_nav_file_for_sample(unc_path, template_program, *item, output_folder)
-            except Exception:
-                logger.exception("Failed generating NAV file for %s", item[1])
-                return None
-
-        nav_filepaths = []
-        with concurrent.futures.ThreadPoolExecutor(
-                max_workers=self._select_worker_count(max_workers, output_folder)) as executor:
-            for nav_filepath in executor.map(generate, work_items):
-                if nav_filepath is None:
-                    continue
-
-                nav_filepaths.append(nav_filepath)
-                if command_sink is not None:
-                    command_sink.submit(self._build_command(nav_filepath, solver, navigate_flags))
-                if len(nav_filepaths) % _PROGRESS_HEARTBEAT_INTERVAL == 0:
-                    logger.info("File creation progress: %d NAV files generated...", len(nav_filepaths))
-
-        self.nav_filepaths = nav_filepaths
-
-    def _generate_nav_file_for_sample(self, unc_path, template_program, sample, simulation_name,
+    def _generate_nav_file_for_sample(self, unc_dir, template_program, sample, simulation_name,
                                       scenario_parameters, sample_number, combo_name, output_folder):
         """
         Create one .nav file for a given sample + scenario.
@@ -459,7 +440,6 @@ class FileHandler:
                 continue
             replacements[token] = self._format_value_for_template(value)
 
-        unc_dir = os.path.dirname(unc_path)
         nav_content = []
         for kind, payload in template_program:
             if kind == 'text':
@@ -522,7 +502,7 @@ class FileHandler:
         returns a line referencing it (the streamed queue can start Navigate
         runs while generation continues).
         """
-        shared_dir = os.path.join(self._shared_cfg['root'], combo_name)
+        shared_dir = os.path.join(self._shared_root, combo_name)
         file_name = f"{name_stem}_{'_'.join(tokens_replaced)}.inc"
         shared_path = os.path.join(shared_dir, file_name)
 
@@ -577,8 +557,8 @@ class FileHandler:
             # A rewrite that replaces only scenario tokens has identical
             # content for every sample of the combination: write it once per
             # combination in the shared store instead of once per realization.
-            if (self._shared_cfg['enabled'] and combo_name
-                    and set(tokens_replaced) <= self._shared_cfg['scenario_keys']):
+            if (self._shared_root and combo_name
+                    and set(tokens_replaced) <= self._shared_scenario_keys):
                 return self._shared_include_line(
                     parts, replacements, tokens_replaced, name_stem,
                     combo_name, indent, realization_folder)
