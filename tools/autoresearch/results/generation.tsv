@@ -3,3 +3,7 @@ de362b0	ok	6643	1.50	5.67	kept	baseline
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01VkXGKVSafWLgrVfrcYHJTL
+c437070	ok	6617	2.62	7.13	kept	file_handler: drop include line cache, relpath is cheap
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01VkXGKVSafWLgrVfrcYHJTL

@@ -153,11 +153,6 @@ class FileHandler:
         self.commands = []
         self.skipped_count = 0
         self._include_cache = {}
-        # Rendered include lines for includes used unmodified or shared,
-        # keyed by (include path, indent). Valid because every realization
-        # folder of a run sits directly under the same output folder, so the
-        # relative path is the same for all of them.
-        self._include_line_cache = {}
         # Shared-include store state; configured per generate call.
         self._shared_written = set()
         self._shared_cfg = {'enabled': False, 'root': '', 'scenario_keys': set()}
@@ -255,9 +250,8 @@ class FileHandler:
         # Realization folders are created under output_folder; absolutize once
         # so every derived path (and the navigate commands) is absolute.
         output_folder = os.path.abspath(output_folder)
-        # The rendered include lines and the shared-include registry depend on
-        # the output folder, which can differ between calls on a reused handler.
-        self._include_line_cache = {}
+        # the shared-include registry depends on the output folder, which can
+        # differ between calls on a reused handler
         self._shared_written = set()
 
         # Read the UNC template once and compile it into a render program:
@@ -710,13 +704,7 @@ class FileHandler:
             with self._include_lock:
                 self._shared_written.add(shared_path)
 
-        cache_key = (shared_path, indent)
-        line = self._include_line_cache.get(cache_key)
-        if line is None:
-            rel = os.path.relpath(shared_path, realization_folder).replace(os.sep, '/')
-            line = _format_include_line(rel, indent)
-            self._include_line_cache[cache_key] = line
-        return line
+        return _format_include_line(os.path.relpath(shared_path, realization_folder).replace(os.sep, '/'), indent)
 
     @staticmethod
     def _build_command(path, solver_flag, extra_flags):
@@ -799,17 +787,6 @@ class FileHandler:
             new_include_path_relative = os.path.join("simulation_includes", new_file_name).replace(os.sep, '/')
             return _format_include_line(new_include_path_relative, indent)
 
-        # No tokens changed: include the original file with a relative path
-        # from the .nav file's directory. The relative path is identical for
-        # every realization of a run (all realization folders share one
-        # parent), so the rendered line is computed once and cached.
-        cache_key = (include_file_path, indent)
-        line = self._include_line_cache.get(cache_key)
-        if line is None:
-            original_rel = os.path.relpath(
-                include_file_path,
-                realization_folder
-            ).replace(os.sep, '/')
-            line = _format_include_line(original_rel, indent)
-            self._include_line_cache[cache_key] = line
-        return line
+        # no tokens changed: reference the original file relative to the .nav
+        return _format_include_line(
+            os.path.relpath(include_file_path, realization_folder).replace(os.sep, '/'), indent)
