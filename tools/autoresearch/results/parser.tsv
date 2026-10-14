@@ -10,3 +10,4 @@ f12a2fe	ok	6548	1.64	5.99	kept	exclusions: _parse_directives, one matcher
 c60ac3a	ok	6545	1.71	5.30	kept	sampler: drop redundant lower()/or-uniform, simpler cache lookup
 f3d7302	ok	6536	1.73	5.50	kept	sampler: no per-draw _validate_discrete, dead None checks removed
 edf904a	ok	6524	1.49	5.66	kept	parameter.py: shallow copy docstring/import
+19642e9	ok	6515	1.72	5.73	kept	_parse_kv_block condensed
