@@ -252,7 +252,6 @@ Horizon {
     NumberOfSamples = 10
     SamplingMethod = LHS
     RandomSeed = 42
-    ContinuousParameter("TEST_PARAM")
 }
 """
     file_path = tmp_path / "test_config.hor"
@@ -280,7 +279,6 @@ Horizon {
     UncFilePath = "test.unc"
     OutputPath = "output"
     NumberOfSamples = 10
-    ContinuousParameter("TEST_PARAM")
 }
 """
     file_path = tmp_path / "invalid_config.hor"

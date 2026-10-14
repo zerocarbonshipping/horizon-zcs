@@ -8,7 +8,7 @@ import logging
 import os
 import sys
 
-from horizon.collect_reports.collect_reports import collect_reports
+from horizon.exceptions import HorizonError, error_line
 from horizon.logging.logging import setup_logging
 from horizon.test_manager.create_files import create_files
 
@@ -47,18 +47,7 @@ def main():
                                  "pueue >= 4 daemon socket is found) submits large studies much "
                                  "faster; this flag restores the one-pueue-process-per-task path.")
     cli_parser.add_argument("--gen-workers", type=int, default=None, metavar="N",
-                            help="Thread-pool size for .nav file generation. Default: adaptive - "
-                                 "min(8, CPU count) on local disks, min(64, 4x CPU count) when the "
-                                 "output filesystem's measured latency indicates network storage "
-                                 "(where generation is bound by per-file round trips). An explicit "
-                                 "value always wins.")
-    cli_parser.add_argument("--no-shared-includes", action="store_true",
-                            help="Copy every rewritten include into its realization folder, as "
-                                 "before. By default, rewritten includes whose content only "
-                                 "depends on the scenario are written once per scenario "
-                                 "combination under shared_includes/ and referenced from there, "
-                                 "which saves one file creation per include per realization on "
-                                 "include-heavy studies.")
+                            help="Thread-pool size for .nav file generation (default: min(8, CPU count)).")
     cli_parser.add_argument("--output-dir", type=str, default=None,
                             help="Directory for generated scenario folders (default: next to .unc file)")
     cli_parser.add_argument("--report-name", type=str, default=None,
@@ -67,6 +56,17 @@ def main():
                             help="Generate calibration comparison dashboard from completed simulation results.")
     cli_parser.add_argument("--dry-run", action="store_true",
                             help="Validate configuration and preview what would be generated without running simulations.")
+    cli_parser.add_argument("--samples", type=int, default=None, metavar="N",
+                            help="Use N samples instead of NumberOfSamples for this run, without editing "
+                                 "the file (e.g. --samples 1 for a smoke test).")
+    cli_parser.add_argument("--check", action="store_true",
+                            help="Parse the .hor file, run all validation and cross-check the .unc template "
+                                 "and its includes; prints a summary and exits 0 (ok/warnings) or 1 (errors). "
+                                 "Writes nothing, samples nothing.")
+    cli_parser.add_argument("--explain", action="store_true",
+                            help="Print each parameter as it resolves per scenario value (distribution, "
+                                 "bounds, mode, default, decimals, and where each came from). Use with "
+                                 "--check or alone.")
     cli_parser.add_argument("--status", type=str, default=None, metavar="OUTPUT_DIR",
                             help="Check pueue task status and report failures for the given output directory.")
     cli_parser.add_argument("--replot", action="store_true",
@@ -145,6 +145,17 @@ def main():
         logger.error("No .hor file paths provided.")
         sys.exit(1)
 
+    if args.check or args.explain:
+        # Static mode: no output.log, no sampling, no queueing.
+        if len(args.arguments) != 1:
+            logger.error("--check and --explain take exactly one .hor file.")
+            sys.exit(1)
+
+        from horizon.check.check import run_check
+        report, exit_code = run_check(args.arguments[0], check=args.check, explain=args.explain)
+        sys.stdout.write(report)
+        sys.exit(exit_code)
+
     # Set up logging to file in the directory of the .hor file
     hor_file_path = os.path.abspath(args.arguments[0])
     log_directory = os.path.dirname(hor_file_path)
@@ -175,6 +186,7 @@ def main():
             target_file = os.path.join(source_dir, target_file)
 
         logger.info(f"Collecting reports from {source_dir} to {target_file}")
+        from horizon.collect_reports.collect_reports import collect_reports
         collect_reports([source_dir], target_file, sort_flag=True, name_pattern=args.report_name)
 
     else:
@@ -184,11 +196,21 @@ def main():
             sys.exit(1)
 
         file_name = args.arguments[0]
-        create_files(file_name, priority=args.priority, solver=args.solver,
-                     navigate_flags=args.navigate_flags, output_dir=args.output_dir,
-                     dry_run=args.dry_run, full_task_env=args.full_task_env,
-                     pueue_cli=args.pueue_cli, gen_workers=args.gen_workers,
-                     shared_includes=not args.no_shared_includes)
+        try:
+            create_files(file_name, priority=args.priority, solver=args.solver,
+                         navigate_flags=args.navigate_flags, output_dir=args.output_dir,
+                         dry_run=args.dry_run, full_task_env=args.full_task_env,
+                         pueue_cli=args.pueue_cli, gen_workers=args.gen_workers,
+                         samples=args.samples)
+        except (HorizonError, ValueError) as error:
+            _exit_with_error(file_name, error)
+
+
+def _exit_with_error(hor_file, error):
+    """Print one clean `file:line: error: message` line, keep the traceback in output.log, and exit 1."""
+    logger.debug("Run failed", exc_info=error)
+    sys.stderr.write(error_line(hor_file, error) + "\n")
+    sys.exit(1)
 
 
 def _replot_batch(args):

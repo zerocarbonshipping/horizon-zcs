@@ -19,12 +19,12 @@ from horizon.calibration.analyze import (
     _aggregate_scores,
     _build_fuel_share_figures,
     _compute_confidence,
+    _load_index,
     _score_cross_scenario_consistency,
     _score_fuel_share_realism,
     _score_monotonicity,
     _score_sensitivity,
     _score_trajectory_smoothness,
-    _suggest_next_discretization,
     calibration_plot,
 )
 
@@ -148,7 +148,7 @@ def _create_synthetic_calibration(tmpdir):
     Matches the real layout:
         tmpdir/
             output/sampled_parameters.csv
-            {regulation}_sample{NNN}/plots/{folder}_report_default.xlsx
+            {regulation}_{sample}/plots/{folder}_report_default.xlsx
     """
     # Build sample list: 6 params × 5 values = 30 samples
     samples = []
@@ -170,7 +170,7 @@ def _create_synthetic_calibration(tmpdir):
     os.makedirs(output_dir)
     csv_path = os.path.join(output_dir, "sampled_parameters.csv")
 
-    fieldnames = ["sample_number", "sample"] + list(PARAMS.keys())
+    fieldnames = ["sample_number", "sample", "regulation"] + list(PARAMS.keys())
     with open(csv_path, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
@@ -178,14 +178,14 @@ def _create_synthetic_calibration(tmpdir):
         type_row = {k: "" for k in fieldnames}
         type_row["sample_number"] = "parameter_type"
         writer.writerow(type_row)
-        for sample in samples:
-            writer.writerow(sample)
+        for reg in REGULATIONS:
+            for sample in samples:
+                writer.writerow({**sample, "regulation": reg})
 
     # Create folders and Excel reports
     for reg in REGULATIONS:
         for sample in samples:
-            snum = sample["sample_number"]
-            folder_name = f"{reg}_sample{snum:03d}"
+            folder_name = f"{reg}_{sample['sample']}"
             folder_path = os.path.join(tmpdir, folder_name)
             plots_dir = os.path.join(folder_path, "plots")
             os.makedirs(plots_dir)
@@ -335,25 +335,6 @@ class TestAggregation:
         assert _aggregate_scores(scores) == 0.0
 
 
-class TestRound2Discretization:
-    def test_known_params_have_grids(self):
-        from horizon.calibration.analyze import Recommendation
-        recs = [
-            Recommendation("fleet_inertia", "0.7", "HIGH", {}, "0.9"),
-            Recommendation("producer_inter_beta", "3", "LOW", {}, "3"),
-        ]
-        grids = _suggest_next_discretization(recs)
-        assert len(grids["fleet_inertia"]) == 8
-        assert len(grids["producer_inter_beta"]) == 3
-
-    def test_unknown_param_gets_fallback(self):
-        from horizon.calibration.analyze import Recommendation
-        recs = [Recommendation("mystery_param", "2.0", "MEDIUM", {}, "1.0")]
-        grids = _suggest_next_discretization(recs)
-        assert "mystery_param" in grids
-        assert 2.0 in grids["mystery_param"]
-
-
 # ---------------------------------------------------------------------------
 # Full pipeline integration test
 # ---------------------------------------------------------------------------
@@ -394,9 +375,8 @@ class TestFullPipeline:
         assert "Fuel share realism" in dashboard_html
         assert "Smoothness" in dashboard_html
 
-    def test_html_has_round2_table(self, dashboard_html):
-        assert "Round 2 Discretization" in dashboard_html
-        assert "fleet_inertia" in dashboard_html
+    def test_html_has_no_lint_pragma_text(self, dashboard_html):
+        assert "noqa" not in dashboard_html
 
     def test_html_has_regulation_tabs(self, dashboard_html):
         for reg in REGULATIONS:
@@ -434,6 +414,15 @@ class TestFullPipeline:
             assert rec.recommended_value is not None
             assert "aggregate" in rec.scores_breakdown
             assert 0 <= rec.scores_breakdown["aggregate"] <= 1
+
+
+class TestLoadIndexRegulationColumn:
+    def test_missing_regulation_column_is_an_error(self, tmp_path):
+        from horizon.exceptions import FileOperationError
+        (tmp_path / "sampled_parameters.csv").write_text("sample,fleet_inertia\ncontinuous,\nfleet_inertia_0.5,0.5\n")
+
+        with pytest.raises(FileOperationError, match="no 'regulation' column"):
+            _load_index(str(tmp_path))
 
 
 class TestFuelShareFigures:

@@ -3,28 +3,14 @@
 
 # File: horizon/test_manager/create_files.py
 """
-File creation entrypoint for Horizon.
+File creation entrypoint for Horizon: parse the .hor file, sample parameters,
+write the samples CSV, then generate .nav files and queue them via FileHandler.
 
-Responsibilities:
- - parse .hor file via parse_hor_file()
- - sample parameters (either once globally or per-active-scenario combination)
- - write sampled parameters CSV
- - optionally run sampling diagnostics/plotting
- - generate .nav files and commands via FileHandler
- - enqueue and run commands
-
-Behavior summary (plain):
- - When any sample parameter defines conditional overrides and there is at least one
-   active scenario parameter, sampling is performed per combination of active scenario
-   parameter values. Inactive scenario parameters are used with their default values
-   and do not expand the combinations.
- - The sampler uses the same underlying draw matrix (LHS/MC) for each scenario combo,
-   so that sample indexes (sample_1..sample_N) line up across scenarios. For each
-   scenario we resolve scenario-dependent parameter definitions first, then map the
-   shared draw to values for that scenario.
- - If no sample parameter defines overrides (or there are no active scenario params),
-   the code uses legacy behavior: sample once across all parameters and let the
-   file generator expand scenario combinations if required.
+When any sample parameter has conditional overrides and a scenario parameter is
+active, sampling runs once per combination of active scenario values (inactive
+ones stay at their default), reusing one draw matrix so sample_i lines up across
+scenarios. Otherwise all parameters are sampled once and the file generator
+expands the scenario combinations.
 """
 
 from __future__ import annotations
@@ -33,15 +19,13 @@ import logging
 import os
 import time
 from itertools import product
-from pathlib import Path
 
-from horizon.file_handler.file_handler import FileHandler, extract_template_tokens
+from horizon.file_handler.file_handler import FileHandler, extract_template_tokens, unquoted_default
 from horizon.misc.util import output_sampled_parameters_to_csv
 from horizon.parameters.parameter import ContinuousParameter, DiscreteParameter
 from horizon.parameters.sampler import ParameterSampler, resolve_parameters_for_scenario
 from horizon.parser.exclusions import get_scenario_label, should_skip_combination
 from horizon.parser.parser import parse_hor_file
-from horizon.plot.plot import analyze_sampled_parameters
 from horizon.run.run_commands import StreamingQueuer
 
 logger = logging.getLogger(__name__)
@@ -150,16 +134,9 @@ def _sample_for_active_combos(scenario_parameters, parameters, number_of_samples
         total_combos += 1
         active_map = dict(zip(active_tokens, combo_values))
 
-        # Build full scenario_map: active tokens from combo, inactive tokens -> default (strip quotes)
-        scenario_map = {}
-        for sp in scenario_parameters:
-            if sp.active:
-                scenario_map[sp.token] = active_map[sp.token]
-            else:
-                default_val = sp.default
-                if isinstance(default_val, str):
-                    default_val = default_val.strip('"').strip("'")
-                scenario_map[sp.token] = default_val
+        # active tokens from the combination, inactive ones at their default
+        scenario_map = {sp.token: active_map[sp.token] if sp.active else unquoted_default(sp)
+                        for sp in scenario_parameters}
 
         # Check inclusion/exclusion rules before sampling
         if should_skip_combination(scenario_map, exclusion_rules, inclusion_rules):
@@ -175,18 +152,13 @@ def _sample_for_active_combos(scenario_parameters, parameters, number_of_samples
         # Resolve parameters for this scenario (apply overrides)
         params_for_scenario = resolve_parameters_for_scenario(parameters, scenario_map)
 
-        # Use shared deterministic seed so sample_i corresponds across scenarios
-        seed_for_combo = random_seed
-
+        # the same seed for every combination keeps sample_i aligned across scenarios
         sampled_for_combo = sample_parameters(params_for_scenario, number_of_samples, sampling_method,
-                                              seed_for_combo, sampler=shared_sampler)
+                                              random_seed, sampler=shared_sampler)
 
         # Annotate samples with full scenario_map and sample numbers 1..N
-        for i, row in enumerate(sampled_for_combo):
-            s = dict(row)  # copy to avoid mutation sharing
-            s.update(scenario_map)
-            s["sample"] = "sample_%d" % (i + 1)
-            sampled_parameters.append(s)
+        sampled_parameters.extend({**row, **scenario_map, "sample": f"sample_{i}"}
+                                  for i, row in enumerate(sampled_for_combo, 1))
 
         if max_files is not None and len(sampled_parameters) >= max_files:
             sampled_parameters = sampled_parameters[:max_files]
@@ -210,12 +182,7 @@ def _validate_tokens(unc_file_path, scenario_parameters, parameters):
         logger.warning("Could not scan template for token validation; skipping.")
         return
 
-    # Collect all defined tokens
-    defined_tokens = set()
-    for p in scenario_parameters:
-        defined_tokens.add(p.token)
-    for p in parameters:
-        defined_tokens.add(p.token)
+    defined_tokens = {p.token for p in scenario_parameters} | {p.token for p in parameters}
 
     # Tokens in template but not defined
     undefined = template_tokens - defined_tokens - BUILTIN_TOKENS
@@ -236,7 +203,7 @@ def _validate_tokens(unc_file_path, scenario_parameters, parameters):
 
 def create_files(hor_file_path, max_files=None, priority="normal", solver=None,
                  navigate_flags=None, output_dir=None, dry_run=False, full_task_env=False,
-                 pueue_cli=False, gen_workers=None, shared_includes=True):
+                 pueue_cli=False, gen_workers=None, samples=None):
     """
     Main entrypoint to create files based on the .hor configuration.
 
@@ -254,22 +221,24 @@ def create_files(hor_file_path, max_files=None, priority="normal", solver=None,
             daemon connection
         gen_workers: generation thread-pool size (default: min(8, cpu_count);
             see FileHandler.generate_scenarios_and_nav_files)
-        shared_includes: write scenario-only rewritten includes once per scenario
-            combination under shared_includes/ instead of into every realization
-            folder (default True; see FileHandler.generate_scenarios_and_nav_files)
+        samples: optional number of samples that replaces NumberOfSamples for this run (the file is not edited)
     Returns:
         sample_only (bool) if we terminated early because SampleOnly=True, otherwise None
     """
     start_time = time.time()
-    hor_path = Path(hor_file_path)
 
     try:
         (unc_file_path, output_path, number_of_samples, scenario_parameters, parameters,
          sampling_method, plot, max_parallel_workers, random_seed, sample_only,
-         exclusion_rules, inclusion_rules) = parse_hor_file(str(hor_path))
-    except Exception as e:
-        logger.exception("Failed to parse .hor file '%s': %s", hor_file_path, e)
+         exclusion_rules, inclusion_rules) = parse_hor_file(str(hor_file_path))
+    except Exception:
+        # the CLI prints the one-line message; the traceback stays in output.log
+        logger.debug("Failed to parse .hor file '%s'", hor_file_path, exc_info=True)
         raise
+
+    if samples is not None:
+        logger.info("NumberOfSamples overridden by --samples: %d (the file says %d)", samples, number_of_samples)
+        number_of_samples = samples
 
     logger.info("Read %d scenario parameters and %d sample parameters", len(scenario_parameters), len(parameters))
     logger.info("Sampling method: %s, Random seed: %s", sampling_method, random_seed)
@@ -373,14 +342,14 @@ def create_files(hor_file_path, max_files=None, priority="normal", solver=None,
     if sample_only:
         logger.info("Running sampling diagnostics (plot=%s, sample_only=%s)", plot, sample_only)
         try:
+            from horizon.plot.plot import analyze_sampled_parameters
             analyze_sampled_parameters(sampled_parameters, parameters, output_path)
             logger.info("Sampling diagnostics completed.")
         except Exception:
             logger.exception("Sampling diagnostics failed.")
 
-        if sample_only:
-            logger.info("SampleOnly = TRUE; terminating after diagnostics.")
-            return sample_only
+        logger.info("SampleOnly = TRUE; terminating after diagnostics.")
+        return sample_only
 
     # Prepare file generation
     if output_dir is not None:
@@ -412,7 +381,6 @@ def create_files(hor_file_path, max_files=None, priority="normal", solver=None,
             navigate_flags=navigate_flags,
             command_sink=queuer,
             max_workers=gen_workers,
-            shared_includes=shared_includes,
         )
     finally:
         # Wait for the already-submitted tasks even if generation failed
@@ -422,18 +390,10 @@ def create_files(hor_file_path, max_files=None, priority="normal", solver=None,
         except Exception:
             logger.exception("Failed to finish queue submission.")
 
-    # Log generated files
-    if logger.isEnabledFor(logging.DEBUG):
-        for path in file_handler.nav_filepaths:
-            logger.debug("Generated NAV file: %s", path)
-
     skip_note = " (%d combination(s) skipped by filters)" % file_handler.skipped_count if file_handler.skipped_count > 0 else ""
     logger.info("Generated %d NAV file(s) in %s%s", len(file_handler.nav_filepaths), output_folder, skip_note)
 
-    logger.info("Queued %d navigate command(s)", len(file_handler.commands))
-    if logger.isEnabledFor(logging.DEBUG):
-        for cmd in file_handler.commands:
-            logger.debug("Command: %s", cmd)
+    logger.info("Queued %d navigate command(s)", len(file_handler.nav_filepaths))
 
     # Timing
     end_time = time.time()

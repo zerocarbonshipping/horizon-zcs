@@ -105,11 +105,6 @@ def make_study(root, n_scen=3, scen_values=2, n_cont=12, n_disc=4, n_samples=250
 }}
 ''')
 
-    refs = "\n".join(
-        [f'    ScenarioParameter("{t}")' for t in scen_tokens]
-        + [f'    ContinuousParameter("{t}")' for t in cont_tokens]
-        + [f'    DiscreteParameter("{t}")' for t in disc_tokens]
-    )
     hor.append(f'''Horizon {{
     UncFilePath = "template.unc"
     OutputPath = "output/samples.csv"
@@ -117,8 +112,6 @@ def make_study(root, n_scen=3, scen_values=2, n_cont=12, n_disc=4, n_samples=250
     SamplingMethod = LHS
     RandomSeed = {seed}
     SampleOnly = {"TRUE" if sample_only else "FALSE"}
-
-{refs}
 }}
 ''')
     with open(os.path.join(root, "study.hor"), "w") as fh:
