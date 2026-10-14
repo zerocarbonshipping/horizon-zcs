@@ -110,6 +110,9 @@ def ensure_mid_val(p):
     logger.debug("Parameter '%s' missing mid_val for distribution '%s': assuming %s", p.token, p.distribution, p.mid_val)
 
 
+_OPPOSITE_DIRECTIVE = {"MAXIMUM": "MINIMUM", "MINIMUM": "MAXIMUM"}
+
+
 class ParameterSampler:
     """
     Samples parameter sets for Monte Carlo, Latin Hypercube, calibration,
@@ -296,63 +299,24 @@ class ParameterSampler:
 
     def _emissions_sample(self, parameters, low=True):
         """
-        Build the emissions sample (sample_2 or sample_3).
+        Build the emissions sample (sample_2 for low, sample_3 for high).
 
-        Behaviour:
-          - If the user specified only one of emissions_low/emissions_high and it was
-            'MAXIMUM' or 'MINIMUM', the other directive is set to the opposite.
-          - If the user specified both, their choices are used.
-          - If neither specified, fall back to existing behaviour where a None
-            directive is interpreted by _resolve_emission (usually min for low, max for high).
+        A missing directive becomes the opposite of the other one when that is MAXIMUM or MINIMUM;
+        otherwise _resolve_emission falls back to min for low and max for high.
         """
-        def _normalize_directive(d):
-            if d is None:
-                return None
-            if isinstance(d, str):
-                return d.strip().upper()
-            return d
-
-        def _compute_pair_directives(p):
-            el = _normalize_directive(getattr(p, "emissions_low", None))
-            eh = _normalize_directive(getattr(p, "emissions_high", None))
-
-            # If both absent -> leave both as None (existing defaults will apply)
-            if el is None and eh is None:
-                return (None, None)
-
-            # If only one is present and is a MINIMUM/MAXIMUM keyword, set the opposite
-            if el is not None and eh is None:
-                if isinstance(el, str) and el in ("MAXIMUM", "MINIMUM"):
-                    eh = "MINIMUM" if el == "MAXIMUM" else "MAXIMUM"
-                else:
-                    eh = None
-                return (el, eh)
-
-            if eh is not None and el is None:
-                if isinstance(eh, str) and eh in ("MAXIMUM", "MINIMUM"):
-                    el = "MINIMUM" if eh == "MAXIMUM" else "MAXIMUM"
-                else:
-                    el = None
-                return (el, eh)
-
-            # Both present (maybe keywords or numeric); use as given
-            return (el, eh)
-
-        label = "sample_2" if low else "sample_3"
-        sample = {"sample": label}
+        sample = {"sample": "sample_2" if low else "sample_3"}
 
         for p in parameters:
             if not p.active:
                 sample[p.token] = p.default
                 continue
 
-            # compute effective directives for this parameter (do not mutate p)
-            directive_low, directive_high = _compute_pair_directives(p)
+            own, other = (p.emissions_low, p.emissions_high) if low else (p.emissions_high, p.emissions_low)
+            own, other = (d.strip().upper() if isinstance(d, str) else d for d in (own, other))
+            if own is None:
+                own = _OPPOSITE_DIRECTIVE.get(other)
 
-            directive = directive_low if low else directive_high
-
-            # Now resolve the emission based on the effective directive
-            sample[p.token] = self._resolve_emission(p, directive, low)
+            sample[p.token] = self._resolve_emission(p, own, low)
 
         return sample
 
