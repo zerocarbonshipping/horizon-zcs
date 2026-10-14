@@ -8,3 +8,4 @@ d58c66c	ok	6594	1.71	6.39	kept	collect_reports: single finally for temp cleanup,
 583c58c	ok	6741	1.40	6.02	kept	merged new base
 ccd00e1	ok	6719	1.62	5.96	kept	collect_reports: single-line engine reads, simpler timeline extraction (checked against scratch xlsx equivalence harness; no tests exist)
 00203a2	ok	6715	1.94	6.26	kept	run: tidy pueue client config candidates, recv loop, task list parsing
+2e20600	ok	6709	1.55	5.15	kept	cbor: BytesIO reader replaces _Reader class
