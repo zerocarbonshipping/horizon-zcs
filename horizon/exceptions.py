@@ -25,8 +25,23 @@ class ParseError(HorizonError):
     - Missing required fields
     - Invalid parameter block structure
     - Malformed override blocks
+
+    Parameters
+    ----------
+    message : str
+        What is wrong.
+    location : str, optional
+        ``file:line`` of the offending text. When given, ``str(error)`` is the clean
+        one-line form ``file:line: error: message``.
     """
-    pass
+
+    def __init__(self, message, location=None):
+        super().__init__(message, location)
+        self.message = message
+        self.location = location
+
+    def __str__(self):
+        return f"{self.location}: error: {self.message}" if self.location else self.message
 
 
 class ValidationError(HorizonError):

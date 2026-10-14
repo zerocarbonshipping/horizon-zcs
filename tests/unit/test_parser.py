@@ -83,7 +83,6 @@ Horizon {
     UncFilePath = "test.unc"
     OutputPath = "output"
     NumberOfSamples = 10
-    ContinuousParameter("INVALID")
 }
 """
         file_path = tmp_path / "invalid_bounds.hor"
@@ -110,7 +109,6 @@ Horizon {
     UncFilePath = "test.unc"
     OutputPath = "output"
     NumberOfSamples = 10
-    ContinuousParameter("CONST")
 }
 """
         file_path = tmp_path / "equal_bounds.hor"
@@ -137,7 +135,6 @@ Horizon {
     UncFilePath = "test.unc"
     OutputPath = "output"
     NumberOfSamples = 10
-    ContinuousParameter("INVALID_DEC")
 }
 """
         file_path = tmp_path / "negative_decimals.hor"
@@ -164,7 +161,6 @@ Horizon {
     UncFilePath = "test.unc"
     OutputPath = "output"
     NumberOfSamples = 10
-    ContinuousParameter("VALID")
 }
 """
         file_path = tmp_path / "valid_bounds.hor"
@@ -233,7 +229,6 @@ Horizon {
     UncFilePath = "test.unc"
     OutputPath = "output"
     NumberOfSamples = 10
-    ContinuousParameter("NEG_PARAM")
 }
 """
         file_path = tmp_path / "negative_bounds.hor"
@@ -261,7 +256,6 @@ Horizon {
     UncFilePath = "test.unc"
     OutputPath = "output"
     NumberOfSamples = 10
-    ContinuousParameter("INT_PARAM")
 }
 """
         file_path = tmp_path / "zero_decimals.hor"
@@ -293,7 +287,6 @@ Horizon {
     UncFilePath = "test.unc"
     OutputPath = "output"
     NumberOfSamples = 10
-    ContinuousParameter("TEST_PARAM")
 }
 """
         file_path = tmp_path / "with_comments.hor"
@@ -307,6 +300,13 @@ Horizon {
 # ============================================================================
 # Test Short Format (optional token/name/default, no parameter list)
 # ============================================================================
+
+POLICY_BLOCK = """
+ScenarioParameter "policy" {
+    values = [bau, liberia, nzf, b, y]
+}
+"""
+
 
 def _parse(tmp_path, body, horizon_extra=""):
     hor = tmp_path / "short.hor"
@@ -395,7 +395,7 @@ ContinuousParameter "a" {
 
     def test_override_mid_val_moves_implicit_default(self, tmp_path):
         from horizon.parameters.sampler import resolve_parameters_for_scenario
-        _, params = _parse(tmp_path, """
+        _, params = _parse(tmp_path, POLICY_BLOCK + """
 ContinuousParameter "a" {
     low_val = 0.10
     mid_val = 0.15
@@ -414,7 +414,7 @@ ContinuousParameter "a" {
 
     def test_override_mid_val_keeps_explicit_default(self, tmp_path):
         from horizon.parameters.sampler import resolve_parameters_for_scenario
-        _, params = _parse(tmp_path, """
+        _, params = _parse(tmp_path, POLICY_BLOCK + """
 ContinuousParameter "a" {
     low_val = 0.10
     mid_val = 0.15
@@ -471,8 +471,13 @@ ContinuousParameter "b" {
         assert [p.token for p in params] == ["a", "b"]
         assert params[1].active is False
 
-    def test_legacy_list_still_filters_with_warning(self, tmp_path, caplog):
-        _, params = _parse(tmp_path, """
+    @pytest.mark.parametrize("legacy", [
+        'Parameters = [ContinuousParameter("a")]',
+        'ScenarioParameters = [ScenarioParameter("S")]',
+        'ContinuousParameter("a")',
+    ])
+    def test_legacy_parameter_list_is_an_error(self, tmp_path, legacy):
+        block = """
 ContinuousParameter "a" {
     distribution = UNIFORM
     low_val = 0.0
@@ -480,33 +485,26 @@ ContinuousParameter "a" {
     high_val = 1.0
     decimals = 2
 }
-ContinuousParameter "b" {
-    distribution = UNIFORM
-    low_val = 0.0
-    mid_val = 0.5
-    high_val = 1.0
-    decimals = 2
-}
-""", horizon_extra='Parameters = [ContinuousParameter("a")]')
-        assert [p.token for p in params] == ["a"]
-        assert "deprecated" in caplog.text
+"""
+        with pytest.raises(ParseError, match=r"short\.hor:\d+: error: parameter lists.*active = FALSE.*UNIFORM") as e:
+            _parse(tmp_path, block, horizon_extra=legacy)
+        assert e.value.location.endswith(":14")
 
-    def test_legacy_list_of_one_kind_filters_both_kinds(self, tmp_path):
+    def test_all_blocks_in_run_and_inactive_pins_default(self, tmp_path):
         scen, params = _parse(tmp_path, """
 ScenarioParameter "S" {
     values = ["a", "b"]
-    default = "a"
 }
 ContinuousParameter "X" {
     distribution = UNIFORM
     low_val = 0.0
     mid_val = 0.5
     high_val = 1.0
-    decimals = 2
+    active = FALSE
 }
-""", horizon_extra='ScenarioParameters = [ScenarioParameter("S")]')
+""")
         assert [s.token for s in scen] == ["S"]
-        assert params == []
+        assert [(p.token, p.active) for p in params] == [("X", False)]
 
     def test_rules_validated_against_defined_scenarios(self, tmp_path, caplog):
         _parse(tmp_path, """
@@ -529,7 +527,7 @@ DiscreteParameter "D" {
 
     def test_explicit_default_in_override_wins(self, tmp_path):
         from horizon.parameters.sampler import resolve_parameters_for_scenario
-        _, params = _parse(tmp_path, """
+        _, params = _parse(tmp_path, POLICY_BLOCK + """
 ContinuousParameter "a" {
     low_val = 0.10
     mid_val = 0.15
@@ -545,7 +543,7 @@ ContinuousParameter "a" {
 
     def test_decimals_override_rerounds_implicit_default(self, tmp_path):
         from horizon.parameters.sampler import resolve_parameters_for_scenario
-        _, params = _parse(tmp_path, """
+        _, params = _parse(tmp_path, POLICY_BLOCK + """
 ContinuousParameter "a" {
     low_val = 0.1
     mid_val = 0.123456
@@ -633,7 +631,7 @@ ContinuousParameter "a" {
 
     def test_override_bounds_recompute_auto_decimals(self, tmp_path):
         from horizon.parameters.sampler import resolve_parameters_for_scenario
-        _, params = _parse(tmp_path, """
+        _, params = _parse(tmp_path, POLICY_BLOCK + """
 ContinuousParameter "a" {
     low_val = 100
     mid_val = 150
@@ -689,7 +687,7 @@ ContinuousParameter "a" {
 
     def test_equal_override_bounds_keep_value(self, tmp_path):
         from horizon.parameters.sampler import resolve_parameters_for_scenario
-        _, params = _parse(tmp_path, """
+        _, params = _parse(tmp_path, POLICY_BLOCK + """
 ContinuousParameter "a" {
     low_val = 0.1
     mid_val = 0.5
