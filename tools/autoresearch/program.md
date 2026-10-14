@@ -38,6 +38,7 @@ Metrics (lower is better):
 Fixture setup (once per machine, from a checkout of the baseline commit):
 
 ```bash
+export AR_FIXTURES=tools/autoresearch/fixtures   # the default; gitignored
 python tools/benchmark/make_study.py $AR_FIXTURES/synth --preset medium --fresh
 cp -r <simulations>/production/2026_imo $AR_FIXTURES/imo   # set NumberOfSamples = 10
 cp -r <simulations>/production/2026_imo $AR_FIXTURES/imo_full   # unchanged, timing only
@@ -57,9 +58,10 @@ tools/autoresearch/eval.sh --golden
      (about 5 %), or
    - a timing metric improved clearly and `loc` grew only a little.
    Otherwise **discard** (`git checkout -- . && git clean -fd horizon tests`).
-5. Append a line to `tools/autoresearch/results/<track>.tsv`:
+5. Append a line to `tools/autoresearch/results/<track>.tsv` (gitignored; summarise
+   the round in `RESULTS.md` instead of committing the logs):
    `commit  status  loc  import_s  gen_s  imo_s  kept|discarded  description`
-   (commit is `-` for discarded attempts). Commit the log with each kept change.
+   (commit is `-` for discarded attempts). 
 6. Repeat. Stop when ideas run out or several attempts in a row fail.
 
 ## Simplicity criterion

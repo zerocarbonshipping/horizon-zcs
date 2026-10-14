@@ -8,8 +8,8 @@ SPDX-License-Identifier: CC-BY-4.0
 Six agents ran the loop in [`program.md`](program.md) in parallel, one per
 area, each on its own branch in its own worktree and editing only its own
 files. The branches were merged one by one, and every gate was re-run after
-each merge. Base: `origin/dev` at d57c2cc (short `.hor` format). Per-experiment logs are in
-[`results/`](results/).
+each merge. Base: `origin/dev` at d57c2cc (short `.hor` format). Per-experiment logs were kept locally
+(`results/`, gitignored) and are summarised here.
 
 ## Outcome
 

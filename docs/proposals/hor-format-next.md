@@ -5,10 +5,16 @@ SPDX-License-Identifier: CC-BY-4.0
 
 # Next round of .hor decluttering, on top of the short format
 
-Status: proposal (autoresearch track 2). Not implemented.
-Basis: `simulations` main @ 4741d35 (`october/run.hor`, 212 lines) and `horizon-zcs` branch
-`claude/festive-ride-39tpup` (origin/dev with PR #18/#19: new parser, `docs/configuration.md`, CHANGELOG).
-This replaces my first review, which was written against the old 421-line format.
+Status: proposal. Written against `simulations` main @ 4741d35 (`october/run.hor`, 212 lines) and
+horizon-zcs `dev` with PR #18/#19 (short format). Sections 3-4 describe that state.
+
+| Item | State |
+|---|---|
+| N5 strict parser, N2 discrete uniform default | implemented (strict keys, ranges, `if` validation, UTF-8, one-line errors) |
+| N6 `--check`, `--explain`; N7 `--samples N` | implemented (`fmt`, `migrate`, `--dump-json` not yet) |
+| N3 legacy default pinning | superseded: legacy `Parameters = [...]` lists are now a parse error |
+| N0 trim without code change | applied to `october/run.hor` |
+| N1 one-line distribution call, N4 one-line overrides / `= base`, rest of N2 | open, awaiting decision |
 
 ## 1. Summary
 
@@ -30,7 +36,7 @@ proposals, section 7 the full file. The rewrite was verified identical to the cu
 
 ## 2. Already done (credit, not re-proposed)
 
-| My earlier proposal | Status in short format (parser on origin/dev) |
+| Earlier proposal | Status in short format (parser on origin/dev) |
 |---|---|
 | `token` defaults to block id | done; invalid characters give a clear error |
 | `name` optional | done (defaults to block name) |
@@ -66,9 +72,9 @@ Totals: 212 lines = 128 code, 53 comment-only, 31 blank. 18 blocks (1 scenario, 
 | `run.unc` side (unchanged) | 21 commented `Include`/`Load` of 60 | toggling still needs `.unc` edits that the `.hor` does not know about |
 | Encoding | 6 lines contain non-ASCII (em dash, arrows) | `parse_hor_file` uses `open(path, 'r')` without `encoding`; on a Windows locale this decodes as cp1252. Cheap fix: `encoding="utf-8"` |
 
-## 4. Hazards: which still reproduce (new parser, tested with scratch files)
+## 4. Hazards: which still reproduce (short-format parser, reproduced with test files)
 
-| Hazard from review 1 | Now | Evidence |
+| Hazard | Now | Evidence |
 |---|---|---|
 | Inline comment containing `if` breaks parsing | **fixed** | `mid_val = 0.15 # round if needed` parses |
 | `if` inside a quoted string (`name = "Cost if any"`) | **still reproduces** | `ValueError: Malformed 'if' override: missing '{'`. `\bif\b` is searched in the whole block, strings included |
@@ -193,7 +199,7 @@ Without rewriting the regex scan:
 - Discrete: `probabilities` omitted means uniform; lengths must match `values`.
 - Read the file as UTF-8.
 Agent value: this is where "silently wrong study" comes from: a typo in a 3000-run job is caught at parse time. A tokenizer with line:col
-errors (my first review's P6) is still the right end state, but N5 gives most of the value in about a day.
+errors (an earlier proposal) is still the right end state, but N5 gives most of the value in about a day.
 Compat: files that parse today and have only valid keys are unaffected; files with typos start failing (that is the point; run `check` first).
 
 ### N6. `horizon check`, `--explain`, `fmt`, `--dump-json`
@@ -214,7 +220,7 @@ epc_interpolator                  *                         uniform         0.0 
   (columns are the current parser's resolved values; the annotations are the proposed addition).
 - `horizon fmt run.hor`: idempotent; one indentation style, aligned `=`, wrapped long lists, one blank line between blocks, drops
   defaults (`emissions_low = MINIMUM`, `active = TRUE`, `token` equal to the name), stable key order. Ends cosmetic diffs and agent churn.
-- `horizon migrate --verify old.hor new.hor`: compares resolved parameters and emissions samples per scenario value (the check I ran by hand for this review).
+- `horizon migrate --verify old.hor new.hor`: compares resolved parameters and emissions samples per scenario value (the check used to verify section 8).
 - `horizon --dump-json` / `horizon schema`: the resolved model and its JSON Schema for tooling and agents. A schema describes the model,
   not the raw syntax.
 - Proposed message wording, each with the fix in it:
@@ -269,7 +275,7 @@ Differences from the current file, all by design: no 8-line notes (temporary; ru
 All research comments are kept verbatim, including the two stale "Triangular" remarks, which should be corrected separately (they describe log-triangular blocks).
 Requires N1 (call form), N2 (defaults), N4 (`= (...)`, `= base`) and unquoted scenario values. It does not parse with the current horizon-zcs.
 
-Verification: a scratch converter turned this file into the current short syntax (applying the proposed defaults), then the current
+Verification: a converter turned this file into the current short syntax (applying the proposed defaults), then the current
 `parse_hor_file`, `resolve_parameters_for_scenario` and `ParameterSampler` (`_emissions_sample`, `sample_group` with seed 69, 30 draws) compared the original
 and converted files for each of the 10 policy values. Compared: bounds, distribution, auto decimals, default, emissions directives, emissions samples, drawn samples.
 Result: 0 differences. (`pyDOE3` is not installed here, so it was stubbed; LHS was not exercised, MC draws were.) The converter encodes the proposed semantics, so this shows the
