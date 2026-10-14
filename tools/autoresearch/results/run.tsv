@@ -1,0 +1,9 @@
+de362b0	ok	6643	1.50	5.67	kept	baseline
+0ca6d5e	ok	6628	1.86	6.14	kept	run: collapse pueue status parsing into one outcome helper
+1dc0e39	ok	6613	2.55	5.44	kept	run: table-driven CBOR head/length/float coding
+0b669e8	ok	6611	2.08	6.12	kept	run: share failure and progress logging between direct and CLI submission
+-	ok	-	-	-	discarded	pueue_client micro-tidy (stat import, nested response checks): no LOC reduction
+76c6eea	ok	6606	2.13	6.64	kept	run: drop unused queuer state, compact CLI result return
+d58c66c	ok	6594	1.71	6.39	kept	collect_reports: single finally for temp cleanup, shared progress heartbeat
+583c58c	ok	6741	1.40	6.02	kept	merged new base
+ccd00e1	ok	6719	1.62	5.96	kept	collect_reports: single-line engine reads, simpler timeline extraction (checked against scratch xlsx equivalence harness; no tests exist)
