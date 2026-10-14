@@ -16,6 +16,7 @@ Decoding additionally supports: floats (16/32/64-bit) and tagged values
 rejected - ciborium always writes definite lengths.
 """
 
+import io
 import struct
 
 
@@ -87,27 +88,18 @@ def dumps(obj):
 # Decoding
 # ---------------------------------------------------------------------------
 
-class _Reader:
-    __slots__ = ("data", "pos")
-
-    def __init__(self, data):
-        self.data = data
-        self.pos = 0
-
-    def take(self, n):
-        end = self.pos + n
-        if end > len(self.data):
-            raise CBORError("truncated CBOR data")
-        chunk = self.data[self.pos:end]
-        self.pos = end
-        return chunk
+def _take(reader, n):
+    chunk = reader.read(n)
+    if len(chunk) != n:
+        raise CBORError("truncated CBOR data")
+    return chunk
 
 
 def _decode_length(reader, info):
     if info < 24:
         return info
     if info in _HEAD_SIZES:
-        return int.from_bytes(reader.take(_HEAD_SIZES[info]), "big")
+        return int.from_bytes(_take(reader, _HEAD_SIZES[info]), "big")
     raise CBORError(f"unsupported length encoding: info={info} (indefinite lengths are not supported)")
 
 
@@ -115,7 +107,7 @@ _FLOAT_FORMATS = {25: ">e", 26: ">f", 27: ">d"}
 
 
 def _decode(reader):
-    initial = reader.take(1)[0]
+    initial = _take(reader, 1)[0]
     major = initial >> 5
     info = initial & 0x1F
 
@@ -124,9 +116,9 @@ def _decode(reader):
     if major == 1:  # negative int
         return -1 - _decode_length(reader, info)
     if major == 2:  # byte string
-        return bytes(reader.take(_decode_length(reader, info)))
+        return _take(reader, _decode_length(reader, info))
     if major == 3:  # text string
-        return reader.take(_decode_length(reader, info)).decode("utf-8")
+        return _take(reader, _decode_length(reader, info)).decode("utf-8")
     if major == 4:  # array
         return [_decode(reader) for _ in range(_decode_length(reader, info))]
     if major == 5:  # map
@@ -146,14 +138,14 @@ def _decode(reader):
     if info == 22 or info == 23:  # null / undefined
         return None
     if info in _FLOAT_FORMATS:
-        return struct.unpack(_FLOAT_FORMATS[info], reader.take(_HEAD_SIZES[info]))[0]
+        return struct.unpack(_FLOAT_FORMATS[info], _take(reader, _HEAD_SIZES[info]))[0]
     raise CBORError(f"unsupported CBOR item: major={major} info={info}")
 
 
 def loads(data):
     """Decode one CBOR item from bytes."""
-    reader = _Reader(data)
+    reader = io.BytesIO(data)
     value = _decode(reader)
-    if reader.pos != len(data):
-        raise CBORError(f"{len(data) - reader.pos} trailing byte(s) after CBOR item")
+    if trailing := len(data) - reader.tell():
+        raise CBORError(f"{trailing} trailing byte(s) after CBOR item")
     return value
