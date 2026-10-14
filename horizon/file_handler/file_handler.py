@@ -157,7 +157,6 @@ class FileHandler:
         # Shared-include store state; configured per generate call.
         self._shared_written = set()
         self._shared_cfg = {'enabled': False, 'root': '', 'scenario_keys': set()}
-        self._include_lock = threading.Lock()
 
     # -------------------------
     # Low-level file helpers
@@ -183,21 +182,20 @@ class FileHandler:
         return str(v)
 
     def _compiled_include(self, filepath):
-        """Read and compile an include file, using a thread-safe cache.
+        """Read and compile an include file (see _compile_parts), cached per handler.
 
-        Returns the compiled literal/token segments (see _compile_parts).
+        Worker threads may race on the first read; both compile the same
+        parts, so no lock is needed.
         """
-        with self._include_lock:
-            parts = self._include_cache.get(filepath)
-            if parts is None:
-                try:
-                    with open(filepath, 'r') as fh:
-                        text = fh.read()
-                except FileNotFoundError:
-                    raise FileOperationError(f"Include file not found: {filepath}")
-                parts = _compile_parts(text)
-                self._include_cache[filepath] = parts
-            return parts
+        parts = self._include_cache.get(filepath)
+        if parts is None:
+            try:
+                with open(filepath, 'r') as fh:
+                    parts = _compile_parts(fh.read())
+            except FileNotFoundError:
+                raise FileOperationError(f"Include file not found: {filepath}")
+            self._include_cache[filepath] = parts
+        return parts
 
     # -------------------------
     # Public API
@@ -613,15 +611,12 @@ class FileHandler:
         file_name = f"{name_stem}_{'_'.join(tokens_replaced)}.inc"
         shared_path = os.path.join(shared_dir, file_name)
 
-        with self._include_lock:
-            already_written = shared_path in self._shared_written
-        if not already_written:
+        if shared_path not in self._shared_written:
             os.makedirs(shared_dir, exist_ok=True)
             tmp_path = f"{shared_path}.{threading.get_ident()}.tmp"
             self._write_to_file(tmp_path, _render_parts(parts, replacements))
             os.replace(tmp_path, shared_path)
-            with self._include_lock:
-                self._shared_written.add(shared_path)
+            self._shared_written.add(shared_path)
 
         return _format_include_line(os.path.relpath(shared_path, realization_folder).replace(os.sep, '/'), indent)
 

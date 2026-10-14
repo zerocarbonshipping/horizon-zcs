@@ -24,3 +24,7 @@ Replaces the lazy ensure-dir closure and per-include write error paths.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01VkXGKVSafWLgrVfrcYHJTL
+a683342	ok	6524	2.05	6.38	kept	file_handler: drop include lock, races are benign (idempotent cache and atomic rename)
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01VkXGKVSafWLgrVfrcYHJTL
