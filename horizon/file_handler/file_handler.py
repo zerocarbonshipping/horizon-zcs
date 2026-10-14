@@ -10,6 +10,7 @@ import hashlib
 import itertools
 import logging
 import os
+import pathlib
 import re
 import threading
 import time
@@ -160,15 +161,6 @@ class FileHandler:
         self._shared_written = set()
         self._shared_cfg = {'enabled': False, 'root': '', 'scenario_keys': set()}
 
-    # -------------------------
-    # Low-level file helpers
-    # -------------------------
-    @staticmethod
-    def _write_to_file(filepath, content):
-        """Write a string to filepath; the parent directory must already exist."""
-        with open(filepath, 'w') as fh:
-            fh.write(content)
-
     @staticmethod
     def _format_value_for_template(v):
         """
@@ -211,42 +203,21 @@ class FileHandler:
 
         Parameters
         ----------
-        unc_path : str
-            Path to the .unc template file.
-        sampled_parameters : list[dict]
-            Sampled rows. Each dict contains sample tokens and possibly scenario tokens.
-        scenario_parameters : list
-            ScenarioParameter objects (with .token, .values, .active, .default).
-        output_folder : str
-            Directory in which realizations folders will be created.
-        exclusion_rules : list[dict] or None
-            Exclusion rules from Exclude() directives. Each dict maps token names to values.
-        inclusion_rules : list[dict] or None
-            Inclusion rules from Include() directives. Each dict maps token names to values.
-        command_sink : object or None
-            Optional streaming submitter (see run_commands.StreamingQueuer):
-            ``start(expected_total)`` is called once before generation begins
-            and ``submit(command)`` as each .nav completes, so queuing
-            overlaps generation. ``self.commands`` is still populated either
-            way; without a sink the caller queues it afterwards as before.
-        max_workers : int or None
-            Generation thread-pool size. Default: adaptive — ``min(8,
-            cpu_count)`` on local disks (measured optimal at core count,
-            where over- and undersubscription both cost real time), and
-            ``min(64, 4 x cpu_count)`` when a startup probe of the output
-            filesystem shows per-operation latency in network-storage
-            territory, where generation is bound by file-creation round
-            trips and blocked threads are free. An explicit value always
-            wins (``horizon --gen-workers``; benchmark in tools/benchmark/).
-        shared_includes : bool
-            When True (default), a rewritten include whose replaced tokens
-            are all scenario tokens — identical content for every sample of
-            a scenario combination — is written once per combination under
-            ``<output_folder>/shared_includes/<combination>/`` and referenced
-            relatively, instead of being copied into every realization
-            folder. Include-heavy decks on network filesystems save one file
-            creation per such include per realization. Sample-dependent
-            rewrites always stay per-realization in simulation_includes/.
+        unc_path : path to the .unc template.
+        sampled_parameters : sampled rows (dicts), possibly already carrying scenario tokens.
+        scenario_parameters : ScenarioParameter objects (.token, .values, .active, .default).
+        output_folder : directory in which realization folders are created.
+        exclusion_rules, inclusion_rules : Exclude()/Include() rules (dicts of token -> value) or None.
+        solver, navigate_flags : extra options for each navigate command.
+        command_sink : optional streaming submitter (see run_commands.StreamingQueuer):
+            ``start(expected_total)`` once before generation, ``submit(command)`` as
+            each .nav completes. ``self.commands`` is populated either way.
+        max_workers : generation thread-pool size. Default: ``min(8, cpu_count)``,
+            or up to ``min(64, 4 x cpu_count)`` when the output filesystem probes
+            as network storage (see _select_worker_count).
+        shared_includes : when True, a rewrite that replaces only scenario tokens is
+            written once per scenario combination under ``<output_folder>/shared_includes/``
+            instead of into every realization folder.
         """
         # Realization folders are created under output_folder; absolutize once
         # so every derived path (and the navigate commands) is absolute.
@@ -395,57 +366,41 @@ class FileHandler:
 
     @staticmethod
     def _probe_fs_latency(folder):
-        """Median file-creation latency of the filesystem holding ``folder``.
-
-        Times three create+write+close round trips of a tiny probe file -
-        exactly the operation generation performs per output file. On local
-        disks this is tens of microseconds; on network filesystems it is a
-        metadata round trip of one to tens of milliseconds.
-        """
+        """Median latency of three tiny create+write round trips in ``folder``."""
         os.makedirs(folder, exist_ok=True)
         probe_path = os.path.join(folder, f".horizon_fs_probe_{os.getpid()}")
         samples = []
         for _ in range(3):
             start = time.perf_counter()
-            with open(probe_path, "w") as fh:
-                fh.write("probe")
+            pathlib.Path(probe_path).write_text("probe")
             samples.append(time.perf_counter() - start)
             os.remove(probe_path)
-        samples.sort()
-        return samples[1]
-
-    # Per-op latency above which the output filesystem is treated as
-    # network-backed and the pool is sized for latency hiding. Local disks
-    # measure far below this even under load.
-    _FS_LATENCY_THRESHOLD = 0.002
+        return sorted(samples)[1]
 
     def _select_worker_count(self, requested, output_folder):
-        """Choose the generation pool size.
+        """Choose the generation pool size: ``requested`` if given, else ``min(8, cpu)``.
 
-        An explicit request always wins. Otherwise the default is
-        ``min(8, cpu)`` — measured optimal at core count on local disks,
-        where the work is compute-bound and oversubscription costs real
-        time. When the output filesystem shows per-operation latency in
-        network-storage territory, generation is bound by file-creation
-        round trips instead: threads blocked on I/O are free, so the pool
-        is sized at ``min(64, 4 x cpu)`` to keep more operations in flight.
+        Local-disk generation is compute-bound and peaks at core count. When the
+        output filesystem probes at 2 ms or more per file creation (network
+        storage), generation is latency-bound and threads blocked on I/O are
+        free, so the pool grows to ``min(64, 4 x cpu)``.
         """
-        cpu_count = os.cpu_count() or 4
         if requested is not None:
             return max(1, requested)
-        workers = min(8, cpu_count)
+
+        cpu_count = os.cpu_count() or 4
         try:
             latency = self._probe_fs_latency(output_folder)
         except OSError:
-            return workers
-        if latency >= self._FS_LATENCY_THRESHOLD:
-            workers = min(64, cpu_count * 4)
-            logger.info(
-                "Output filesystem responds in ~%.1f ms per file operation "
-                "(network storage?); using %d generation workers to hide the "
-                "latency. Override with --gen-workers.",
-                latency * 1000, workers)
-        return workers
+            return min(8, cpu_count)
+
+        if latency < 0.002:
+            return min(8, cpu_count)
+
+        logger.info("Output filesystem responds in ~%.1f ms per file operation (network storage?); "
+                    "using more generation workers to hide the latency. Override with --gen-workers.",
+                    latency * 1000)
+        return min(64, cpu_count * 4)
 
     def _generate_nav_files_parallel(self, work_items, template_program, unc_path,
                                      command_sink=None, solver=None, navigate_flags=None,
@@ -546,8 +501,8 @@ class FileHandler:
         includes_folder = os.path.join(realization_folder, "simulation_includes")
         os.makedirs(includes_folder if pending_includes else realization_folder, exist_ok=True)
         for file_name, content in pending_includes:
-            self._write_to_file(os.path.join(includes_folder, file_name), content)
-        self._write_to_file(nav_filepath, ''.join(nav_content))
+            pathlib.Path(includes_folder, file_name).write_text(content)
+        pathlib.Path(nav_filepath).write_text(''.join(nav_content))
         return nav_filepath
 
     def _shared_include_line(self, parts, replacements, tokens_replaced, name_stem,
@@ -574,7 +529,7 @@ class FileHandler:
         if shared_path not in self._shared_written:
             os.makedirs(shared_dir, exist_ok=True)
             tmp_path = f"{shared_path}.{threading.get_ident()}.tmp"
-            self._write_to_file(tmp_path, _render_parts(parts, replacements))
+            pathlib.Path(tmp_path).write_text(_render_parts(parts, replacements))
             os.replace(tmp_path, shared_path)
             self._shared_written.add(shared_path)
 

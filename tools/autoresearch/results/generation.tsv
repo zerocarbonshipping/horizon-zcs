@@ -48,3 +48,7 @@ c2bc93a	ok	6472	1.77	5.88	kept	file_handler: flatten extract_template_tokens
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01VkXGKVSafWLgrVfrcYHJTL
+4ed7d48	ok	6433	1.79	7.14	kept	file_handler: trim verbose docstrings, Path.write_text instead of write helper
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01VkXGKVSafWLgrVfrcYHJTL
