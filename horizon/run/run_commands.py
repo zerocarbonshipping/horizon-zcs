@@ -133,10 +133,7 @@ def _queue_single_command(command: str, pueue_priority: int, env_vars: str, task
 
         result = subprocess.run(pueue_cmd, capture_output=True, text=True, env=task_env)
 
-        if result.returncode == 0:
-            return (True, "")
-        else:
-            return (False, result.stderr)
+        return (result.returncode == 0, "" if result.returncode == 0 else result.stderr)
     except Exception as e:
         return (False, str(e))
 
@@ -264,7 +261,6 @@ class StreamingQueuer:
         self._executor = None
         self._future_to_cmd = {}
         self._env_vars = ""
-        self._expected = 0
         self._full_task_env = full_task_env
         self._task_env = _build_task_env(full_task_env)
         self._force_cli = pueue_cli
@@ -282,7 +278,6 @@ class StreamingQueuer:
             f"MKL_NUM_THREADS={threads_per_task} "
             f"NUMEXPR_NUM_THREADS={threads_per_task}"
         )
-        self._expected = expected_total
         logger.info(
             "Queuing %d tasks with %d threads each (%d CPUs available)",
             expected_total, threads_per_task, cpu_count,
