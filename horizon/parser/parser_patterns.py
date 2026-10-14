@@ -9,28 +9,28 @@ import re
 param_block_pattern = re.compile(r'(ScenarioParameter|ContinuousParameter|DiscreteParameter)\s+"([^"]+)"\s*{')
 
 # Individual patterns for each attribute
-name_pattern = re.compile(r'name\s*=\s*"([^"]+)"')
-token_pattern = re.compile(r'token\s*=\s*"([^"]+)"')
-values_pattern = re.compile(r'values\s*=\s*\[([^]]+)]')
-active_pattern = re.compile(r'active\s*=\s*(TRUE|FALSE)')
-default_pattern = re.compile(r'default\s*=\s*([^\s,]+)')
+name_pattern = re.compile(r'\bname\s*=\s*"([^"]+)"')
+token_pattern = re.compile(r'\btoken\s*=\s*"([^"]+)"')
+values_pattern = re.compile(r'\bvalues\s*=\s*\[([^]]+)]')
+active_pattern = re.compile(r'\bactive\s*=\s*(TRUE|FALSE)')
+default_pattern = re.compile(r'\bdefault\s*=\s*([^\s,]+)')
 
 # Per-parameter emissions patterns (optional)
-emission_low_pattern = re.compile(r'emissions_low\s*=\s*([^\s,]+)')
-emission_high_pattern = re.compile(r'emissions_high\s*=\s*([^\s,]+)')
+emission_low_pattern = re.compile(r'\bemissions_low\s*=\s*([^\s,]+)')
+emission_high_pattern = re.compile(r'\bemissions_high\s*=\s*([^\s,]+)')
 
 # Patterns for DiscreteParameter specifics
-probabilities_pattern = re.compile(r'probabilities\s*=\s*\[([^]]+)]')
+probabilities_pattern = re.compile(r'\bprobabilities\s*=\s*\[([^]]+)]')
 
 # Patterns for ContinuousParameter specifics
-low_val_pattern = re.compile(r'low_val\s*=\s*([^\s,]+)')
-mid_val_pattern = re.compile(r'mid_val\s*=\s*([^\s,]+)')
-high_val_pattern = re.compile(r'high_val\s*=\s*([^\s,]+)')
-distribution_pattern = re.compile(r'distribution\s*=\s*(".*?"|\'.*?\'|[^\n,]+)')
-decimals_pattern = re.compile(r'decimals\s*=\s*(-?\d+)')
+low_val_pattern = re.compile(r'\blow_val\s*=\s*([^\s,]+)')
+mid_val_pattern = re.compile(r'\bmid_val\s*=\s*([^\s,]+)')
+high_val_pattern = re.compile(r'\bhigh_val\s*=\s*([^\s,]+)')
+distribution_pattern = re.compile(r'\bdistribution\s*=\s*(".*?"|\'.*?\'|[^\n,]+)')
+decimals_pattern = re.compile(r'\bdecimals\s*=\s*(-?\d+)')
 
 # Horizon block patterns:
-plot_pattern = re.compile(r'Plot\s*=\s*(TRUE|FALSE)')
-max_parallel_workers_pattern = re.compile(r'MaxParallelWorkers\s*=\s*(\d+)')
-random_seed_pattern = re.compile(r'RandomSeed\s*=\s*(\d+)')
-sample_only_pattern = re.compile(r'SampleOnly\s*=\s*(TRUE|FALSE)')
+plot_pattern = re.compile(r'\bPlot\s*=\s*(TRUE|FALSE)')
+max_parallel_workers_pattern = re.compile(r'\bMaxParallelWorkers\s*=\s*(\d+)')
+random_seed_pattern = re.compile(r'\bRandomSeed\s*=\s*(\d+)')
+sample_only_pattern = re.compile(r'\bSampleOnly\s*=\s*(TRUE|FALSE)')

@@ -132,14 +132,14 @@ def _parse_kv_block(body_text):
     return kv
 
 
-def parse_overrides(block_content):
+def _find_override_spans(block_content):
     """
-    Extract all `if ... { ... }` override blocks from block_content.
+    Locate all `if ... { ... }` override blocks in block_content.
 
-    Returns list of override dicts:
-      [{'conditions': [...], 'attrs': {...}, 'start': int, 'end': int}, ...]
+    Returns a list of (start_if, brace_idx, end) tuples: the index of the `if` keyword,
+    the index of its opening '{', and the index just past the matching '}'.
     """
-    overrides = []
+    spans = []
     i = 0
     L = len(block_content)
     while True:
@@ -162,6 +162,20 @@ def parse_overrides(block_content):
             j += 1
         if depth != 0:
             raise ValueError("Malformed 'if' override: unmatched '{'")
+        spans.append((start_if, brace_idx, j))
+        i = j
+    return spans
+
+
+def parse_overrides(block_content):
+    """
+    Extract all `if ... { ... }` override blocks from block_content.
+
+    Returns list of override dicts:
+      [{'conditions': [...], 'attrs': {...}, 'start': int, 'end': int}, ...]
+    """
+    overrides = []
+    for start_if, brace_idx, j in _find_override_spans(block_content):
         header = block_content[start_if:brace_idx].strip()
         cond_text = header[len('if'):].strip()
         body_text = block_content[brace_idx + 1: j - 1]
@@ -173,8 +187,37 @@ def parse_overrides(block_content):
             "start": start_if,
             "end": j
         })
-        i = j
     return overrides
+
+
+def _base_content(block_content):
+    """
+    Return block_content with every `if ... { ... }` override block removed.
+
+    Base attributes are searched only in this view, so a field set only inside an
+    override is never taken as the base value.
+    """
+    parts = []
+    i = 0
+    for start_if, _, end in _find_override_spans(block_content):
+        parts.append(block_content[i:start_if])
+        i = end
+    parts.append(block_content[i:])
+    return ''.join(parts)
+
+
+def _strip_comment(line):
+    """Remove a `#` comment running to end of line, unless the `#` is inside a quoted string."""
+    quote = None
+    for idx, ch in enumerate(line):
+        if quote:
+            if ch == quote:
+                quote = None
+        elif ch in ('"', "'"):
+            quote = ch
+        elif ch == '#':
+            return line[:idx].rstrip() + '\n'
+    return line
 
 
 # -------------------------------------------------------------------------
@@ -189,12 +232,10 @@ def parse_hor_file(file_path):
 
     processed_content = []
 
-    # Read file and ignore comment lines
+    # Read file and strip comments (full-line and trailing; '#' inside quotes is kept)
     with open(file_path, 'r') as file:
         for line in file:
-            stripped_line = line.strip()
-            if not stripped_line.startswith('#'):
-                processed_content.append(line)
+            processed_content.append(_strip_comment(line))
 
     content = ''.join(processed_content)
 
@@ -226,22 +267,31 @@ def parse_hor_file(file_path):
 
         # block_content is the text inside the outermost braces of this parameter block
         block_content = content[block_start.end(): j - 1]
+        param_type = block_start.group(1)
+        # Base attributes are read with the `if ... { ... }` override blocks removed
+        # (ScenarioParameter has no overrides).
+        if param_type == "ScenarioParameter":
+            base_content = block_content
+        else:
+            try:
+                base_content = _base_content(block_content)
+            except ValueError as e:
+                raise ValueError(f"Error parsing overrides in parameter block '{block_start.group(2)}': {e}")
 
         # Extract basic attributes shared by all parameter types
-        name_match = name_pattern.search(block_content)
+        name_match = name_pattern.search(base_content)
         if not name_match:
             raise ParseError("Missing 'name' field in parameter block")
         name = name_match.group(1)
 
-        token_match = token_pattern.search(block_content)
+        token_match = token_pattern.search(base_content)
         if not token_match:
             raise ParseError(f"Missing 'token' field in parameter block for '{name}'")
         token = token_match.group(1)
-        active_str = active_pattern.search(block_content)
+        active_str = active_pattern.search(base_content)
         active = (not active_str or active_str.group(1) == "TRUE")
-        default_val = default_pattern.search(block_content)
+        default_val = default_pattern.search(base_content)
         default = None if not default_val else default_val.group(1)
-        param_type = block_start.group(1)
 
         # Create parameter objects dynamically
         parameter_object = create_parameter(param_type, name, token, active, default, block_content)
@@ -370,15 +420,24 @@ def create_parameter(param_type, name, token, active, default, block_content):
         "default": default
     }
 
+    # Base attributes are read with the `if ... { ... }` override blocks removed;
+    # the overrides themselves are parsed from the full block_content.
+    base_content = block_content
+    if param_type in ("ContinuousParameter", "DiscreteParameter"):
+        try:
+            base_content = _base_content(block_content)
+        except ValueError as e:
+            raise ValueError(f"Error parsing overrides for parameter '{token}': {e}")
+
     # Extract common attributes and then specific ones for ContinuousParameter
     if param_type == "ContinuousParameter":
         # pick up any per-parameter overrides
-        low_case = emission_low_pattern.search(block_content)
-        high_case = emission_high_pattern.search(block_content)
+        low_case = emission_low_pattern.search(base_content)
+        high_case = emission_high_pattern.search(base_content)
         attributes["emissions_low"] = low_case.group(1) if low_case else None
         attributes["emissions_high"] = high_case.group(1) if high_case else None
 
-        distribution_search = distribution_pattern.search(block_content)
+        distribution_search = distribution_pattern.search(base_content)
         if distribution_search:
             raw_dist = distribution_search.group(1).strip()
             # remove surrounding quotes if present (single or double)
@@ -390,10 +449,10 @@ def create_parameter(param_type, name, token, active, default, block_content):
         else:
             distribution = 'uniform'
 
-        low_m = low_val_pattern.search(block_content)
-        mid_m = mid_val_pattern.search(block_content)
-        high_m = high_val_pattern.search(block_content)
-        dec_m = decimals_pattern.search(block_content)
+        low_m = low_val_pattern.search(base_content)
+        mid_m = mid_val_pattern.search(base_content)
+        high_m = high_val_pattern.search(base_content)
+        dec_m = decimals_pattern.search(base_content)
 
         if not low_m or not high_m or not dec_m:
             raise ValueError(f"Missing low_val, high_val, or decimals for ContinuousParameter '{token}'.")
@@ -431,14 +490,14 @@ def create_parameter(param_type, name, token, active, default, block_content):
 
     elif param_type == "DiscreteParameter":
         # pick up any per-parameter overrides
-        low_case = emission_low_pattern.search(block_content)
-        high_case = emission_high_pattern.search(block_content)
+        low_case = emission_low_pattern.search(base_content)
+        high_case = emission_high_pattern.search(base_content)
         attributes["emissions_low"] = low_case.group(1) if low_case else None
         attributes["emissions_high"] = high_case.group(1) if high_case else None
 
         # Extracting values and probabilities
-        values_str = values_pattern.search(block_content).group(1)
-        probabilities_str = probabilities_pattern.search(block_content).group(1)
+        values_str = values_pattern.search(base_content).group(1)
+        probabilities_str = probabilities_pattern.search(base_content).group(1)
 
         # Parsing values as they are, not converting to float
         values = [value.strip().strip('"') for value in values_str.split(',')]
