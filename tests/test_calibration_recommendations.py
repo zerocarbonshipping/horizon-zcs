@@ -375,6 +375,9 @@ class TestFullPipeline:
         assert "Fuel share realism" in dashboard_html
         assert "Smoothness" in dashboard_html
 
+    def test_html_has_no_lint_pragma_text(self, dashboard_html):
+        assert "noqa" not in dashboard_html
+
     def test_html_has_regulation_tabs(self, dashboard_html):
         for reg in REGULATIONS:
             assert f'id="tab-{reg}"' in dashboard_html

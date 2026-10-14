@@ -105,6 +105,7 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   `FileHandler.generate_commands_list` and `FileHandler.commands`.
 
 ### Fixed
+- Calibration recommendation cards no longer show the literal text `# noqa: E122`.
 - Two different `.inc` files replacing the same token set were rewritten to
   the same `simulation_includes/` filename, silently overwriting each other:
   both nav `Include` lines then pointed at whichever copy was written last,

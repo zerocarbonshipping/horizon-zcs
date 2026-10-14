@@ -705,7 +705,6 @@ def _render_recommendations_html(recommendations):
     ]
     for rec in recommendations:
         badge_style = _CONFIDENCE_STYLES[rec.confidence]
-        # the card template ends in a literal "# noqa: E122" that is part of the rendered output
         review_note = ""
         if rec.confidence == "LOW":
             review_note = (
@@ -725,7 +724,7 @@ def _render_recommendations_html(recommendations):
     Aggregate: <strong>{rec.scores_breakdown.get("aggregate", 0):.2f}</strong>
   </div>
   {_render_score_bars(rec.scores_breakdown)}
-  {review_note}  # noqa: E122
+  {review_note}
 </div>''')
 
     parts.append("</div>")  # grid
