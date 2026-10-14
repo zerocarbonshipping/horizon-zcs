@@ -209,9 +209,6 @@ def _strip_comment(line):
     return line
 
 
-# -------------------------------------------------------------------------
-# Existing parser implementation (unchanged except where noted)
-# -------------------------------------------------------------------------
 def parse_hor_file(file_path):
     """
     Parses a horizon file to extract parameters and configuration for simulations.
@@ -219,14 +216,9 @@ def parse_hor_file(file_path):
     # Validate file exists before attempting to open
     validate_file_exists(file_path, "configuration file")
 
-    processed_content = []
-
     # Read file and strip comments (full-line and trailing; '#' inside quotes is kept)
     with open(file_path, 'r') as file:
-        for line in file:
-            processed_content.append(_strip_comment(line))
-
-    content = ''.join(processed_content)
+        content = ''.join(_strip_comment(line) for line in file)
 
     scenario_parameters = []
     parameters = []
