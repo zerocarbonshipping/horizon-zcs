@@ -18,3 +18,9 @@ items are plain tuples instead of dicts.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01VkXGKVSafWLgrVfrcYHJTL
+7593115	ok	6529	1.72	6.24	kept	file_handler: collect rewritten includes and write after a single makedirs
+
+Replaces the lazy ensure-dir closure and per-include write error paths.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01VkXGKVSafWLgrVfrcYHJTL

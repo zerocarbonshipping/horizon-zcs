@@ -517,19 +517,9 @@ class FileHandler:
         - Returns the nav filepath on success, or None on failure.
         """
         realization_folder = os.path.join(output_folder, simulation_name)
-        os.makedirs(realization_folder, exist_ok=True)
-        # simulation_includes/ is created lazily and at most once per
-        # realization - on network filesystems every extra makedirs is a
-        # round trip, and decks can rewrite dozens of includes per
-        # realization.
-        simulation_includes_folder = os.path.join(realization_folder, "simulation_includes")
-        includes_dir_ready = False
-
-        def _ensure_includes_dir():
-            nonlocal includes_dir_ready
-            if not includes_dir_ready:
-                os.makedirs(simulation_includes_folder, exist_ok=True)
-                includes_dir_ready = True
+        # rewritten includes are collected and written after one makedirs: on
+        # network filesystems every extra directory call is a round trip
+        pending_includes = []
 
         # Build unified replacements map: scenario params (strings) first, then sampled params
         replacements = {}
@@ -576,12 +566,11 @@ class FileHandler:
                     full_include_path,
                     replacements,
                     sample_number,
-                    simulation_includes_folder,
                     realization_folder,
                     payload['indent'],
                     name_stem or "include",
-                    _ensure_includes_dir,
                     combo_name,
+                    pending_includes,
                 )
             except Exception:
                 logger.exception("Failed to process include file: %s", full_include_path)
@@ -591,10 +580,12 @@ class FileHandler:
             # normalize the keyword so the .nav never carries a legacy spelling Navigate rejects.
             nav_content.append(updated_line if updated_line else _normalize_include_keyword(line))
 
-        # Write nav file
-        nav_filename = f"{simulation_name}.nav"
-        nav_filepath = os.path.join(realization_folder, nav_filename)
+        nav_filepath = os.path.join(realization_folder, f"{simulation_name}.nav")
+        includes_folder = os.path.join(realization_folder, "simulation_includes")
         try:
+            os.makedirs(includes_folder if pending_includes else realization_folder, exist_ok=True)
+            for file_name, content in pending_includes:
+                self._write_to_file(os.path.join(includes_folder, file_name), content)
             self._write_to_file(nav_filepath, ''.join(nav_content))
             return nav_filepath
         except Exception:
@@ -646,21 +637,19 @@ class FileHandler:
         self.commands = [self._build_command(path, solver, navigate_flags) for path in self.nav_filepaths]
 
     def _process_and_update_include_file(self, include_file_path, replacements, sample_number,
-                                         simulation_includes_folder, realization_folder,
-                                         indent='\t', name_stem="include",
-                                         ensure_includes_dir=None, combo_name=None):
+                                         realization_folder, indent, name_stem, combo_name,
+                                         pending_includes):
         """
-        Process an include (.inc) file: replace tokens and optionally save to simulation_includes.
+        Process an include (.inc) file: replace tokens and return the `Include` line for the .nav.
 
         `replacements` is the realization's unified token->string mapping (scenario
-        and sampled values, pre-formatted). Returns a new `Include` line to be
-        placed in the .nav file, or None if the include could not be handled.
+        and sampled values, pre-formatted). A sample-dependent rewrite is appended
+        to `pending_includes` as (file name, content) for the caller to write into
+        simulation_includes/; a scenario-only rewrite goes to the shared store.
         `indent` is the leading whitespace of the template line, carried over so
         the generated .nav keeps the template's indentation. `name_stem` is the
         collision-safe stem for the rewritten copy (see _annotate_include_names);
-        `ensure_includes_dir` creates simulation_includes/ at most once per
-        realization; `combo_name` names the realization's scenario combination
-        for the shared include store.
+        `combo_name` names the realization's scenario combination.
         """
         parts = self._compiled_include(include_file_path)
 
@@ -690,18 +679,8 @@ class FileHandler:
             # overwriting each other).
             combined_tokens = '_'.join(tokens_replaced)
             new_file_name = f"{name_stem}_{combined_tokens}_sample_{sample_number}.inc"
-            new_file_path = os.path.join(simulation_includes_folder, new_file_name)
-            try:
-                if ensure_includes_dir is not None:
-                    ensure_includes_dir()
-                else:
-                    os.makedirs(simulation_includes_folder, exist_ok=True)
-                self._write_to_file(new_file_path, _render_parts(parts, replacements))
-            except Exception:
-                logger.exception("Failed writing modified include file %s", new_file_path)
-                return None
-            new_include_path_relative = os.path.join("simulation_includes", new_file_name).replace(os.sep, '/')
-            return _format_include_line(new_include_path_relative, indent)
+            pending_includes.append((new_file_name, _render_parts(parts, replacements)))
+            return _format_include_line(f"simulation_includes/{new_file_name}", indent)
 
         # no tokens changed: reference the original file relative to the .nav
         return _format_include_line(
