@@ -7,3 +7,4 @@ f7699e8	ok	6549	1.86	5.93	kept	sensitivity: share one metric aggregation helper 
 74ccaae	ok	6212	1.59	6.33	kept	plot: unify CDF/PDF via sampling-space mapping, flatten sampling diagnostics, share bin and label helpers
 d2f0b92	ok	6180	1.73	6.06	kept	sensitivity: reuse _load_parameter_matrix for early validation, drop redundant frames and tornado ticks
 e9e87dd	ok	6176	1.45	5.77	kept	sensitivity: one last-year helper for xlsx and collected reports, namedtuple defaults
+-	ok	6180	-	-	discarded	plot: share ECDF/CDF helper between KS statistic and plot (loc +4)
