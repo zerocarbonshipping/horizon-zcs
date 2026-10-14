@@ -41,14 +41,13 @@ def plot_tornado(prcc_df, metric_label, output_path):
     colors = ["#2c4068" if v >= 0 else "#a24040" for v in df["prcc"]]
 
     fig, ax = plt.subplots(figsize=(8, max(3, 0.4 * len(df))))
-    ax.barh(range(len(df)), df["prcc"], color=colors, height=0.7)
-    ax.set_yticks(range(len(df)))
-    ax.set_yticklabels(df["parameter"], fontsize=9)
+    ax.barh(df["parameter"], df["prcc"], color=colors, height=0.7)
+    ax.tick_params(axis="y", labelsize=9)
     ax.set_xlabel("PRCC")
     ax.set_title(f"PRCC — {metric_label}", fontsize=12)
     ax.axvline(0, color="black", linewidth=0.5)
-    ax.axvline(0.5, color="grey", linewidth=0.5, linestyle="--", alpha=0.6)
-    ax.axvline(-0.5, color="grey", linewidth=0.5, linestyle="--", alpha=0.6)
+    for threshold in (-0.5, 0.5):
+        ax.axvline(threshold, color="grey", linewidth=0.5, linestyle="--", alpha=0.6)
     ax.set_xlim(-1.05, 1.05)
     fig.tight_layout()
     fig.savefig(output_path, dpi=150)
@@ -75,16 +74,12 @@ def plot_scatter_diagnostics(x_values, y_values, param_name, metric_label,
     y = np.asarray(y_values, dtype=float)
 
     fig, ax = plt.subplots(figsize=(7, 5))
-
-    # Scatter
     ax.scatter(x, y, s=12, alpha=0.4, color="#3c5e86", label="samples")
 
-    # LOESS smooth
-    x_smooth, y_smooth = _lowess(x, y)
-    if x_smooth is not None:
-        ax.plot(x_smooth, y_smooth, color="#a2703c", linewidth=2, label="LOESS")
+    smooth = _lowess(x, y)
+    if smooth is not None:
+        ax.plot(*smooth, color="#a2703c", linewidth=2, label="LOESS")
 
-    # Binned means
     _plot_binned_means(ax, x, y)
 
     ax.set_xlabel(param_name, fontsize=10)
@@ -97,49 +92,37 @@ def plot_scatter_diagnostics(x_values, y_values, param_name, metric_label,
 
 
 def _lowess(x, y, frac=0.3, n_grid=80):
-    """Kernel-weighted local average (lightweight LOWESS).
+    """Gaussian kernel-weighted local average (lightweight LOWESS).
 
-    Uses a Gaussian kernel with bandwidth proportional to *frac* of the
-    data range.  Returns (x_grid, y_smooth) or (None, None) on failure.
+    The bandwidth is *frac* of the data range.  Returns ``(x_grid, y_smooth)``
+    or None when there are too few points or no spread.
     """
-    order = np.argsort(x)
-    xs, ys = x[order], y[order]
-    n = len(xs)
-    if n < 4:
-        return None, None
+    x_range = x.max() - x.min()
+    if len(x) < 4 or x_range == 0:
+        return None
 
-    x_range = xs[-1] - xs[0]
-    if x_range == 0:
-        return None, None
-
-    h = frac * x_range
-    x_grid = np.linspace(xs[0], xs[-1], n_grid)
-
-    # Vectorized kernel-weighted local average
-    diffs = (xs[np.newaxis, :] - x_grid[:, np.newaxis]) / h  # (n_grid, n)
-    W = np.exp(-0.5 * diffs ** 2)                              # (n_grid, n)
-    w_sums = W.sum(axis=1)                                     # (n_grid,)
-    y_grid = np.where(w_sums > 0, W @ ys / w_sums, np.nan)
-
-    mask = ~np.isnan(y_grid)
-    return x_grid[mask], y_grid[mask]
+    x_grid = np.linspace(x.min(), x.max(), n_grid)
+    weights = np.exp(-0.5 * ((x[np.newaxis, :] - x_grid[:, np.newaxis]) / (frac * x_range)) ** 2)
+    return x_grid, weights @ y / weights.sum(axis=1)
 
 
 def _plot_binned_means(ax, x, y, n_bins=8):
     """Overlay binned means with ±1 std error bars."""
-    x_range = x.max() - x.min()
-    if x_range == 0 or len(x) < n_bins:
+    if x.max() == x.min() or len(x) < n_bins:
         return
 
     edges = np.linspace(x.min(), x.max(), n_bins + 1)
+    # bins are half-open except the last, which includes the maximum
+    bin_index = np.minimum(np.searchsorted(edges, x, side="right") - 1, n_bins - 1)
     mids, means, stds = [], [], []
-    for lo, hi in zip(edges[:-1], edges[1:]):
-        mask = (x >= lo) & (x < hi) if hi != edges[-1] else (x >= lo) & (x <= hi)
-        if mask.sum() < 2:
+    for i in range(n_bins):
+        y_bin = y[bin_index == i]
+        if len(y_bin) < 2:
             continue
-        mids.append((lo + hi) / 2)
-        means.append(y[mask].mean())
-        stds.append(y[mask].std())
+
+        mids.append((edges[i] + edges[i + 1]) / 2)
+        means.append(y_bin.mean())
+        stds.append(y_bin.std())
 
     if mids:
         ax.errorbar(mids, means, yerr=stds, fmt="s-", color="#286464",

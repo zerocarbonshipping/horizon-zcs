@@ -54,27 +54,17 @@ from horizon.sensitivity.prcc import compute_prcc
 logger = logging.getLogger(__name__)
 
 MetricSpec = namedtuple(
-    "MetricSpec", ["metric_key", "year", "display_name", "aggregation"],
+    "MetricSpec", ["metric_key", "year", "display_name", "aggregation"], defaults=("point",),
 )
-MetricSpec.__new__.__defaults__ = ("point",)  # backward compatible
 
 # Valid aggregation modes
 _AGGREGATIONS = {"point", "difference", "cumulative"}
 
-# Metrics available on the Global sheet (same as calibration/analyze.py)
-_KNOWN_METRICS = {
-    "TotalEquivalentWtw",
-    "Expenses",
-    "ConsumedEnergy",
-    "InstalledPower",
-}
-
-# Default metrics when the user provides none.
-# Each entry is (metric_key, aggregation).
+# default metrics when the user provides none
 _DEFAULT_METRICS = [
-    ("TotalEquivalentWtw", "difference"),
-    ("Expenses", "difference"),
-    ("TotalEquivalentWtw", "cumulative"),
+    "TotalEquivalentWtw:difference",
+    "Expenses:difference",
+    "TotalEquivalentWtw:cumulative",
 ]
 
 # Known CSV filenames for the parameter samples file
@@ -86,10 +76,6 @@ _COLLECTED_REPORT_NAMES = [
     "collected_report.csv", "collected_report.xlsx",
 ]
 
-
-# ---------------------------------------------------------------------------
-# Public entry point
-# ---------------------------------------------------------------------------
 
 def prcc_analysis(ensemble_dir, metrics=None, output_dir=None,
                   samples_csv=None, report_csv=None):
@@ -105,56 +91,31 @@ def prcc_analysis(ensemble_dir, metrics=None, output_dir=None,
         If *None*, analyses all default metrics at the final available year.
     output_dir : str or None
         Where to write results.  Defaults to ``{ensemble_dir}/prcc_analysis``.
-    samples_csv : str or None
-        Explicit path to the parameter samples CSV file.  When *None*,
-        the CSV is located automatically via ``_find_csv()``.
+    samples_csv : str
+        Path to the parameter samples CSV file.
     report_csv : str or None
         Path to a collected report (output of ``horizon -c``).  When
         provided, metric values are extracted from this single file
         instead of reading individual Excel reports.
     """
     ensemble_dir = os.path.abspath(ensemble_dir)
-    if output_dir is None:
-        output_dir = os.path.join(ensemble_dir, "prcc_analysis")
-    else:
-        output_dir = os.path.abspath(output_dir)
-
+    output_dir = os.path.abspath(output_dir or os.path.join(ensemble_dir, "prcc_analysis"))
     t_start = time.monotonic()
     logger.info("Starting PRCC analysis for %s", ensemble_dir)
 
-    # ------------------------------------------------------------------
-    # 0. EARLY VALIDATION — verify all inputs before expensive I/O
-    # ------------------------------------------------------------------
-    # 0a. Resolve samples CSV path
     if samples_csv is None:
         raise FileOperationError(
             "A samples CSV path is required (--samples-csv)."
         )
-    samples_csv = os.path.abspath(samples_csv)
-    if not os.path.isfile(samples_csv):
-        raise FileOperationError(
-            f"Specified samples CSV not found: {samples_csv}"
-        )
-    logger.info("Using samples CSV: %s", samples_csv)
 
-    # 0b. Resolve collected report
+    # verify all inputs before expensive I/O
+    X_df, scenario_df = _load_parameter_matrix(ensemble_dir, samples_csv)
     collected_report_path = _resolve_collected_report(report_csv, ensemble_dir)
-    use_collected = collected_report_path is not None
-
-    # 0c. If no collected report, verify at least one individual report exists
-    if not use_collected:
+    if collected_report_path is None:
         _check_any_report_exists(ensemble_dir)
 
     os.makedirs(output_dir, exist_ok=True)
-    logger.info(
-        "Validation complete (%.1fs). Loading parameter matrix...",
-        time.monotonic() - t_start,
-    )
 
-    # ------------------------------------------------------------------
-    # 1. Load parameter matrix
-    # ------------------------------------------------------------------
-    X_df, scenario_df = _load_parameter_matrix_from_csv(samples_csv)
     param_names = list(X_df.columns)
     folder_names = list(X_df.index)
     logger.info(
@@ -162,39 +123,24 @@ def prcc_analysis(ensemble_dir, metrics=None, output_dir=None,
         len(X_df), len(param_names),
     )
 
-    # ------------------------------------------------------------------
-    # 2. Parse metric specifications
-    # ------------------------------------------------------------------
-    if use_collected:
+    if collected_report_path is not None:
         collected_df = _read_collected_report(collected_report_path)
         metric_specs = _resolve_metric_specs(
             metrics, lambda: _final_year_from_collected(collected_df),
+        )
+        report_data = _load_metrics_from_collected_report(
+            collected_df, folder_names, metric_specs
         )
     else:
         metric_specs = _resolve_metric_specs(
             metrics, lambda: _probe_final_year(ensemble_dir, folder_names),
         )
-    logger.info("Metrics to analyse: %s", [m.display_name for m in metric_specs])
-
-    # ------------------------------------------------------------------
-    # 3. Load all metric values
-    # ------------------------------------------------------------------
-    t_load = time.monotonic()
-    logger.info("Loading metric values from %d folders...", len(folder_names))
-    if use_collected:
-        report_data = _load_metrics_from_collected_report(
-            collected_df, folder_names, metric_specs
-        )
-    else:
         report_data = _load_all_metrics(ensemble_dir, folder_names, metric_specs)
-    logger.info(
-        "Read reports for %d folders (%.1fs).",
-        len(report_data), time.monotonic() - t_load,
-    )
+    logger.info("Metrics to analyse: %s", [m.display_name for m in metric_specs])
+    logger.info("Read reports for %d folders.", len(report_data))
 
-    # 4. For each metric, compute PRCC and collect plot tasks
     all_results = []
-    plot_tasks = []  # (callable, args) tuples for deferred parallel rendering
+    plot_tasks = []
 
     for spec in metric_specs:
         logger.info("Processing metric: %s", spec.display_name)
@@ -202,15 +148,15 @@ def prcc_analysis(ensemble_dir, metrics=None, output_dir=None,
         y_series = pd.Series(
             {fn: d.get(spec, np.nan) for fn, d in report_data.items()},
             dtype=float,
-        )
-        if y_series.dropna().empty:
+        ).dropna()
+        if y_series.empty:
             logger.warning(
                 "No data found for metric '%s' — skipping.", spec.display_name
             )
             continue
 
-        # Align X and Y (inner join — drop samples missing either)
-        common = X_df.index.intersection(y_series.dropna().index)
+        # inner join: drop samples missing either X or y
+        common = X_df.index.intersection(y_series.index)
         if len(common) < 4:
             logger.warning(
                 "Only %d usable samples for '%s' — skipping.",
@@ -218,24 +164,20 @@ def prcc_analysis(ensemble_dir, metrics=None, output_dir=None,
             )
             continue
 
-        X_aligned = X_df.loc[common]
-        y_aligned = y_series.loc[common].values
+        # year for point metrics, aggregation name otherwise
+        tag = str(spec.year) if spec.aggregation == "point" else spec.aggregation
 
-        # Determine scenario groups
-        groups = _scenario_groups(scenario_df, common)
-
-        for scenario_label, idx in groups.items():
-            Xg = X_aligned.loc[idx].values
-            yg = y_aligned[np.isin(common, idx)]
-
-            if len(Xg) < 4:
+        for scenario_label, idx in _scenario_groups(scenario_df, common).items():
+            if len(idx) < 4:
                 logger.info(
                     "Scenario '%s': only %d samples — skipping.",
-                    scenario_label, len(Xg),
+                    scenario_label, len(idx),
                 )
                 continue
 
-            prcc_df = compute_prcc(Xg, yg, param_names)
+            X_group = X_df.loc[idx]
+            y_group = y_series.loc[idx].values
+            prcc_df = compute_prcc(X_group.values, y_group, param_names)
             prcc_df.insert(0, "scenario", scenario_label)
             prcc_df.insert(1, "metric", spec.metric_key)
             prcc_df.insert(2, "year", spec.year)
@@ -245,86 +187,45 @@ def prcc_analysis(ensemble_dir, metrics=None, output_dir=None,
 
             _log_top(prcc_df, scenario_label, spec.display_name)
 
-            # Tag for filenames: year for point, aggregation name otherwise
-            year_tag = (
-                str(spec.year) if spec.aggregation == "point"
-                else spec.aggregation
-            )
+            stem = f"{spec.metric_key}_{tag}_{scenario_label}"
+            plot_tasks.append((plot_tornado, (
+                prcc_df, f"{spec.display_name} [{scenario_label}]",
+                os.path.join(output_dir, f"prcc_tornado_{stem}.png"),
+            )))
+            for pname in prcc_df.dropna(subset=["prcc"]).head(_TOP_N)["parameter"]:
+                plot_tasks.append((plot_scatter_diagnostics, (
+                    X_group[pname].values, y_group, pname, spec.display_name,
+                    os.path.join(output_dir, f"prcc_scatter_{stem}_{pname}.png"),
+                )))
 
-            # Queue tornado plot
-            tornado_name = (
-                f"prcc_tornado_{spec.metric_key}"
-                f"_{year_tag}_{scenario_label}.png"
-            )
-            plot_tasks.append((
-                plot_tornado,
-                (prcc_df.copy(),
-                 f"{spec.display_name} [{scenario_label}]",
-                 os.path.join(output_dir, tornado_name)),
-            ))
+    _render_plots(plot_tasks)
 
-            # Queue scatter diagnostics for top parameters
-            top_params = prcc_df.dropna(subset=["prcc"]).head(_TOP_N)
-            for _, row in top_params.iterrows():
-                pname = row["parameter"]
-                if pname not in X_aligned.columns:
-                    continue
-                scatter_name = (
-                    f"prcc_scatter_{spec.metric_key}"
-                    f"_{year_tag}_{scenario_label}_{pname}.png"
-                )
-                x_vals = X_aligned.loc[idx, pname].values.copy()
-                y_vals = yg.copy()
-                plot_tasks.append((
-                    plot_scatter_diagnostics,
-                    (x_vals, y_vals, pname,
-                     spec.display_name,
-                     os.path.join(output_dir, scatter_name)),
-                ))
-
-    # Generate all plots in parallel
-    if plot_tasks:
-        t_plot = time.monotonic()
-        logger.info("Generating %d plots...", len(plot_tasks))
-        done_plots = 0
-        with concurrent.futures.ThreadPoolExecutor() as pool:
-            futures = [pool.submit(fn, *args) for fn, args in plot_tasks]
-            for fut in concurrent.futures.as_completed(futures):
-                try:
-                    fut.result()
-                except Exception:
-                    logger.warning("Plot generation failed.", exc_info=True)
-                done_plots += 1
-                if done_plots % 50 == 0:
-                    logger.info(
-                        "Plots: %d / %d (%.1fs)...",
-                        done_plots, len(plot_tasks),
-                        time.monotonic() - t_plot,
-                    )
-        logger.info(
-            "All %d plots generated (%.1fs).",
-            len(plot_tasks), time.monotonic() - t_plot,
-        )
-
-    # 5. Write combined CSV
     if all_results:
-        results_df = pd.concat(all_results, ignore_index=True)
         csv_path = os.path.join(output_dir, "prcc_results.csv")
-        results_df.to_csv(csv_path, index=False)
+        pd.concat(all_results, ignore_index=True).to_csv(csv_path, index=False)
         logger.info("PRCC results written to %s", csv_path)
     else:
         logger.warning("No PRCC results were produced.")
 
-    elapsed = time.monotonic() - t_start
     logger.info(
         "PRCC analysis complete (%.1fs).  Output directory: %s",
-        elapsed, output_dir,
+        time.monotonic() - t_start, output_dir,
     )
 
 
-# ---------------------------------------------------------------------------
-# Early validation helpers
-# ---------------------------------------------------------------------------
+def _render_plots(plot_tasks):
+    """Run ``(function, args)`` plot tasks in a thread pool, logging failures."""
+    def _run(task):
+        function, args = task
+        try:
+            function(*args)
+        except Exception:
+            logger.warning("Plot generation failed.", exc_info=True)
+
+    logger.info("Generating %d plots...", len(plot_tasks))
+    with concurrent.futures.ThreadPoolExecutor() as pool:
+        list(pool.map(_run, plot_tasks))
+
 
 def _resolve_collected_report(report_csv, ensemble_dir):
     """Return path to a collected report, or *None* if unavailable.
@@ -368,10 +269,6 @@ def _check_any_report_exists(ensemble_dir):
     )
 
 
-# ---------------------------------------------------------------------------
-# Metric specification parsing
-# ---------------------------------------------------------------------------
-
 def _parse_metric_spec(spec_str):
     """Parse a metric specification string.
 
@@ -414,14 +311,18 @@ def _parse_metric_spec(spec_str):
     if not metric_key:
         raise ValidationError(f"Empty metric key in spec '{spec_str}'.")
 
-    # For difference/cumulative, year is not applicable
-    if aggregation in ("difference", "cumulative"):
+    return _make_metric_spec(metric_key, year, aggregation)
+
+
+def _make_metric_spec(metric_key, year, aggregation, display_name=None):
+    """Build a MetricSpec; difference/cumulative aggregations take no year."""
+    if aggregation != "point":
         year = None
 
-    display = _metric_display_name(metric_key, year, aggregation)
     return MetricSpec(
-        metric_key=metric_key, year=year,
-        display_name=display, aggregation=aggregation,
+        metric_key, year,
+        display_name or _metric_display_name(metric_key, year, aggregation),
+        aggregation,
     )
 
 
@@ -437,37 +338,19 @@ def _resolve_metric_specs(raw_specs, probe_year_fn):
 
     Parameters
     ----------
-    raw_specs : list[str] | list[tuple] | list[MetricSpec] | None
-        Metric specification strings (e.g. ``"TotalEquivalentWtw@2050"``),
-        ``(key, aggregation)`` tuples (from defaults), or pre-built
-        :class:`MetricSpec` objects (from a config file parser).
+    raw_specs : list[str | MetricSpec] | None
+        Metric specification strings (e.g. ``"TotalEquivalentWtw@2050"``) or
+        pre-built :class:`MetricSpec` objects (from a config file parser).
     probe_year_fn : callable
         Zero-argument callable returning the final year (int) or *None*.
     """
-    if not raw_specs:
-        raw_specs = list(_DEFAULT_METRICS)
-
-    # Normalise heterogeneous input into MetricSpec objects.
-    specs = []
-    for item in raw_specs:
-        if isinstance(item, MetricSpec):
-            specs.append(item)
-        elif isinstance(item, tuple):
-            key, agg = item
-            specs.append(MetricSpec(
-                metric_key=key, year=None,
-                display_name=_metric_display_name(key, None, agg),
-                aggregation=agg,
-            ))
-        else:
-            specs.append(_parse_metric_spec(item))
-
-    # For *point* specs with year=None, probe one report to find the final
-    # year.  Difference/cumulative specs never need a year.
-    needs_year = [
-        s for s in specs if s.aggregation == "point" and s.year is None
+    specs = [
+        item if isinstance(item, MetricSpec) else _parse_metric_spec(item)
+        for item in raw_specs or _DEFAULT_METRICS
     ]
-    if needs_year:
+
+    # point specs without a year take the final year found in the data
+    if any(s.aggregation == "point" and s.year is None for s in specs):
         final_year = probe_year_fn()
         if final_year is None:
             raise SensitivityAnalysisError(
@@ -476,11 +359,7 @@ def _resolve_metric_specs(raw_specs, probe_year_fn):
                 "(e.g. --metric 'TotalEquivalentWtw@2050')."
             )
         specs = [
-            MetricSpec(
-                s.metric_key, final_year,
-                _metric_display_name(s.metric_key, final_year, s.aggregation),
-                s.aggregation,
-            )
+            _make_metric_spec(s.metric_key, final_year, "point")
             if s.aggregation == "point" and s.year is None else s
             for s in specs
         ]
@@ -488,37 +367,35 @@ def _resolve_metric_specs(raw_specs, probe_year_fn):
     return specs
 
 
+def _last_year(cells, parse):
+    """Year of the last cell that *parse* understands, or None."""
+    return next((y for y in map(parse, reversed(cells)) if y is not None), None)
+
+
 def _probe_final_year(ensemble_dir, folder_names):
     """Open the first available report and return the last year on the Global sheet."""
     for fname in folder_names[:50]:
-        folder_path = os.path.join(ensemble_dir, fname)
-        report_path = _find_report(folder_path)
+        report_path = _find_report(os.path.join(ensemble_dir, fname))
         if report_path is None:
             continue
+
         df = _read_global_sheet(report_path)
-        if df is None or len(df) < 5:
+        if df is None:
             continue
-        for row_idx in range(len(df) - 1, 3, -1):
-            y = _parse_year(df.iloc[row_idx, 0])
-            if y is not None:
-                return y
+
+        year = _last_year(df.iloc[4:, 0].tolist(), _parse_year)
+        if year is not None:
+            return year
+
     return None
 
-
-# ---------------------------------------------------------------------------
-# Collected report parsing
-# ---------------------------------------------------------------------------
 
 def _final_year_from_collected(collected_df):
-    """Extract the final year from the last data row of a collected report DataFrame."""
-    if collected_df is None or len(collected_df) < 6:
+    """Final year of a collected report DataFrame (data rows start at row 5)."""
+    if collected_df is None:
         return None
-    # Data rows start at row 5; scan backwards for a parseable year
-    for row_idx in range(len(collected_df) - 1, 4, -1):
-        y = _parse_year_from_date_str(collected_df.iloc[row_idx, 0])
-        if y is not None:
-            return y
-    return None
+
+    return _last_year(collected_df.iloc[5:, 0].tolist(), _parse_year_from_date_str)
 
 
 def _parse_year_from_date_str(cell_value):
@@ -600,21 +477,13 @@ def _match_labels_to_folders(labels, folder_names):
         return label_to_folder
 
     # Strategy 3: match by sample number
-    num_to_folder = {}
-    for fn in folder_names:
-        m = _SAMPLE_NUM_RE.search(fn)
-        if m:
-            num_to_folder[int(m.group(1))] = fn
-
-    if not num_to_folder:
-        return {}
-
+    num_to_folder = {
+        int(m.group(1)): fn for fn in folder_names if (m := _SAMPLE_NUM_RE.search(fn))
+    }
     for label in labels:
         m = _SAMPLE_NUM_RE.search(label)
-        if m:
-            n = int(m.group(1))
-            if n in num_to_folder:
-                label_to_folder[label] = num_to_folder[n]
+        if m and int(m.group(1)) in num_to_folder:
+            label_to_folder[label] = num_to_folder[int(m.group(1))]
 
     return label_to_folder
 
@@ -640,12 +509,11 @@ def _load_metrics_from_collected_report(collected_df, folder_names, metric_specs
         logger.warning("Collected report is empty or too short.")
         return {}
 
-    scenario_labels = list(df.iloc[0])  # row 0
-    metric_names = list(df.iloc[2])     # row 2
+    scenario_labels = list(df.iloc[0])
+    metric_names = list(df.iloc[2])
 
-    # Build column groups: map scenario_label → list of (col_idx, metric_name)
-    # First, identify unique column groups by consecutive identical labels
-    label_cols = {}  # scenario_label → [(col_idx, metric_name)]
+    # scenario_label -> [(col_idx, metric_name)]
+    label_cols = {}
     for ci in range(2, len(scenario_labels)):
         label = str(scenario_labels[ci]).strip() if scenario_labels[ci] is not None else ""
         if not label:
@@ -654,7 +522,6 @@ def _load_metrics_from_collected_report(collected_df, folder_names, metric_specs
             (ci, str(metric_names[ci]).strip() if metric_names[ci] is not None else "")
         )
 
-    # Map scenario labels to folder names
     label_to_folder = _match_labels_to_folders(
         list(label_cols.keys()), folder_names,
     )
@@ -672,29 +539,19 @@ def _load_metrics_from_collected_report(collected_df, folder_names, metric_specs
         len(label_to_folder), len(label_cols),
     )
 
-    # Build year → row_idx mapping from data rows
-    year_rows = {}  # year → row_idx
+    # first data row of each year
+    year_rows = {}
     for row_idx in range(5, len(df)):
         y = _parse_year_from_date_str(df.iloc[row_idx, 0])
         if y is not None and y not in year_rows:
             year_rows[y] = row_idx
+    years = list(year_rows)
+    rows = list(year_rows.values())
 
-    # Categorise specs by what data they need
-    needed_keys = set()  # metric keys we need columns for
-    point_specs = {}     # metric_key → set of target years
-    ts_specs = []        # specs needing full time series (difference/cumulative)
+    specs_by_key = {}
     for spec in metric_specs:
-        needed_keys.add(spec.metric_key)
-        if spec.aggregation == "point":
-            point_specs.setdefault(spec.metric_key, set()).add(spec.year)
-        else:
-            ts_specs.append(spec)
+        specs_by_key.setdefault(spec.metric_key, []).append(spec)
 
-    sorted_years = sorted(year_rows.keys()) if year_rows else []
-    first_year = sorted_years[0] if sorted_years else None
-    last_year = sorted_years[-1] if sorted_years else None
-
-    # Extract values
     result = {}
     for label, cols_info in label_cols.items():
         folder = label_to_folder.get(label)
@@ -702,125 +559,67 @@ def _load_metrics_from_collected_report(collected_df, folder_names, metric_specs
             continue
 
         folder_metrics = result.setdefault(folder, {})
-
         for ci, mname in cols_info:
-            if mname not in needed_keys:
+            specs = specs_by_key.get(mname)
+            if not specs:
                 continue
 
-            # --- point specs: single year lookup ---
-            for year in point_specs.get(mname, ()):
-                spec = MetricSpec(
-                    mname, year,
-                    _metric_display_name(mname, year, "point"), "point",
-                )
-                if spec in folder_metrics:
+            entries = list(zip(years, map(_safe_float, df.iloc[rows, ci])))
+            for spec in specs:
+                value = _aggregate(spec, entries)
+                if value is None:
                     continue
-                row_idx = year_rows.get(year)
-                if row_idx is None:
-                    continue
-                folder_metrics[spec] = _safe_float(df.iloc[row_idx, ci])
 
-            # --- time-series specs: read all years once per column ---
-            ts_for_key = [s for s in ts_specs if s.metric_key == mname]
-            if not ts_for_key or not sorted_years:
-                continue
-            # Skip if all specs for this key already resolved
-            if all(s in folder_metrics for s in ts_for_key):
-                continue
-
-            series_vals = []
-            for y in sorted_years:
-                ri = year_rows[y]
-                series_vals.append(_safe_float(df.iloc[ri, ci]))
-
-            for spec in ts_for_key:
-                if spec in folder_metrics:
-                    continue
-                if spec.aggregation == "difference":
-                    first_val = _safe_float(df.iloc[year_rows[first_year], ci])
-                    last_val = _safe_float(df.iloc[year_rows[last_year], ci])
-                    if first_val is not None and last_val is not None:
-                        folder_metrics[spec] = last_val - first_val
-                elif spec.aggregation == "cumulative":
-                    valid = [v for v in series_vals if v is not None]
-                    if valid:
-                        folder_metrics[spec] = sum(valid)
+                if spec.aggregation == "point":
+                    spec = spec._replace(
+                        display_name=_metric_display_name(mname, spec.year, "point"),
+                    )
+                folder_metrics.setdefault(spec, value)
 
     return result
 
 
-# ---------------------------------------------------------------------------
-# CSV discovery
-# ---------------------------------------------------------------------------
+def _aggregate(spec, entries):
+    """Reduce ``(year, value)`` rows to the scalar *spec* asks for, or None if absent."""
+    if spec.aggregation == "point":
+        return next((v for y, v in entries if y == spec.year), None)
 
-_CSV_NAMES_SET = {"sampled_parameters.csv", "samples.csv"}
+    ordered = sorted(entries, key=lambda entry: entry[0])
+    if not ordered:
+        return None
+
+    if spec.aggregation == "difference":
+        return ordered[-1][1] - ordered[0][1]
+
+    return sum(v for _, v in ordered)
 
 
 def _find_csv(ensemble_dir):
     """Locate the parameter samples CSV in or near *ensemble_dir*.
 
-    Search order (short-circuits on first hit):
-    1. ``OutputPath`` from any ``.hor`` file in the directory.
-    2. Known filenames in *ensemble_dir*.
-    3. Known filenames in parent directory.
-    4. Recursive search under *ensemble_dir*.
-    5. Recursive search under parent directory.
+    Search order (short-circuits on first hit): ``OutputPath`` of any ``.hor``
+    file in the directory, known filenames in *ensemble_dir* then its parent,
+    then recursive searches under *ensemble_dir* and its parent.
     """
-    def _check(*paths):
-        for p in paths:
-            if os.path.isfile(p):
-                logger.info("Found parameter samples CSV: %s", p)
-                return p
-        return None
-
-    logger.info("Searching for parameter samples CSV near %s...", ensemble_dir)
-
-    # 1. Try reading OutputPath from .hor file if present (most reliable)
-    for hor_file in glob.glob(os.path.join(ensemble_dir, "*.hor")):
-        output_path = _extract_output_path_from_hor(hor_file)
-        if output_path:
-            hit = _check(output_path)
-            if hit:
-                return hit
-
-    # 2. Known names in ensemble_dir
-    hit = _check(*(os.path.join(ensemble_dir, n) for n in _CSV_NAMES))
-    if hit:
-        return hit
-
-    # 3. Known names in parent directory
     parent = os.path.dirname(ensemble_dir)
-    hit = _check(*(os.path.join(parent, n) for n in _CSV_NAMES))
-    if hit:
-        return hit
 
-    # 4. Recursive search under ensemble_dir (expensive — only if above failed)
-    logger.info(
-        "CSV not found in standard locations; scanning %s recursively "
-        "(this may be slow on large directories — use --samples-csv to skip)...",
-        ensemble_dir,
-    )
-    t0 = time.monotonic()
-    for name in _CSV_NAMES:
-        matches = glob.glob(
-            os.path.join(ensemble_dir, "**", name), recursive=True,
-        )
-        hit = _check(*matches)
-        if hit:
-            return hit
+    def _candidates():
+        for hor_file in glob.glob(os.path.join(ensemble_dir, "*.hor")):
+            output_path = _extract_output_path_from_hor(hor_file)
+            if output_path:
+                yield output_path
+        for folder in (ensemble_dir, parent):
+            for name in _CSV_NAMES:
+                yield os.path.join(folder, name)
+        logger.info("CSV not found in standard locations; scanning recursively...")
+        for folder in (ensemble_dir, parent):
+            for name in _CSV_NAMES:
+                yield from glob.glob(os.path.join(folder, "**", name), recursive=True)
 
-    # 5. Recursive search under parent (last resort)
-    logger.info(
-        "Scanning parent directory %s recursively (%.1fs so far)...",
-        parent, time.monotonic() - t0,
-    )
-    for name in _CSV_NAMES:
-        matches = glob.glob(
-            os.path.join(parent, "**", name), recursive=True,
-        )
-        hit = _check(*matches)
-        if hit:
-            return hit
+    for path in _candidates():
+        if os.path.isfile(path):
+            logger.info("Found parameter samples CSV: %s", path)
+            return path
 
     raise FileOperationError(
         f"Cannot find parameter samples CSV in or near {ensemble_dir}. "
@@ -845,40 +644,20 @@ def _extract_output_path_from_hor(hor_path):
     return None
 
 
-# ---------------------------------------------------------------------------
-# Data loading
-# ---------------------------------------------------------------------------
-
 def _load_parameter_matrix(ensemble_dir, samples_csv=None):
-    """Read the parameter samples CSV and return the parameter matrix.
+    """Read the samples CSV (auto-discovered near *ensemble_dir* when not given).
 
-    Prefer ``_load_parameter_matrix_from_csv()`` when the CSV path is
-    already resolved (e.g. after early validation).
-
-    Parameters
-    ----------
-    ensemble_dir : str
-        Ensemble directory (used for CSV auto-discovery fallback).
-    samples_csv : str or None
-        Explicit path to the CSV.  Skips auto-discovery when provided.
-
-    Returns
-    -------
-    X_df : pd.DataFrame
-        Sample parameters (float), indexed by folder name.
-    scenario_df : pd.DataFrame
-        Scenario columns, indexed by folder name (may be empty).
+    Returns ``(X_df, scenario_df)``: float sample parameters and scenario
+    columns, both indexed by realization folder name.
     """
-    if samples_csv is not None:
-        csv_path = os.path.abspath(samples_csv)
-        if not os.path.isfile(csv_path):
-            raise FileOperationError(
-                f"Specified samples CSV not found: {csv_path}"
-            )
-    else:
-        csv_path = _find_csv(ensemble_dir)
+    if samples_csv is None:
+        samples_csv = _find_csv(ensemble_dir)
+    elif not os.path.isfile(samples_csv):
+        raise FileOperationError(
+            f"Specified samples CSV not found: {os.path.abspath(samples_csv)}"
+        )
 
-    return _load_parameter_matrix_from_csv(csv_path)
+    return _load_parameter_matrix_from_csv(samples_csv)
 
 
 def _sample_suffix(sample_name):
@@ -890,15 +669,7 @@ def _sample_suffix(sample_name):
 
 
 def _load_parameter_matrix_from_csv(csv_path):
-    """Read a resolved CSV path and return the parameter matrix.
-
-    Returns
-    -------
-    X_df : pd.DataFrame
-        Sample parameters (float), indexed by folder name.
-    scenario_df : pd.DataFrame
-        Scenario columns, indexed by folder name (may be empty).
-    """
+    """Read a samples CSV into ``(X_df, scenario_df)`` indexed by realization folder name."""
     with open(csv_path, newline="") as f:
         reader = csv.reader(f)
         header = next(reader)
@@ -931,82 +702,45 @@ def _load_parameter_matrix_from_csv(csv_path):
         if c not in skip and c not in scenario_cols and c
     ]
 
-    # Build a unique index that mirrors the realization folder names on disk.
-    # The file handler logic (file_handler.py):
-    #   - If a SCENARIO column exists, use its value as the prefix
-    #   - Otherwise, join all scenario token values with "_"
-    # Then append the zero-padded sample suffix (sample001, sample002, …).
+    # index mirrors the realization folder names: scenario values joined
+    # with "_" (the SCENARIO column wins when present), then sampleNNN
     raw_samples = df[sample_col].astype(str)
-    if "SCENARIO" in df.columns and "SCENARIO" not in skip:
+    if "SCENARIO" in df.columns:
         scenario_prefix = df["SCENARIO"].astype(str)
-        suffixes = raw_samples.apply(_sample_suffix)
-        df.index = scenario_prefix + "_" + suffixes
     elif scenario_cols:
         scenario_prefix = df[scenario_cols].astype(str).apply("_".join, axis=1)
-        suffixes = raw_samples.apply(_sample_suffix)
-        df.index = scenario_prefix + "_" + suffixes
     else:
+        scenario_prefix = None
+    if scenario_prefix is None:
         df.index = raw_samples
+    else:
+        df.index = scenario_prefix + "_" + raw_samples.apply(_sample_suffix)
     df.index.name = "folder"
 
-    # Build scenario DataFrame
-    scenario_df = df[scenario_cols].copy() if scenario_cols else pd.DataFrame(index=df.index)
+    # all-NaN columns are non-numeric discrete tokens
+    X_df = df[sample_cols].apply(pd.to_numeric, errors="coerce").dropna(axis=1, how="all")
+    return X_df, df[scenario_cols]
 
-    # Build X with sample parameters as floats
-    X_df = df[sample_cols].copy()
-    for col in X_df.columns:
-        X_df[col] = pd.to_numeric(X_df[col], errors="coerce")
-
-    # Drop columns that are entirely NaN (non-numeric discrete tokens etc.)
-    X_df.dropna(axis=1, how="all", inplace=True)
-
-    return X_df, scenario_df
-
-
-# ---------------------------------------------------------------------------
-# Single-pass report reading
-# ---------------------------------------------------------------------------
 
 def _load_all_metrics(ensemble_dir, folder_names, metric_specs):
-    """Read all reports once and extract all requested metrics.
+    """Read every realization's report once and extract all requested metrics.
 
     Returns
     -------
     dict[str, dict[MetricSpec, float]]
         folder_name → {spec → value}.
     """
-    # Build lookup structures for fast metric extraction
-    metric_keys = {s.metric_key for s in metric_specs}
-    year_specs = {}  # metric_key -> set of years
-    for s in metric_specs:
-        year_specs.setdefault(s.metric_key, set()).add(s.year)
-
-    # Discover reports and read them in parallel (single thread pool for both)
-    result = {}
-    done = 0
-    total = len(folder_names)
-
-    def _find_and_read(fname):
-        folder_path = os.path.join(ensemble_dir, fname)
-        xlsx_path = _find_report(folder_path)
+    def _read_folder(folder_name):
+        xlsx_path = _find_report(os.path.join(ensemble_dir, folder_name))
         if xlsx_path is None:
-            return fname, {}
-        return fname, _read_report_metrics(
-            xlsx_path, metric_keys, year_specs, metric_specs,
-        )
+            return {}
+        return _read_report_metrics(xlsx_path, metric_specs)
 
     t0 = time.monotonic()
     with concurrent.futures.ThreadPoolExecutor() as pool:
-        for fname, metrics in pool.map(_find_and_read, folder_names):
-            result[fname] = metrics
-            done += 1
-            if done % 200 == 0:
-                logger.info(
-                    "Read %d / %d reports (%.1fs)...",
-                    done, total, time.monotonic() - t0,
-                )
+        result = dict(zip(folder_names, pool.map(_read_folder, folder_names)))
     logger.info(
-        "Finished reading %d reports (%.1fs).", total, time.monotonic() - t0,
+        "Finished reading %d reports (%.1fs).", len(folder_names), time.monotonic() - t0,
     )
 
     if not any(result.values()):
@@ -1014,10 +748,8 @@ def _load_all_metrics(ensemble_dir, folder_names, metric_specs):
     return result
 
 
-def _read_report_metrics(xlsx_path, metric_keys, year_specs, metric_specs):
-    """Read a single report and extract all requested metric values.
-
-    Uses calamine engine (Rust, fast) with openpyxl fallback.
+def _read_report_metrics(xlsx_path, metric_specs):
+    """Read the Global sheet of one report and extract all requested metric values.
 
     Returns
     -------
@@ -1027,60 +759,25 @@ def _read_report_metrics(xlsx_path, metric_keys, year_specs, metric_specs):
     if df is None or len(df) < 5:
         return {}
 
-    row_metrics = list(df.iloc[1])
+    keys = {s.metric_key for s in metric_specs}
+    col_map = {}
+    for ci, mk in enumerate(df.iloc[1]):
+        if ci >= 2 and mk in keys:
+            col_map.setdefault(mk, ci)
 
-    # Find column indices for requested metrics
-    col_map = {}  # metric_key -> col_idx
-    for ci in range(2, len(row_metrics)):
-        mk = row_metrics[ci]
-        if mk in metric_keys and mk not in col_map:
-            col_map[mk] = ci
+    years = {r: _parse_year(df.iat[r, 0]) for r in range(4, len(df))}
+    rows = [r for r, year in years.items() if year is not None]
 
-    if not col_map:
-        return {}
-
-    # Separate point specs from time-series specs
-    point_specs = [s for s in metric_specs if s.aggregation == "point"]
-    ts_specs = [s for s in metric_specs if s.aggregation != "point"]
-
-    # Single pass: collect point values and full time series
     result = {}
-    # For time-series specs, accumulate {metric_key: [(year, value), ...]}
-    ts_data = {}  # metric_key -> list of (year, value)
-
-    for row_idx in range(4, len(df)):
-        year = _parse_year(df.iloc[row_idx, 0])
-        if year is None:
+    for spec in metric_specs:
+        ci = col_map.get(spec.metric_key)
+        if ci is None:
             continue
 
-        for spec in point_specs:
-            if spec.year == year and spec.metric_key in col_map:
-                if spec not in result:
-                    result[spec] = _safe_float(
-                        df.iloc[row_idx, col_map[spec.metric_key]]
-                    )
-
-        for spec in ts_specs:
-            if spec.metric_key in col_map:
-                val = _safe_float(
-                    df.iloc[row_idx, col_map[spec.metric_key]]
-                )
-                ts_data.setdefault(spec.metric_key, []).append((year, val))
-
-    # Resolve time-series specs into scalar values
-    for spec in ts_specs:
-        entries = ts_data.get(spec.metric_key)
-        if not entries:
-            continue
-        entries.sort(key=lambda t: t[0])
-        if spec.aggregation == "difference":
-            first_val, last_val = entries[0][1], entries[-1][1]
-            if first_val is not None and last_val is not None:
-                result[spec] = last_val - first_val
-        elif spec.aggregation == "cumulative":
-            valid = [v for _, v in entries if v is not None]
-            if valid:
-                result[spec] = sum(valid)
+        entries = [(years[r], _safe_float(v)) for r, v in zip(rows, df.iloc[rows, ci])]
+        value = _aggregate(spec, entries)
+        if value is not None:
+            result[spec] = value
 
     return result
 
@@ -1112,12 +809,10 @@ def _read_global_sheet(xlsx_path):
 
 def _find_report(folder_path):
     """Find the first ``.xlsx`` report in a simulation folder."""
-    xlsx_files = glob.glob(os.path.join(folder_path, "*", "*.xlsx"))
-    if xlsx_files:
-        return xlsx_files[0]
-    xlsx_files = glob.glob(os.path.join(folder_path, "*.xlsx"))
-    if xlsx_files:
-        return xlsx_files[0]
+    for pattern in (os.path.join("*", "*.xlsx"), "*.xlsx"):
+        xlsx_files = glob.glob(os.path.join(folder_path, pattern))
+        if xlsx_files:
+            return xlsx_files[0]
     return None
 
 
@@ -1142,10 +837,6 @@ def _safe_float(v):
         return np.nan
 
 
-# ---------------------------------------------------------------------------
-# Scenario grouping
-# ---------------------------------------------------------------------------
-
 def _scenario_groups(scenario_df, common_index):
     """Build scenario groups from the scenario DataFrame.
 
@@ -1156,32 +847,19 @@ def _scenario_groups(scenario_df, common_index):
         Always includes an ``"ALL"`` group with every sample.
     """
     groups = {"ALL": common_index}
-
-    if scenario_df.empty or scenario_df.columns.empty:
+    if scenario_df.columns.empty:
         return groups
 
-    # Filter to common index
     sdf = scenario_df.loc[scenario_df.index.intersection(common_index)]
-    if sdf.empty:
-        return groups
-
-    # Group by unique scenario combination
-    group_cols = list(sdf.columns)
-    grouped = sdf.groupby(group_cols[0]).groups if len(group_cols) == 1 else sdf.groupby(group_cols).groups
-    for combo_vals, idx in grouped.items():
-        if not isinstance(combo_vals, tuple):
-            combo_vals = (combo_vals,)
-        label = "_".join(str(v) for v in combo_vals)
+    by = list(sdf.columns) if len(sdf.columns) > 1 else sdf.columns[0]
+    for combo, idx in sdf.groupby(by).groups.items():
+        label = "_".join(str(v) for v in (combo if isinstance(combo, tuple) else (combo,)))
         filtered = idx.intersection(common_index)
         if len(filtered) >= 4:
             groups[label] = filtered
 
     return groups
 
-
-# ---------------------------------------------------------------------------
-# Logging helpers
-# ---------------------------------------------------------------------------
 
 def _log_top(prcc_df, scenario, metric_label, n=5):
     """Log the top-N parameters by |PRCC|."""
