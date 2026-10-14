@@ -183,19 +183,11 @@ def _discover_regulations(calibration_dir):
 # ---------------------------------------------------------------------------
 
 def _find_report(folder_path):
-    """Find the report .xlsx file in a simulation folder.
-
-    Searches in the folder itself and any immediate subdirectory (plots/,
-    reports/, etc.) for the first .xlsx file found.
-    """
-    # Check immediate subdirectories first (plots/, reports/, etc.)
-    xlsx_files = glob.glob(os.path.join(folder_path, "*", "*.xlsx"))
-    if xlsx_files:
-        return xlsx_files[0]
-    # Fall back to the folder itself
-    xlsx_files = glob.glob(os.path.join(folder_path, "*.xlsx"))
-    if xlsx_files:
-        return xlsx_files[0]
+    """Find the first report .xlsx in a simulation folder, preferring its subdirectories."""
+    for pattern in ("*/*.xlsx", "*.xlsx"):
+        xlsx_files = glob.glob(os.path.join(folder_path, pattern))
+        if xlsx_files:
+            return xlsx_files[0]
     return None
 
 
@@ -223,71 +215,54 @@ def _read_report(folder_path):
         logger.warning("Could not open %s: %s", xlsx_path, e)
         return None
 
-    if "Global" not in wb.sheetnames:
+    try:
+        if "Global" not in wb.sheetnames:
+            return None
+        all_rows = list(wb["Global"].iter_rows(values_only=True))
+    finally:
         wb.close()
-        return None
-
-    ws = wb["Global"]
-    all_rows = list(ws.iter_rows(values_only=True))
-    wb.close()
 
     if len(all_rows) < 5:
         return None
 
-    # Row 0: scope, Row 1: metric names, Row 2: sub-metric (fuel type), Row 3: empty, Row 4+: data
-    row_metrics = list(all_rows[1])
-    row_fuels = list(all_rows[2])
-
-    # Build column mapping: {metric_name: [(col_idx, fuel_label), ...]}
+    # Row 1: metric names, row 2: sub-metric (fuel type), rows 4+: data by date
     metric_columns = defaultdict(list)
-    for col_idx in range(2, len(row_metrics)):
-        metric_name = row_metrics[col_idx]
-        if metric_name is None:
+    for col_idx, metric_name in enumerate(all_rows[1]):
+        if col_idx < 2 or metric_name is None:
             continue
-        fuel_label = row_fuels[col_idx] if col_idx < len(row_fuels) else None
+        fuel_label = all_rows[2][col_idx] if col_idx < len(all_rows[2]) else None
         metric_columns[metric_name].append((col_idx, fuel_label))
 
-    # Extract data rows (row 4 onward)
     years = []
     data_rows = []
     for row in all_rows[4:]:
         if row[0] is None:
             continue
+
         try:
-            if hasattr(row[0], "year"):
-                years.append(row[0].year)
-            else:
-                years.append(int(pd.Timestamp(row[0]).year))
+            years.append(pd.Timestamp(row[0]).year)
         except Exception:
             continue
+
         data_rows.append(row)
 
     if not years:
         return None
 
+    def column(col_idx):
+        return [_safe_float(row[col_idx]) for row in data_rows]
+
     result = {}
-
-    # Single-column metrics
     for metric_key in SINGLE_METRICS:
-        if metric_key not in metric_columns:
-            continue
-        cols = metric_columns[metric_key]
-        col_idx = cols[0][0]
-        values = [_safe_float(row[col_idx]) for row in data_rows]
-        result[metric_key] = pd.DataFrame({"Total": values}, index=years)
+        if metric_key in metric_columns:
+            result[metric_key] = pd.DataFrame({"Total": column(metric_columns[metric_key][0][0])}, index=years)
 
-    # Multi-column metrics
     for metric_key in MULTI_METRICS:
-        if metric_key not in metric_columns:
-            continue
-        cols = metric_columns[metric_key]
         df_data = {}
-        for col_idx, fuel_label in cols:
-            label = fuel_label or f"col_{col_idx}"
-            values = [_safe_float(row[col_idx]) for row in data_rows]
-            # Only include if any non-zero values
+        for col_idx, fuel_label in metric_columns.get(metric_key, []):
+            values = column(col_idx)
             if any(v != 0 for v in values):
-                df_data[label] = values
+                df_data[fuel_label or f"col_{col_idx}"] = values
         if df_data:
             result[metric_key] = pd.DataFrame(df_data, index=years)
 
@@ -296,8 +271,6 @@ def _read_report(folder_path):
 
 def _safe_float(v):
     """Convert a cell value to float, returning 0.0 on failure."""
-    if v is None:
-        return 0.0
     try:
         return float(v)
     except (ValueError, TypeError):
