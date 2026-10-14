@@ -672,9 +672,7 @@ def _build_summary_tables(runs, data_by_folder, param_defaults):
 # 5. Write HTML dashboard
 # ---------------------------------------------------------------------------
 
-def _write_dashboard(figures, summaries, output_path,
-                     fuel_share_figures=None, recommendations=None,
-                     round2_grids=None):
+def _write_dashboard(figures, summaries, output_path, fuel_share_figures, recommendations, round2_grids):
     """Assemble a single interactive HTML dashboard.
 
     Parameters
@@ -685,55 +683,41 @@ def _write_dashboard(figures, summaries, output_path,
         {regulation: pd.DataFrame}
     output_path : str
         Path for the output HTML file.
-    fuel_share_figures : dict, optional
+    fuel_share_figures : dict
         {(regulation, param_token): list[go.Figure]}
-    recommendations : list[Recommendation], optional
-    round2_grids : dict[str, list[float]], optional
+    recommendations : list[Recommendation]
+    round2_grids : dict[str, list[float]]
     """
     import plotly.io as pio
 
-    # Gather regulation scenarios
-    regulations = sorted(set(reg for reg, _ in figures.keys()))
+    def plot_grid(figs):
+        cells = "\n".join(
+            f'<div class="plot-cell">{pio.to_html(fig, full_html=False, include_plotlyjs=False)}</div>'
+            for fig in figs
+        )
+        return f'<div class="plot-grid">\n{cells}\n</div>'
+
+    regulations = sorted({reg for reg, _ in figures})
     if not regulations:
         logger.error("No figures to write — no completed simulations found.")
         return
 
-    # Gather param tokens
-    param_tokens = sorted(set(pt for _, pt in figures.keys()))
+    param_tokens = sorted({pt for _, pt in figures})
 
-    fuel_share_figures = fuel_share_figures or {}
-
-    # Start building HTML
-    parts = []
-    parts.append(_HTML_HEAD)
-
-    # Tab buttons — Recommendations first if available
-    parts.append('<div class="tabs">')
-    tab_ids = []
-    if recommendations:
-        tab_ids.append(("recommendations", "Recommendations"))
-    for reg in regulations:
-        tab_ids.append((reg, reg.replace("_", " ").title()))
-
-    for i, (tid, label) in enumerate(tab_ids):
+    tabs = [("recommendations", "Recommendations")] + [(reg, reg.replace("_", " ").title()) for reg in regulations]
+    parts = [_HTML_HEAD, '<div class="tabs">']
+    for i, (tab_id, label) in enumerate(tabs):
         active = ' class="active"' if i == 0 else ""
-        parts.append(f'  <button{active} onclick="showTab(\'{tid}\')" id="btn-{tid}">{label}</button>')
+        parts.append(f'  <button{active} onclick="showTab(\'{tab_id}\')" id="btn-{tab_id}">{label}</button>')
     parts.append("</div>")
 
-    # Recommendations tab
-    if recommendations:
-        is_first = True
-        display = "block" if is_first else "none"
-        parts.append(f'<div class="tab-content" id="tab-recommendations" style="display:{display}">')
-        parts.append("<h2>Parameter Recommendations</h2>")
-        parts.append(_render_recommendations_html(recommendations, round2_grids))
-        parts.append("</div>")
+    parts.append('<div class="tab-content" id="tab-recommendations" style="display:block">')
+    parts.append("<h2>Parameter Recommendations</h2>")
+    parts.append(_render_recommendations_html(recommendations, round2_grids))
+    parts.append("</div>")
 
-    # Regulation tabs
-    for i, reg in enumerate(regulations):
-        tab_idx = i + (1 if recommendations else 0)
-        display = "block" if tab_idx == 0 else "none"
-        parts.append(f'<div class="tab-content" id="tab-{reg}" style="display:{display}">')
+    for reg in regulations:
+        parts.append(f'<div class="tab-content" id="tab-{reg}" style="display:none">')
         parts.append(f"<h2>{reg.replace('_', ' ').title()}</h2>")
 
         for pt in param_tokens:
@@ -743,26 +727,12 @@ def _write_dashboard(figures, summaries, output_path,
 
             parts.append('<div class="param-section">')
             parts.append(f"<h3>{pt.replace('_', ' ').title()}</h3>")
-            parts.append('<div class="plot-grid">')
-
-            for fig in figures[key]:
-                html_div = pio.to_html(fig, full_html=False, include_plotlyjs=False)
-                parts.append(f'<div class="plot-cell">{html_div}</div>')
-
-            parts.append("</div>")  # plot-grid
-
-            # Fuel share plots row
+            parts.append(plot_grid(figures[key]))
             if key in fuel_share_figures:
                 parts.append('<h4 style="margin-top:12px;color:#3c5e86;">Fuel Share Breakdown</h4>')
-                parts.append('<div class="plot-grid">')
-                for fig in fuel_share_figures[key]:
-                    html_div = pio.to_html(fig, full_html=False, include_plotlyjs=False)
-                    parts.append(f'<div class="plot-cell">{html_div}</div>')
-                parts.append("</div>")
-
+                parts.append(plot_grid(fuel_share_figures[key]))
             parts.append("</div>")  # param-section
 
-        # Summary table
         if reg in summaries:
             parts.append('<div class="param-section">')
             parts.append("<h3>Summary: Final-Year WTW Emissions</h3>")
@@ -773,10 +743,9 @@ def _write_dashboard(figures, summaries, output_path,
 
     parts.append(_HTML_TAIL)
 
-    html = "\n".join(parts)
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
     with open(output_path, "w") as f:
-        f.write(html)
+        f.write("\n".join(parts))
 
     logger.info("Dashboard written to %s", output_path)
 
@@ -1113,7 +1082,4 @@ def calibration_plot(calibration_dir, output_path=None):
                     rec.scores_breakdown.get("aggregate", 0))
 
     # 6. Write dashboard
-    _write_dashboard(figures, summaries, output_path,
-                     fuel_share_figures=fuel_share_figures,
-                     recommendations=recommendations,
-                     round2_grids=round2_grids)
+    _write_dashboard(figures, summaries, output_path, fuel_share_figures, recommendations, round2_grids)
