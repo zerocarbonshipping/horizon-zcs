@@ -74,6 +74,7 @@ class TestTrailingComments:
 ContinuousParameter "OP_EE" {
     name = "Operational EE"
     token = "OP_EE"
+    distribution = UNIFORM
     low_val = 0.10  # lower bound, if applicable
     mid_val = 0.15
     high_val = 0.20

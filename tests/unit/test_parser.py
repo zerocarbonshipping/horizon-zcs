@@ -189,6 +189,7 @@ ContinuousParameter "Missing token" {
     name = "MissingToken"
     active = TRUE
     default = 50.0
+    distribution = UNIFORM
     low_val = 0.0
     high_val = 100.0
     decimals = 2
@@ -431,6 +432,7 @@ ContinuousParameter "a" {
         with pytest.raises(ParseError, match="defined twice"):
             _parse(tmp_path, """
 ContinuousParameter "a" {
+    distribution = UNIFORM
     low_val = 0.0
     mid_val = 0.5
     high_val = 1.0
@@ -450,12 +452,14 @@ ScenarioParameter "policy" {
     default = "bau"
 }
 ContinuousParameter "a" {
+    distribution = UNIFORM
     low_val = 0.0
     mid_val = 0.5
     high_val = 1.0
     decimals = 2
 }
 ContinuousParameter "b" {
+    distribution = UNIFORM
     low_val = 0.0
     mid_val = 0.5
     high_val = 1.0
@@ -470,12 +474,14 @@ ContinuousParameter "b" {
     def test_legacy_list_still_filters_with_warning(self, tmp_path, caplog):
         _, params = _parse(tmp_path, """
 ContinuousParameter "a" {
+    distribution = UNIFORM
     low_val = 0.0
     mid_val = 0.5
     high_val = 1.0
     decimals = 2
 }
 ContinuousParameter "b" {
+    distribution = UNIFORM
     low_val = 0.0
     mid_val = 0.5
     high_val = 1.0
@@ -492,6 +498,7 @@ ScenarioParameter "S" {
     default = "a"
 }
 ContinuousParameter "X" {
+    distribution = UNIFORM
     low_val = 0.0
     mid_val = 0.5
     high_val = 1.0
@@ -643,3 +650,57 @@ ContinuousParameter "a" {
         assert params[0].decimals == 2
         assert resolved.decimals == 7
         assert resolved.default == 0.002
+
+    def test_default_log_triangular_with_zero_bound_raises_at_parse(self, tmp_path):
+        with pytest.raises(ParseError, match="defaults to LOG-TRIANGULAR"):
+            _parse(tmp_path, """
+ContinuousParameter "a" {
+    low_val = 0
+    mid_val = 5
+    high_val = 10
+}
+""")
+
+    def test_override_zero_bound_under_log_raises_at_parse(self, tmp_path):
+        with pytest.raises(ParseError, match="in an 'if' block"):
+            _parse(tmp_path, """
+ContinuousParameter "a" {
+    low_val = 1
+    mid_val = 5
+    high_val = 10
+    if policy = b {
+        low_val = 0
+    }
+}
+""")
+
+    def test_unknown_distribution_in_override_raises_at_parse(self, tmp_path):
+        with pytest.raises(ParseError, match="Unknown distribution"):
+            _parse(tmp_path, """
+ContinuousParameter "a" {
+    low_val = 1
+    mid_val = 5
+    high_val = 10
+    if policy = b {
+        distribution = NORMAL
+    }
+}
+""")
+
+    def test_equal_override_bounds_keep_value(self, tmp_path):
+        from horizon.parameters.sampler import resolve_parameters_for_scenario
+        _, params = _parse(tmp_path, """
+ContinuousParameter "a" {
+    low_val = 0.1
+    mid_val = 0.5
+    high_val = 0.9
+    distribution = UNIFORM
+    if policy = y {
+        low_val = 0.5
+        high_val = 0.5
+    }
+}
+""")
+        resolved = resolve_parameters_for_scenario(params, {"policy": "y"})[0]
+        assert resolved.decimals == 4
+        assert resolved.default == 0.5

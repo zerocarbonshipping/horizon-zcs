@@ -43,7 +43,11 @@ def auto_decimals(low_val, high_val, distribution):
     """Number of decimals that keeps rounding small against the range (and, for log
     distributions, against the low bound)."""
     width = abs(high_val - low_val)
-    decimals = math.ceil(math.log10(RANGE_STEPS / width)) if width > 0 else 0
+    if width == 0:
+        # Fixed value (low == high, e.g. from an override): keep its significant digits.
+        ref = abs(low_val)
+        return max(0, LOG_SIGNIFICANT_DIGITS - 1 - math.floor(math.log10(ref))) if ref > 0 else 0
+    decimals = math.ceil(math.log10(RANGE_STEPS / width))
     if distribution.startswith("log") and low_val > 0:
         decimals = max(decimals, LOG_SIGNIFICANT_DIGITS - 1 - math.floor(math.log10(low_val)))
     return max(0, decimals)

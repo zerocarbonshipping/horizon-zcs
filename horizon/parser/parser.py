@@ -444,6 +444,27 @@ def parse_hor_file(file_path):
             sampling_method, plot, max_parallel_workers, random_seed, sample_only, exclusion_rules, inclusion_rules)
 
 
+def _validate_continuous_variants(parameter, distribution_defaulted):
+    """Check the base parameter and each `if` override variant at parse time, so problems
+    show up before sampling: unknown distributions, and log distributions with bounds <= 0."""
+    variants = [("", parameter)]
+    for ov in parameter.overrides:
+        try:
+            variants.append((" in an 'if' block", parameter.shallow_copy_with_overrides(ov["attrs"])))
+        except ParameterError as e:
+            raise ParseError(f"Parameter '{parameter.token}' in an 'if' block: {e}")
+    for where, v in variants:
+        if not v.distribution.startswith("log"):
+            continue
+        if v.low_val <= 0 or v.high_val <= 0 or (v.mid_val is not None and v.mid_val <= 0):
+            hint = (" (no distribution set, so it defaults to LOG-TRIANGULAR)"
+                    if distribution_defaulted and v.distribution == DEFAULT_DISTRIBUTION else "")
+            raise ParseError(
+                f"Parameter '{parameter.token}'{where}: {v.distribution.upper()} needs bounds above 0"
+                f"{hint}. Use positive bounds or set distribution = TRIANGULAR or UNIFORM."
+            )
+
+
 def create_parameter(param_type, name, token, active, default, block_content):
     """
     Creates a parameter object based on the specified parameter type and attributes.
@@ -530,7 +551,9 @@ def create_parameter(param_type, name, token, active, default, block_content):
         except Exception as e:
             raise ValueError(f"Error parsing overrides for parameter '{token}': {e}")
 
-        return ContinuousParameter(**attributes)
+        parameter = ContinuousParameter(**attributes)
+        _validate_continuous_variants(parameter, distribution_defaulted=distribution_search is None)
+        return parameter
 
     elif param_type == "DiscreteParameter":
         if attributes["default"] is None:

@@ -270,6 +270,7 @@ ContinuousParameter "PlaceholderName" {
     # Missing name field!
     active = TRUE
     default = 50.0
+    distribution = UNIFORM
     low_val = 0.0
     high_val = 100.0
     decimals = 2
