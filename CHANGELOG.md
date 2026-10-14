@@ -105,6 +105,8 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   `FileHandler.generate_commands_list` and `FileHandler.commands`.
 
 ### Fixed
+- Sensitivity analysis from a collected report (`--report-csv`) skipped a `.sen` point
+  metric that has a custom label and an explicit year with "No data found".
 - Calibration recommendation cards no longer show the literal text `# noqa: E122`.
 - Two different `.inc` files replacing the same token set were rewritten to
   the same `simulation_includes/` filename, silently overwriting each other:

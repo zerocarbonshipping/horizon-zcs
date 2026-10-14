@@ -570,10 +570,6 @@ def _load_metrics_from_collected_report(collected_df, folder_names, metric_specs
                 if value is None:
                     continue
 
-                if spec.aggregation == "point":
-                    spec = spec._replace(
-                        display_name=_metric_display_name(mname, spec.year, "point"),
-                    )
                 folder_metrics.setdefault(spec, value)
 
     return result

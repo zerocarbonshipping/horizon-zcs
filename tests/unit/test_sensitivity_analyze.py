@@ -312,6 +312,19 @@ class TestCollectedReport:
         assert result["s1_sample001"][specs[1]] == 200.0
         assert result["s1_sample002"][specs[0]] == 150.0
 
+    def test_labelled_point_metric_is_found_by_its_spec(self, tmp_path):
+        """A .sen metric with a custom label and explicit year is looked up by the spec itself."""
+        csv_path = tmp_path / "report.csv"
+        folders = ["s1_sample001"]
+        vals = {("s1_sample001", "TotalEquivalentWtw", 2050): 42.0}
+        self._make_collected_csv(csv_path, folders, ["TotalEquivalentWtw"], [2050], vals)
+
+        spec = MetricSpec("TotalEquivalentWtw", 2050, "Emissions 2050 (custom)", "point")
+        df = _read_collected_report(str(csv_path))
+        result = _load_metrics_from_collected_report(df, folders, [spec])
+
+        assert result["s1_sample001"].get(spec) == 42.0
+
     def test_folder_name_prefix_matching(self, tmp_path):
         """Scenario labels with suffix should match folder names by prefix."""
         csv_path = tmp_path / "report.csv"
