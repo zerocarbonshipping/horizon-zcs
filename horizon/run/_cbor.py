@@ -27,23 +27,19 @@ class CBORError(ValueError):
 # Encoding
 # ---------------------------------------------------------------------------
 
+_HEAD_SIZES = {24: 1, 25: 2, 26: 4, 27: 8}
+
+
 def _encode_head(major, value, out):
     if value < 24:
         out.append((major << 5) | value)
-    elif value < 0x100:
-        out.append((major << 5) | 24)
-        out.append(value)
-    elif value < 0x10000:
-        out.append((major << 5) | 25)
-        out += value.to_bytes(2, "big")
-    elif value < 0x100000000:
-        out.append((major << 5) | 26)
-        out += value.to_bytes(4, "big")
-    elif value < 0x10000000000000000:
-        out.append((major << 5) | 27)
-        out += value.to_bytes(8, "big")
-    else:
-        raise CBORError(f"integer too large to encode: {value}")
+        return
+    for info, size in _HEAD_SIZES.items():
+        if value < 1 << (8 * size):
+            out.append((major << 5) | info)
+            out += value.to_bytes(size, "big")
+            return
+    raise CBORError(f"integer too large to encode: {value}")
 
 
 def _encode(obj, out):
@@ -110,15 +106,12 @@ class _Reader:
 def _decode_length(reader, info):
     if info < 24:
         return info
-    if info == 24:
-        return reader.take(1)[0]
-    if info == 25:
-        return int.from_bytes(reader.take(2), "big")
-    if info == 26:
-        return int.from_bytes(reader.take(4), "big")
-    if info == 27:
-        return int.from_bytes(reader.take(8), "big")
+    if info in _HEAD_SIZES:
+        return int.from_bytes(reader.take(_HEAD_SIZES[info]), "big")
     raise CBORError(f"unsupported length encoding: info={info} (indefinite lengths are not supported)")
+
+
+_FLOAT_FORMATS = {25: ">e", 26: ">f", 27: ">d"}
 
 
 def _decode(reader):
@@ -152,12 +145,8 @@ def _decode(reader):
         return True
     if info == 22 or info == 23:  # null / undefined
         return None
-    if info == 25:
-        return struct.unpack(">e", reader.take(2))[0]
-    if info == 26:
-        return struct.unpack(">f", reader.take(4))[0]
-    if info == 27:
-        return struct.unpack(">d", reader.take(8))[0]
+    if info in _FLOAT_FORMATS:
+        return struct.unpack(_FLOAT_FORMATS[info], reader.take(_HEAD_SIZES[info]))[0]
     raise CBORError(f"unsupported CBOR item: major={major} info={info}")
 
 
