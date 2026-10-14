@@ -99,16 +99,11 @@ def _load_index(calibration_dir):
     dict
         Parameter defaults: {param_token: default_value}.
     """
-    # Find the CSV — could be at calibration_dir or one level up
-    csv_path = None
-    for candidate in [
+    candidates = [
         os.path.join(calibration_dir, "sampled_parameters.csv"),
         *glob.glob(os.path.join(calibration_dir, "**", "sampled_parameters.csv"), recursive=True),
-    ]:
-        if os.path.isfile(candidate):
-            csv_path = candidate
-            break
-
+    ]
+    csv_path = next((path for path in candidates if os.path.isfile(path)), None)
     if csv_path is None:
         raise FileNotFoundError(
             f"Cannot find sampled_parameters.csv in or under {calibration_dir}"
@@ -120,96 +115,48 @@ def _load_index(calibration_dir):
         reader = csv.reader(f)
         header = next(reader)
         next(reader)  # skip parameter_type row
-
-        # Identify columns
-        col_map = {name: idx for idx, name in enumerate(header)}
-
-        # Resolve sample name column (prefer "sample", fall back to "sample_number")
-        sample_col = col_map.get("sample", col_map.get("sample_number", 0))
-
-        # Find the regulation column (scenario parameter)
-        regulation_col = col_map.get("regulation")
-
-        # Find parameter columns (everything except sample_number, regulation, sample)
-        skip_cols = {"sample_number", "sample", "regulation"}
-        param_tokens = [h for h in header if h not in skip_cols and h]
-
-        # Read all rows
         rows = list(reader)
 
-    # Detect defaults: for each parameter, find the value that appears when
-    # that parameter is NOT being varied. In calibration mode, the sample name
-    # is "{param_token}_{value}" — so when the sample doesn't start with a
-    # param token, that param is at its default.
+    col_map = {name: idx for idx, name in enumerate(header)}
+    sample_col = col_map.get("sample", col_map.get("sample_number", 0))
+    regulation_col = col_map.get("regulation")
+    param_tokens = [h for h in header if h not in {"sample_number", "sample", "regulation"} and h]
+
+    # Calibration sample names are "{param_token}_{value}", so a parameter is at
+    # its default in every row whose sample name does not start with its token.
     param_defaults = {}
     for pt in param_tokens:
-        defaults_seen = set()
-        for row in rows:
-            sample_name = row[sample_col]
-            # If this row is varying a DIFFERENT parameter, the value of pt is its default
-            if isinstance(sample_name, str) and not sample_name.startswith(pt + "_"):
-                val_str = row[col_map[pt]]
-                defaults_seen.add(val_str)
-        if len(defaults_seen) == 1:
-            param_defaults[pt] = defaults_seen.pop()
-        elif defaults_seen:
-            # Multiple defaults seen — pick most common
-            value_counts = Counter(row[col_map[pt]] for row in rows)
-            param_defaults[pt] = max(defaults_seen, key=lambda v: value_counts[v])
+        value_counts = Counter(row[col_map[pt]] for row in rows)
+        defaults_seen = {row[col_map[pt]] for row in rows if not row[sample_col].startswith(pt + "_")}
+        if defaults_seen:
+            param_defaults[pt] = max(defaults_seen, key=value_counts.get)
 
-    # Detect regulation scenarios.
-    # Case 1 (pre-resolved): regulation column exists in CSV — each row has its regulation.
-    # Case 2 (legacy): no regulation column — FileHandler expanded scenarios × samples,
-    #   producing folders like {regulation}_sample{NNN:03d}. Discover regulations from
-    #   folder names in the calibration directory.
-    if regulation_col is not None:
-        regulations = sorted(set(row[regulation_col] for row in rows))
-    else:
-        # Scan directory for {regulation}_sample{NNN} folders
-        regulations = _discover_regulations(calibration_dir)
-        if not regulations:
-            regulations = ["default"]
+    # Without a regulation column, FileHandler expanded scenarios x samples into
+    # {regulation}_sample{NNN} folders, so the regulations come from folder names.
+    if regulation_col is None:
+        legacy_regulations = _discover_regulations(calibration_dir) or ["default"]
 
-    # Build RunInfo list
     runs = []
     for row in rows:
         sample_name = row[sample_col]
-        sample_number = row[col_map.get("sample_number", 0)]
-
-        # Determine which parameter is being varied in this run
-        # Calibration sample names are like "bunkering_inertia_0.3"
-        varied_param = None
-        varied_value = None
-        for pt in param_tokens:
-            if isinstance(sample_name, str) and sample_name.startswith(pt + "_"):
-                varied_param = pt
-                varied_value = row[col_map[pt]]
-                break
-
+        varied_param = next((pt for pt in param_tokens if sample_name.startswith(pt + "_")), None)
         if varied_param is None:
             logger.warning("Could not identify varied parameter for sample '%s'", sample_name)
             continue
 
-        for regulation in (
-            [row[regulation_col]] if regulation_col is not None else regulations
-        ):
-            # Folder naming depends on whether scenarios were pre-resolved
-            if regulation_col is not None:
-                # Pre-resolved: sample name IS the suffix (not "sample_N" format)
-                folder_name = f"{regulation}_{sample_name}"
-            else:
-                # Legacy: FileHandler uses sample{NNN:03d} format
-                folder_name = f"{regulation}_sample{int(sample_number):03d}"
+        if regulation_col is not None:
+            folders = [(row[regulation_col], f"{row[regulation_col]}_{sample_name}")]
+        else:
+            sample_number = int(row[col_map.get("sample_number", 0)])
+            folders = [(reg, f"{reg}_sample{sample_number:03d}") for reg in legacy_regulations]
 
-            runs.append(RunInfo(
-                folder_name=folder_name,
-                regulation=regulation,
-                param_token=varied_param,
-                param_value=varied_value,
-            ))
+        runs.extend(
+            RunInfo(folder_name, regulation, varied_param, row[col_map[varied_param]])
+            for regulation, folder_name in folders
+        )
 
     logger.info("Loaded %d calibration runs across %d parameters",
-                len(runs), len(set(r.param_token for r in runs)))
+                len(runs), len({r.param_token for r in runs}))
 
     return runs, param_defaults
 
