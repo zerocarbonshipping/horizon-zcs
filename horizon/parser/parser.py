@@ -296,48 +296,36 @@ def parse_hor_file(file_path):
         raise ValueError("Horizon block not defined.")
     horizon_content = horizon_match.group(1)
 
-    # Extract unc file path and raise an error if it is not defined
-    unc_file_path_match = re.search(r'UncFilePath\s*=\s*"([^"]+)"', horizon_content)
-    unc_file_path = unc_file_path_match.group(1) if unc_file_path_match else None
+    def setting(pattern):
+        match = re.search(pattern, horizon_content)
+        return match.group(1) if match else None
+
+    unc_file_path = setting(r'UncFilePath\s*=\s*"([^"]+)"')
     if not unc_file_path:
         raise ValueError("UncFilePath not defined.")
 
-    # Extract OutputPath
-    output_path_match = re.search(r'OutputPath\s*=\s*"([^"]+)"', horizon_content)
-    output_path = output_path_match.group(1) if output_path_match else None
+    output_path = setting(r'OutputPath\s*=\s*"([^"]+)"')
     if not output_path:
         raise ValueError("OutputPath not defined in the Horizon block.")
 
-    # Extract number of samples and raise an error if it is not defined
-    number_of_samples_match = re.search(r'NumberOfSamples\s*=\s*(\d+)', horizon_content)
-    if not number_of_samples_match:
+    number_of_samples = setting(r'NumberOfSamples\s*=\s*(\d+)')
+    if number_of_samples is None:
         raise ValueError("NumberOfSamples not defined.")
-    number_of_samples = int(number_of_samples_match.group(1))
+    number_of_samples = int(number_of_samples)
 
-    # Extract parameter tokens to filter applicable parameters
+    # Legacy parameter lists, used to filter the parameter blocks (see below)
     scenario_param_tokens = re.findall(r'ScenarioParameter\("([^"]+)"\)', horizon_content)
-    parameter_tokens = re.findall(r'ContinuousParameter\("([^"]+)"\)|DiscreteParameter\("([^"]+)"\)', horizon_content)
-    parameter_tokens = [token for token_group in parameter_tokens for token in token_group if token]
+    parameter_tokens = [a or b for a, b in re.findall(
+        r'ContinuousParameter\("([^"]+)"\)|DiscreteParameter\("([^"]+)"\)', horizon_content)]
 
-    # Extract optional sampling method. If not specified, it defaults to latin hypercube sampling (LHS)
-    sampling_method_match = re.search(r'SamplingMethod\s*=\s*(\w+)', horizon_content)
-    sampling_method = sampling_method_match.group(1) if sampling_method_match else "LHS"
-
-    # Extract MaxParallelWorkers (None if not specified, so we can detect explicit use)
-    max_parallel_workers_match = max_parallel_workers_pattern.search(horizon_content)
-    max_parallel_workers = int(max_parallel_workers_match.group(1)) if max_parallel_workers_match else None
-
-    # Extract RandomSeed with a default value of 69 if not defined
-    random_seed_match = random_seed_pattern.search(horizon_content)
-    random_seed = int(random_seed_match.group(1)) if random_seed_match else 69
-
-    # Extracting SampleOnly and defaulting to False if not defined
-    sample_only_match = sample_only_pattern.search(horizon_content)
-    sample_only = sample_only_match.group(1) == "TRUE" if sample_only_match else False
-
-    # Extracting Plot and defaulting to False if not defined
-    plot_match = plot_pattern.search(horizon_content)
-    plot = plot_match.group(1) == "TRUE" if plot_match else False
+    # Optional settings; sampling defaults to latin hypercube (LHS), the seed to 69. MaxParallelWorkers
+    # stays None if not specified, so explicit use can be detected.
+    sampling_method = setting(r'SamplingMethod\s*=\s*(\w+)') or "LHS"
+    max_parallel_workers = setting(max_parallel_workers_pattern)
+    max_parallel_workers = int(max_parallel_workers) if max_parallel_workers else None
+    random_seed = int(setting(random_seed_pattern) or 69)
+    sample_only = setting(sample_only_pattern) == "TRUE"
+    plot = setting(plot_pattern) == "TRUE"
 
     # Parse Exclude() and Include() directives
     exclusion_rules = parse_all_exclusions(horizon_content)
