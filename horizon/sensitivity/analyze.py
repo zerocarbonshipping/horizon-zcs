@@ -61,14 +61,6 @@ MetricSpec.__new__.__defaults__ = ("point",)  # backward compatible
 # Valid aggregation modes
 _AGGREGATIONS = {"point", "difference", "cumulative"}
 
-# Metrics available on the Global sheet (same as calibration/analyze.py)
-_KNOWN_METRICS = {
-    "TotalEquivalentWTW",
-    "Expenses",
-    "ConsumedEnergy",
-    "InstalledPower",
-}
-
 # Default metrics when the user provides none.
 # Each entry is (metric_key, aggregation).
 _DEFAULT_METRICS = [
@@ -640,12 +632,11 @@ def _load_metrics_from_collected_report(collected_df, folder_names, metric_specs
         logger.warning("Collected report is empty or too short.")
         return {}
 
-    scenario_labels = list(df.iloc[0])  # row 0
-    metric_names = list(df.iloc[2])     # row 2
+    scenario_labels = list(df.iloc[0])
+    metric_names = list(df.iloc[2])
 
-    # Build column groups: map scenario_label → list of (col_idx, metric_name)
-    # First, identify unique column groups by consecutive identical labels
-    label_cols = {}  # scenario_label → [(col_idx, metric_name)]
+    # scenario_label -> [(col_idx, metric_name)]
+    label_cols = {}
     for ci in range(2, len(scenario_labels)):
         label = str(scenario_labels[ci]).strip() if scenario_labels[ci] is not None else ""
         if not label:
@@ -654,7 +645,6 @@ def _load_metrics_from_collected_report(collected_df, folder_names, metric_specs
             (ci, str(metric_names[ci]).strip() if metric_names[ci] is not None else "")
         )
 
-    # Map scenario labels to folder names
     label_to_folder = _match_labels_to_folders(
         list(label_cols.keys()), folder_names,
     )
@@ -672,29 +662,19 @@ def _load_metrics_from_collected_report(collected_df, folder_names, metric_specs
         len(label_to_folder), len(label_cols),
     )
 
-    # Build year → row_idx mapping from data rows
-    year_rows = {}  # year → row_idx
+    # first data row of each year
+    year_rows = {}
     for row_idx in range(5, len(df)):
         y = _parse_year_from_date_str(df.iloc[row_idx, 0])
         if y is not None and y not in year_rows:
             year_rows[y] = row_idx
+    years = list(year_rows)
+    rows = list(year_rows.values())
 
-    # Categorise specs by what data they need
-    needed_keys = set()  # metric keys we need columns for
-    point_specs = {}     # metric_key → set of target years
-    ts_specs = []        # specs needing full time series (difference/cumulative)
+    specs_by_key = {}
     for spec in metric_specs:
-        needed_keys.add(spec.metric_key)
-        if spec.aggregation == "point":
-            point_specs.setdefault(spec.metric_key, set()).add(spec.year)
-        else:
-            ts_specs.append(spec)
+        specs_by_key.setdefault(spec.metric_key, []).append(spec)
 
-    sorted_years = sorted(year_rows.keys()) if year_rows else []
-    first_year = sorted_years[0] if sorted_years else None
-    last_year = sorted_years[-1] if sorted_years else None
-
-    # Extract values
     result = {}
     for label, cols_info in label_cols.items():
         folder = label_to_folder.get(label)
@@ -702,59 +682,44 @@ def _load_metrics_from_collected_report(collected_df, folder_names, metric_specs
             continue
 
         folder_metrics = result.setdefault(folder, {})
-
         for ci, mname in cols_info:
-            if mname not in needed_keys:
+            specs = specs_by_key.get(mname)
+            if not specs:
                 continue
 
-            # --- point specs: single year lookup ---
-            for year in point_specs.get(mname, ()):
-                spec = MetricSpec(
-                    mname, year,
-                    _metric_display_name(mname, year, "point"), "point",
-                )
-                if spec in folder_metrics:
+            entries = list(zip(years, map(_safe_float, df.iloc[rows, ci])))
+            for spec in specs:
+                value = _aggregate(spec, entries)
+                if value is None:
                     continue
-                row_idx = year_rows.get(year)
-                if row_idx is None:
-                    continue
-                folder_metrics[spec] = _safe_float(df.iloc[row_idx, ci])
 
-            # --- time-series specs: read all years once per column ---
-            ts_for_key = [s for s in ts_specs if s.metric_key == mname]
-            if not ts_for_key or not sorted_years:
-                continue
-            # Skip if all specs for this key already resolved
-            if all(s in folder_metrics for s in ts_for_key):
-                continue
-
-            series_vals = []
-            for y in sorted_years:
-                ri = year_rows[y]
-                series_vals.append(_safe_float(df.iloc[ri, ci]))
-
-            for spec in ts_for_key:
-                if spec in folder_metrics:
-                    continue
-                if spec.aggregation == "difference":
-                    first_val = _safe_float(df.iloc[year_rows[first_year], ci])
-                    last_val = _safe_float(df.iloc[year_rows[last_year], ci])
-                    if first_val is not None and last_val is not None:
-                        folder_metrics[spec] = last_val - first_val
-                elif spec.aggregation == "cumulative":
-                    valid = [v for v in series_vals if v is not None]
-                    if valid:
-                        folder_metrics[spec] = sum(valid)
+                if spec.aggregation == "point":
+                    spec = spec._replace(
+                        display_name=_metric_display_name(mname, spec.year, "point"),
+                    )
+                folder_metrics.setdefault(spec, value)
 
     return result
+
+
+def _aggregate(spec, entries):
+    """Reduce ``(year, value)`` rows to the scalar *spec* asks for, or None if absent."""
+    if spec.aggregation == "point":
+        return next((v for y, v in entries if y == spec.year), None)
+
+    ordered = sorted(entries, key=lambda entry: entry[0])
+    if not ordered:
+        return None
+
+    if spec.aggregation == "difference":
+        return ordered[-1][1] - ordered[0][1]
+
+    return sum(v for _, v in ordered)
 
 
 # ---------------------------------------------------------------------------
 # CSV discovery
 # ---------------------------------------------------------------------------
-
-_CSV_NAMES_SET = {"sampled_parameters.csv", "samples.csv"}
-
 
 def _find_csv(ensemble_dir):
     """Locate the parameter samples CSV in or near *ensemble_dir*.
@@ -968,45 +933,24 @@ def _load_parameter_matrix_from_csv(csv_path):
 # ---------------------------------------------------------------------------
 
 def _load_all_metrics(ensemble_dir, folder_names, metric_specs):
-    """Read all reports once and extract all requested metrics.
+    """Read every realization's report once and extract all requested metrics.
 
     Returns
     -------
     dict[str, dict[MetricSpec, float]]
         folder_name → {spec → value}.
     """
-    # Build lookup structures for fast metric extraction
-    metric_keys = {s.metric_key for s in metric_specs}
-    year_specs = {}  # metric_key -> set of years
-    for s in metric_specs:
-        year_specs.setdefault(s.metric_key, set()).add(s.year)
-
-    # Discover reports and read them in parallel (single thread pool for both)
-    result = {}
-    done = 0
-    total = len(folder_names)
-
-    def _find_and_read(fname):
-        folder_path = os.path.join(ensemble_dir, fname)
-        xlsx_path = _find_report(folder_path)
+    def _read_folder(folder_name):
+        xlsx_path = _find_report(os.path.join(ensemble_dir, folder_name))
         if xlsx_path is None:
-            return fname, {}
-        return fname, _read_report_metrics(
-            xlsx_path, metric_keys, year_specs, metric_specs,
-        )
+            return {}
+        return _read_report_metrics(xlsx_path, metric_specs)
 
     t0 = time.monotonic()
     with concurrent.futures.ThreadPoolExecutor() as pool:
-        for fname, metrics in pool.map(_find_and_read, folder_names):
-            result[fname] = metrics
-            done += 1
-            if done % 200 == 0:
-                logger.info(
-                    "Read %d / %d reports (%.1fs)...",
-                    done, total, time.monotonic() - t0,
-                )
+        result = dict(zip(folder_names, pool.map(_read_folder, folder_names)))
     logger.info(
-        "Finished reading %d reports (%.1fs).", total, time.monotonic() - t0,
+        "Finished reading %d reports (%.1fs).", len(folder_names), time.monotonic() - t0,
     )
 
     if not any(result.values()):
@@ -1014,10 +958,8 @@ def _load_all_metrics(ensemble_dir, folder_names, metric_specs):
     return result
 
 
-def _read_report_metrics(xlsx_path, metric_keys, year_specs, metric_specs):
-    """Read a single report and extract all requested metric values.
-
-    Uses calamine engine (Rust, fast) with openpyxl fallback.
+def _read_report_metrics(xlsx_path, metric_specs):
+    """Read the Global sheet of one report and extract all requested metric values.
 
     Returns
     -------
@@ -1027,60 +969,25 @@ def _read_report_metrics(xlsx_path, metric_keys, year_specs, metric_specs):
     if df is None or len(df) < 5:
         return {}
 
-    row_metrics = list(df.iloc[1])
+    keys = {s.metric_key for s in metric_specs}
+    col_map = {}
+    for ci, mk in enumerate(df.iloc[1]):
+        if ci >= 2 and mk in keys:
+            col_map.setdefault(mk, ci)
 
-    # Find column indices for requested metrics
-    col_map = {}  # metric_key -> col_idx
-    for ci in range(2, len(row_metrics)):
-        mk = row_metrics[ci]
-        if mk in metric_keys and mk not in col_map:
-            col_map[mk] = ci
+    years = {r: _parse_year(df.iat[r, 0]) for r in range(4, len(df))}
+    rows = [r for r, year in years.items() if year is not None]
 
-    if not col_map:
-        return {}
-
-    # Separate point specs from time-series specs
-    point_specs = [s for s in metric_specs if s.aggregation == "point"]
-    ts_specs = [s for s in metric_specs if s.aggregation != "point"]
-
-    # Single pass: collect point values and full time series
     result = {}
-    # For time-series specs, accumulate {metric_key: [(year, value), ...]}
-    ts_data = {}  # metric_key -> list of (year, value)
-
-    for row_idx in range(4, len(df)):
-        year = _parse_year(df.iloc[row_idx, 0])
-        if year is None:
+    for spec in metric_specs:
+        ci = col_map.get(spec.metric_key)
+        if ci is None:
             continue
 
-        for spec in point_specs:
-            if spec.year == year and spec.metric_key in col_map:
-                if spec not in result:
-                    result[spec] = _safe_float(
-                        df.iloc[row_idx, col_map[spec.metric_key]]
-                    )
-
-        for spec in ts_specs:
-            if spec.metric_key in col_map:
-                val = _safe_float(
-                    df.iloc[row_idx, col_map[spec.metric_key]]
-                )
-                ts_data.setdefault(spec.metric_key, []).append((year, val))
-
-    # Resolve time-series specs into scalar values
-    for spec in ts_specs:
-        entries = ts_data.get(spec.metric_key)
-        if not entries:
-            continue
-        entries.sort(key=lambda t: t[0])
-        if spec.aggregation == "difference":
-            first_val, last_val = entries[0][1], entries[-1][1]
-            if first_val is not None and last_val is not None:
-                result[spec] = last_val - first_val
-        elif spec.aggregation == "cumulative":
-            valid = [v for _, v in entries if v is not None]
-            if valid:
-                result[spec] = sum(valid)
+        entries = [(years[r], _safe_float(v)) for r, v in zip(rows, df.iloc[rows, ci])]
+        value = _aggregate(spec, entries)
+        if value is not None:
+            result[spec] = value
 
     return result
 
