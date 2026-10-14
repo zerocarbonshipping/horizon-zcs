@@ -12,6 +12,12 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 ## [Unreleased]
 
 ### Added
+- One-line distribution call in `.hor` files, an alternative to the block form
+  (both can be mixed in one file): `ContinuousParameter "x" = LOG-TRIANGULAR(0.6, 1.0, 1.8)`,
+  `... = UNIFORM(0, 1) { emissions_low = MAXIMUM }`,
+  `DiscreteParameter "y" = DISCRETE([3, 4, 5], [0.2, 0.5, 0.3]) { default = 4 }`.
+  Wrong argument counts and mixing the call with `low_val`/`distribution`/`values`
+  are errors with a line number. Overrides keep the `if ... { }` block form.
 - `horizon run.hor --check`: parses with all validation and cross-checks the
   `.unc` and the `.inc` files it includes (tokens without a parameter,
   unused parameters, scenario values in include paths that resolve to no

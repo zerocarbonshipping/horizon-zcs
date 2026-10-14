@@ -93,7 +93,9 @@ in `output.log`.
 The `.hor` file defines the study: which parameters vary, over what ranges
 and distributions, across which scenario combinations. The `.unc` file it
 points at is an ordinary Navigate simulation file with `%TOKEN%`
-placeholders where sampled values are substituted.
+placeholders where sampled values are substituted. A parameter fits on one
+line, e.g. `ContinuousParameter "WACC" = LOG-TRIANGULAR(0.6, 1.0, 1.8)`; the
+block form is equally valid (see [`docs/configuration.md`](docs/configuration.md)).
 
 ### Sensitivity analysis
 

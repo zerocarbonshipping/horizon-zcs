@@ -14,7 +14,8 @@ horizon-zcs `dev` with PR #18/#19 (short format). Sections 3-4 describe that sta
 | N6 `--check`, `--explain`; N7 `--samples N` | implemented (`fmt`, `migrate`, `--dump-json` not yet) |
 | N3 legacy default pinning | superseded: legacy `Parameters = [...]` lists are now a parse error |
 | N0 trim without code change | applied to `october/run.hor` |
-| N1 one-line distribution call, N4 one-line overrides / `= base`, rest of N2 | open, awaiting decision |
+| N1 one-line distribution call | implemented (see `docs/configuration.md`) |
+| N4 one-line overrides / `= base`, rest of N2 | not planned: little gain for the extra parser code (one policy-dependent parameter in October) |
 
 ## 1. Summary
 

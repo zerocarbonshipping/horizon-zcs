@@ -195,6 +195,40 @@ active scenario parameters exist, sampling runs separately per scenario
 combination; the same underlying draw matrix is reused so `sample_i` indices
 align across scenarios.
 
+### One-line distribution call
+
+A parameter's distribution can also be written as a call on the header line.
+This is an alternative spelling: the block form above stays valid, and both
+forms can be mixed in one file, block by block.
+
+```
+ContinuousParameter "WACC" = LOG-TRIANGULAR(0.6, 1.0, 1.8)
+ContinuousParameter "EPC" = UNIFORM(0.0, 1.0) { default = 0.5, emissions_low = MAXIMUM }
+ContinuousParameter "FUEL_PRICE" = TRIANGULAR(0.8, 1.0, 1.5) {
+    emissions_low = MAXIMUM
+    if POLICY = carbon_levy {
+        low_val = 1.0
+        mid_val = 1.4
+        high_val = 2.0
+    }
+}
+DiscreteParameter "LEAD_TIME" = DISCRETE([3, 4, 5, 6], [0.15, 0.35, 0.35, 0.15]) { default = 4 }
+DiscreteParameter "LANES" = DISCRETE([3, 4, 5]) { default = 4 }
+```
+
+- `UNIFORM(low, high)` and `LOG-UNIFORM(low, high)` take two numbers,
+  `TRIANGULAR(low, mode, high)` and `LOG-TRIANGULAR(low, mode, high)` take
+  three, `DISCRETE([values], [probabilities])` takes a list of values and an
+  optional list of probabilities (uniform when omitted). The wrong number of
+  arguments is an error.
+- The call sets `low_val`, `mid_val`, `high_val` and `distribution` (or
+  `values` and `probabilities`); writing the call and any of those keys in the
+  same block is an error naming the line.
+- Everything else (`default`, `decimals`, `active`, `emissions_low`,
+  `emissions_high`, `if` overrides) goes in an optional `{ }` after the call,
+  exactly as in the block form. Attributes may be separated by commas, so a
+  short block fits on one line. Defaults and validation are unchanged.
+
 ### Checking a study before running it
 
 ```bash

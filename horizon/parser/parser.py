@@ -322,6 +322,69 @@ def _validate_conditions(parameters, scenario_parameters, file_path):
                                      f"Valid values: {', '.join(values_by_token[token])}.")
 
 
+# -------------------------------------------------------------------------
+# One-line distribution call, rewritten to the block form before parsing (line numbers are kept)
+# -------------------------------------------------------------------------
+_call_re = re.compile(r'(ContinuousParameter|DiscreteParameter)\s+"([^"]+)"\s*=\s*([A-Za-z][A-Za-z_-]*)\s*'
+                      r'\(((?:[^()\[\]]|\[[^\]]*])*)\)[ \t]*({)?')
+_discrete_args_re = re.compile(r'\s*(\[[^\]]*])\s*(?:,\s*(\[[^\]]*]))?\s*')
+_CALL_KEYS = ("low_val", "mid_val", "high_val", "distribution", "values", "probabilities")
+
+
+def _call_attrs(kind, name, args, where, file_path, line):
+    """Block-form attributes for `= NAME(args)`, e.g. `distribution = uniform, low_val = 0, high_val = 1`."""
+    if kind == "DiscreteParameter":
+        lists = _discrete_args_re.fullmatch(args)
+        if name.upper() != "DISCRETE" or not lists:
+            raise _error(file_path, line, f"{where}: expected DISCRETE([values], [probabilities]); "
+                                          "probabilities are optional (uniform).")
+        return f"values = {lists.group(1)}" + (f", probabilities = {lists.group(2)}" if lists.group(2) else "")
+
+    try:
+        distribution = normalize_distribution(name)
+    except ParameterError as e:
+        raise _error(file_path, line, f"{where}: {e}")
+
+    triangular = "triangular" in distribution
+    keys = ("low_val", "mid_val", "high_val") if triangular else ("low_val", "high_val")
+    numbers = [arg.strip() for arg in args.split(',')]
+    if len(numbers) != len(keys) or any(_number(arg) is None for arg in numbers):
+        expected = "low, mode, high" if triangular else "low, high"
+        raise _error(file_path, line, f"{where}: {distribution.upper()} takes {len(keys)} numbers ({expected}), "
+                                      f"got ({' '.join(args.split())}).")
+    return f"distribution = {distribution}, " + ", ".join(f"{k} = {n}" for k, n in zip(keys, numbers))
+
+
+def _expand_calls(content, file_path):
+    """Rewrite each `Kind "x" = DIST(...) [{ attrs }]` as `Kind "x" { distribution/bounds, attrs }`."""
+    pieces, pos = [], 0
+    for call in _call_re.finditer(content):
+        if call.start() < pos:
+            continue
+
+        kind, name, dist, args, brace = call.groups()
+        where = f'{kind} "{name}"'
+        line = content.count('\n', 0, call.start()) + 1
+        body, end = "", call.end()
+        if brace:
+            end = _matching_brace(content, call.end() - 1, "parameter block")
+            body = content[call.end(): end - 1]
+            base = _base_content(body)
+            body_line = content.count('\n', 0, call.end()) + 1
+            for key in _key_re.finditer(base):
+                if key.group(1) in _CALL_KEYS:
+                    raise _error(file_path, body_line + base.count('\n', 0, key.start(1)),
+                                 f"{where}: '{key.group(1)}' cannot be set next to the call; remove it, "
+                                 "or write the block in the long form.")
+
+        pad = '\n' * content.count('\n', call.start(), call.end())
+        pieces += [content[pos: call.start()],
+                   f'{kind} "{name}" {{ {_call_attrs(kind, dist, args, where, file_path, line)},{pad}{body}}}']
+        pos = end
+
+    return ''.join(pieces + [content[pos:]])
+
+
 def parse_hor_file(file_path):
     """
     Parses a horizon file to extract parameters and configuration for simulations.
@@ -332,6 +395,8 @@ def parse_hor_file(file_path):
     # Read file and strip comments (full-line and trailing; '#' inside quotes is kept)
     with open(file_path, 'r', encoding='utf-8') as file:
         content = ''.join(_strip_comment(line) for line in file)
+
+    content = _expand_calls(content, file_path)
 
     # Extract and process the Horizon block
     horizon_match = re.search(r'Horizon\s*{([\s\S]*?)}', content)
