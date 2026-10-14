@@ -41,17 +41,22 @@ def _override_matches(ov_conditions, scenario_map):
     return True
 
 
-def resolve_parameters_for_scenario(parameters, scenario_map):
+def best_override(parameter, scenario_map):
     """
-    Return shallow copies of parameters with the best-matching override applied (if any).
+    The override of parameter that applies to scenario_map, or None.
 
     Among overrides whose conditions all match, the most specific (most conditions) wins and ties
     go to the last declared.
     """
+    matches = [ov for ov in parameter.overrides if _override_matches(ov["conditions"], scenario_map)]
+    return max(reversed(matches), key=lambda ov: len(ov["conditions"]), default=None)
+
+
+def resolve_parameters_for_scenario(parameters, scenario_map):
+    """Return shallow copies of parameters with the best-matching override applied (if any)."""
     resolved = []
     for p in parameters:
-        matches = [ov for ov in p.overrides if _override_matches(ov["conditions"], scenario_map)]
-        best = max(reversed(matches), key=lambda ov: len(ov["conditions"]), default=None)
+        best = best_override(p, scenario_map)
         resolved.append(p.shallow_copy_with_overrides(best["attrs"] if best else {}))
     return resolved
 

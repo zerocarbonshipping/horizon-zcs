@@ -8,7 +8,7 @@ import logging
 import os
 import sys
 
-from horizon.exceptions import HorizonError
+from horizon.exceptions import HorizonError, error_line
 from horizon.logging.logging import setup_logging
 from horizon.test_manager.create_files import create_files
 
@@ -70,6 +70,14 @@ def main():
     cli_parser.add_argument("--samples", type=int, default=None, metavar="N",
                             help="Use N samples instead of NumberOfSamples for this run, without editing "
                                  "the file (e.g. --samples 1 for a smoke test).")
+    cli_parser.add_argument("--check", action="store_true",
+                            help="Parse the .hor file, run all validation and cross-check the .unc template "
+                                 "and its includes; prints a summary and exits 0 (ok/warnings) or 1 (errors). "
+                                 "Writes nothing, samples nothing.")
+    cli_parser.add_argument("--explain", action="store_true",
+                            help="Print each parameter as it resolves per scenario value (distribution, "
+                                 "bounds, mode, default, decimals, and where each came from). Use with "
+                                 "--check or alone.")
     cli_parser.add_argument("--status", type=str, default=None, metavar="OUTPUT_DIR",
                             help="Check pueue task status and report failures for the given output directory.")
     cli_parser.add_argument("--replot", action="store_true",
@@ -148,6 +156,17 @@ def main():
         logger.error("No .hor file paths provided.")
         sys.exit(1)
 
+    if args.check or args.explain:
+        # Static mode: no output.log, no sampling, no queueing.
+        if len(args.arguments) != 1:
+            logger.error("--check and --explain take exactly one .hor file.")
+            sys.exit(1)
+
+        from horizon.check.check import run_check
+        report, exit_code = run_check(args.arguments[0], check=args.check, explain=args.explain)
+        sys.stdout.write(report)
+        sys.exit(exit_code)
+
     # Set up logging to file in the directory of the .hor file
     hor_file_path = os.path.abspath(args.arguments[0])
     log_directory = os.path.dirname(hor_file_path)
@@ -201,7 +220,7 @@ def main():
 def _exit_with_error(hor_file, error):
     """Print one clean `file:line: error: message` line, keep the traceback in output.log, and exit 1."""
     logger.debug("Run failed", exc_info=error)
-    sys.stderr.write(f"{error}\n" if getattr(error, "location", None) else f"{hor_file}: error: {error}\n")
+    sys.stderr.write(error_line(hor_file, error) + "\n")
     sys.exit(1)
 
 

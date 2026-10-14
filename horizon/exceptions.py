@@ -8,6 +8,11 @@ to provide structured error handling and clear error messages.
 """
 
 
+def error_line(hor_file, error):
+    """One-line `file:line: error: message` for the CLI; errors without a location get the .hor file name."""
+    return str(error) if getattr(error, "location", None) else f"{hor_file}: error: {error}"
+
+
 class HorizonError(Exception):
     """Base exception for all Horizon-specific errors.
 
