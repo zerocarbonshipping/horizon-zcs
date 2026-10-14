@@ -361,74 +361,66 @@ def _safe_float(v):
 # 3. Build Plotly figures
 # ---------------------------------------------------------------------------
 
-def _build_figures(runs, data_by_folder, param_defaults):
-    """Build Plotly figures grouped by (regulation, param_token).
+def _build_line_figures(runs, param_defaults, panels):
+    """Build one line figure per panel for each (regulation, param_token).
+
+    Parameters
+    ----------
+    runs : list[RunInfo]
+    param_defaults : dict
+    panels : list[tuple]
+        (title, yaxis_title, height, legend_y, yaxis_range, series_fn); series_fn maps
+        a RunInfo to a pd.Series indexed by year, or None to skip the run.
 
     Returns
     -------
     dict
-        {(regulation, param_token): list[plotly.graph_objects.Figure]}
+        {(regulation, param_token): list[go.Figure]}
     """
     import plotly.graph_objects as go
 
-    # Group runs by (regulation, param_token)
     groups = defaultdict(list)
     for run in runs:
         groups[(run.regulation, run.param_token)].append(run)
 
     figures = {}
-
     for (regulation, param_token), group_runs in sorted(groups.items()):
-        # Sort by param value
         group_runs = sorted(group_runs, key=lambda r: _safe_float(r.param_value))
         default_val = param_defaults.get(param_token)
 
         figs = []
-
-        # Build one figure per metric
-        all_metrics = list(SINGLE_METRICS.items()) + list(MULTI_METRICS.items())
-        for metric_key, metric_label in all_metrics:
+        for title, yaxis_title, height, legend_y, yaxis_range, series_fn in panels:
             fig = go.Figure()
-            has_data = False
-
             for i, run in enumerate(group_runs):
-                report = data_by_folder.get(run.folder_name)
-                if report is None or metric_key not in report:
+                series = series_fn(run)
+                if series is None:
                     continue
 
-                df = report[metric_key]
-                is_default = (str(run.param_value) == str(default_val))
+                is_default = str(run.param_value) == str(default_val)
                 color = _DEFAULT_COLOR if is_default else _LINE_COLORS[i % len(_LINE_COLORS)]
-                width = 3 if is_default else 1.5
-                label_suffix = " (default)" if is_default else ""
-
-                y_values = df.iloc[:, 0] if metric_key in SINGLE_METRICS else df.sum(axis=1)
                 fig.add_trace(go.Scatter(
-                    x=df.index.tolist(),
-                    y=y_values.tolist(),
+                    x=series.index.tolist(),
+                    y=series.tolist(),
                     mode="lines",
-                    name=f"{run.param_value}{label_suffix}",
-                    line=dict(color=color, width=width),
+                    name=f"{run.param_value}{' (default)' if is_default else ''}",
+                    line=dict(color=color, width=3 if is_default else 1.5),
                 ))
-                has_data = True
 
-            if has_data:
-                fig.update_layout(
-                    title=dict(text=f"{metric_label}", font=dict(size=14)),
-                    xaxis_title="Year",
-                    yaxis_title=metric_label,
-                    template="plotly_white",
-                    height=350,
-                    margin=dict(l=60, r=30, t=50, b=40),
-                    legend=dict(
-                        orientation="h",
-                        yanchor="bottom",
-                        y=-0.3,
-                        xanchor="center",
-                        x=0.5,
-                    ),
-                )
-                figs.append(fig)
+            if not fig.data:
+                continue
+
+            layout = dict(title=dict(text=title, font=dict(size=14)),
+                          xaxis_title="Year", yaxis_title=yaxis_title)
+            if yaxis_range:
+                layout["yaxis"] = dict(range=yaxis_range)
+            fig.update_layout(
+                **layout,
+                template="plotly_white",
+                height=height,
+                margin=dict(l=60, r=30, t=50, b=40),
+                legend=dict(orientation="h", yanchor="bottom", y=legend_y, xanchor="center", x=0.5),
+            )
+            figs.append(fig)
 
         if figs:
             figures[(regulation, param_token)] = figs
@@ -436,82 +428,36 @@ def _build_figures(runs, data_by_folder, param_defaults):
     return figures
 
 
-# ---------------------------------------------------------------------------
-# 3b. Fuel share plots
-# ---------------------------------------------------------------------------
+def _build_figures(runs, data_by_folder, param_defaults):
+    """Build one Plotly figure per target metric for each (regulation, param_token)."""
+    def panel(metric_key, metric_label):
+        def series(run):
+            report = data_by_folder.get(run.folder_name)
+            if report is None or metric_key not in report:
+                return None
+            df = report[metric_key]
+            return df.iloc[:, 0] if metric_key in SINGLE_METRICS else df.sum(axis=1)
+        return (metric_label, metric_label, 350, -0.3, None, series)
+
+    panels = [panel(*item) for item in [*SINGLE_METRICS.items(), *MULTI_METRICS.items()]]
+    return _build_line_figures(runs, param_defaults, panels)
+
 
 def _build_fuel_share_figures(runs, data_by_folder, param_defaults):
-    """Build per-fuel InstalledPower share plots for each (regulation, param_token).
+    """Build per-fuel InstalledPower share plots for each (regulation, param_token)."""
+    def panel(fuel):
+        def series(run):
+            report = data_by_folder.get(run.folder_name)
+            if report is None or "InstalledPower" not in report:
+                return None
+            df = report["InstalledPower"]
+            fuel_col = _find_fuel_column(df.columns, fuel)
+            if fuel_col is None:
+                return None
+            return (df[fuel_col] / df.sum(axis=1).replace(0, np.nan) * 100).fillna(0)
+        return (f"{fuel} Share of Installed Power", "Share (%)", 300, -0.35, [0, 100], series)
 
-    Returns
-    -------
-    dict
-        {(regulation, param_token): list[go.Figure]} — one figure per fuel type.
-    """
-    import plotly.graph_objects as go
-
-    groups = defaultdict(list)
-    for run in runs:
-        groups[(run.regulation, run.param_token)].append(run)
-
-    figures = {}
-
-    for (regulation, param_token), group_runs in sorted(groups.items()):
-        group_runs = sorted(group_runs, key=lambda r: _safe_float(r.param_value))
-        default_val = param_defaults.get(param_token)
-
-        figs = []
-        for fuel in _FUEL_TYPES:
-            fig = go.Figure()
-            has_data = False
-
-            for i, run in enumerate(group_runs):
-                report = data_by_folder.get(run.folder_name)
-                if report is None or "InstalledPower" not in report:
-                    continue
-
-                df = report["InstalledPower"]
-                fuel_col = _find_fuel_column(df.columns, fuel)
-                if fuel_col is None:
-                    continue
-
-                row_totals = df.sum(axis=1)
-                shares = (df[fuel_col] / row_totals.replace(0, np.nan) * 100).fillna(0)
-
-                is_default = (str(run.param_value) == str(default_val))
-                color = _DEFAULT_COLOR if is_default else _LINE_COLORS[i % len(_LINE_COLORS)]
-                width = 3 if is_default else 1.5
-                label_suffix = " (default)" if is_default else ""
-
-                fig.add_trace(go.Scatter(
-                    x=df.index.tolist(),
-                    y=shares.tolist(),
-                    mode="lines",
-                    name=f"{run.param_value}{label_suffix}",
-                    line=dict(color=color, width=width),
-                ))
-                has_data = True
-
-            if has_data:
-                fig.update_layout(
-                    title=dict(text=f"{fuel} Share of Installed Power", font=dict(size=14)),
-                    xaxis_title="Year",
-                    yaxis_title="Share (%)",
-                    yaxis=dict(range=[0, 100]),
-                    template="plotly_white",
-                    height=300,
-                    margin=dict(l=60, r=30, t=50, b=40),
-                    legend=dict(
-                        orientation="h", yanchor="bottom", y=-0.35,
-                        xanchor="center", x=0.5,
-                    ),
-                )
-                figs.append(fig)
-
-        if figs:
-            figures[(regulation, param_token)] = figs
-
-    return figures
+    return _build_line_figures(runs, param_defaults, [panel(fuel) for fuel in _FUEL_TYPES])
 
 
 def _find_fuel_column(columns, fuel_name):
