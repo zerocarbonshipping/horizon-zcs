@@ -4,4 +4,4 @@ de362b0	ok	6643	1.50	5.67	kept	baseline
 09c12c1	ok	6576	2.22	5.80	kept	condense ensure_mid_val and sensitivity base mid computation
 2141b93	ok	6550	1.87	5.36	kept	_emissions_sample: replace nested directive helpers with opposite-directive lookup
 95c05b9	ok	6675	1.67	5.76	kept	merged new base
--	ok	6587	1.99	6.87	kept	parser: one brace matcher, base_content computed once, create_parameter flattened, unified exclude/include validation, drop unused override start/end
+e78a7ee	ok	6587	1.99	6.87	kept	parser: one brace matcher, base_content computed once, create_parameter flattened, unified exclude/include validation, drop unused override start/end
