@@ -133,15 +133,12 @@ defaults adapt to the machine, and two knobs cover the extremes:
 
 - **Network storage** (an output directory on NFS/SMB) changes the game:
   every file creation is a metadata round trip, so include-heavy decks are
-  bound by files-per-realization, not CPU. Two things address this. First,
-  rewritten includes whose content only varies per scenario are written once
+  bound by files-per-realization, not CPU. Rewritten
+  includes whose content only varies per scenario are therefore written once
   per scenario combination into `shared_includes/` instead of into every
-  realization folder. Second, Horizon probes the output filesystem's latency at
-  generation start and automatically sizes the pool at `min(64, 4×CPU)`
-  when it looks network-backed — threads blocked on round trips cost
-  nothing, so more in-flight operations directly raise throughput. The log
-  says when this triggers; `--gen-workers` overrides either way (measure
-  your optimum with [`tools/benchmark/`](tools/benchmark/README.md)).
+  realization folder. Threads blocked on round trips cost nothing, so raising
+  `--gen-workers` above the default `min(8, CPU count)` can raise throughput
+  there (measure your optimum with [`tools/benchmark/`](tools/benchmark/README.md)).
 
 - **Queue submission** uses a direct connection to the pueue daemon when a
   pueue >= 4 unix socket is found, and the pueue CLI otherwise (or with

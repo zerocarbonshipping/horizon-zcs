@@ -46,11 +46,7 @@ def main():
                                  "pueue >= 4 daemon socket is found) submits large studies much "
                                  "faster; this flag restores the one-pueue-process-per-task path.")
     cli_parser.add_argument("--gen-workers", type=int, default=None, metavar="N",
-                            help="Thread-pool size for .nav file generation. Default: adaptive - "
-                                 "min(8, CPU count) on local disks, min(64, 4x CPU count) when the "
-                                 "output filesystem's measured latency indicates network storage "
-                                 "(where generation is bound by per-file round trips). An explicit "
-                                 "value always wins.")
+                            help="Thread-pool size for .nav file generation (default: min(8, CPU count)).")
     cli_parser.add_argument("--output-dir", type=str, default=None,
                             help="Directory for generated scenario folders (default: next to .unc file)")
     cli_parser.add_argument("--report-name", type=str, default=None,

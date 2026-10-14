@@ -13,7 +13,6 @@ import logging
 import os
 import re
 import threading
-import time
 
 from horizon.exceptions import FileOperationError
 from horizon.parser.exclusions import get_scenario_label, should_skip_combination
@@ -228,9 +227,7 @@ class FileHandler:
         command_sink : optional streaming submitter (see run_commands.StreamingQueuer):
             ``start(expected_total)`` once before generation, ``submit(command)`` as
             each .nav completes. ``self.commands`` is populated either way.
-        max_workers : generation thread-pool size. Default: ``min(8, cpu_count)``,
-            or up to ``min(64, 4 x cpu_count)`` when the output filesystem probes
-            as network storage (see _select_worker_count).
+        max_workers : generation thread-pool size. Default: ``min(8, cpu_count)``.
         """
         # Realization folders are created under output_folder; absolutize once
         # so every derived path (and the navigate commands) is absolute.
@@ -323,7 +320,7 @@ class FileHandler:
         # written so the first simulations start while generation continues
         nav_filepaths = []
         with concurrent.futures.ThreadPoolExecutor(
-                max_workers=self._select_worker_count(max_workers, output_folder)) as executor:
+                max_workers=max(1, max_workers or min(8, os.cpu_count() or 4))) as executor:
             for nav_filepath in executor.map(generate, _generate_work_items()):
                 if nav_filepath is None:
                     continue
@@ -390,44 +387,6 @@ class FileHandler:
             else:
                 payload['stem_suffix'] = ""
         return program
-
-    @staticmethod
-    def _probe_fs_latency(folder):
-        """Median latency of three tiny create+write round trips in ``folder``."""
-        os.makedirs(folder, exist_ok=True)
-        probe_path = os.path.join(folder, f".horizon_fs_probe_{os.getpid()}")
-        samples = []
-        for _ in range(3):
-            start = time.perf_counter()
-            _write(probe_path, "probe")
-            samples.append(time.perf_counter() - start)
-            os.remove(probe_path)
-        return sorted(samples)[1]
-
-    def _select_worker_count(self, requested, output_folder):
-        """Choose the generation pool size: ``requested`` if given, else ``min(8, cpu)``.
-
-        Local-disk generation is compute-bound and peaks at core count. When the
-        output filesystem probes at 2 ms or more per file creation (network
-        storage), generation is latency-bound and threads blocked on I/O are
-        free, so the pool grows to ``min(64, 4 x cpu)``.
-        """
-        if requested is not None:
-            return max(1, requested)
-
-        cpu_count = os.cpu_count() or 4
-        try:
-            latency = self._probe_fs_latency(output_folder)
-        except OSError:
-            return min(8, cpu_count)
-
-        if latency < 0.002:
-            return min(8, cpu_count)
-
-        logger.info("Output filesystem responds in ~%.1f ms per file operation (network storage?); "
-                    "using more generation workers to hide the latency. Override with --gen-workers.",
-                    latency * 1000)
-        return min(64, cpu_count * 4)
 
     def _generate_nav_file_for_sample(self, unc_dir, template_program, sample, simulation_name,
                                       scenario_parameters, sample_number, combo_name, output_folder):

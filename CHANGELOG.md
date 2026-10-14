@@ -44,11 +44,6 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   `policy_POLICY_sample_1.inc` instead of `POLICY_sample_1.inc`), with a
   short hash suffix when two sources share a stem or the include path is
   tokenized.
-- The generation thread pool sizes itself to the output filesystem: a
-  startup latency probe detects network storage and raises the pool from
-  `min(8, CPU)` to `min(64, 4×CPU)` there, where generation is bound by
-  file-creation round trips and blocked threads are free. `--gen-workers`
-  still overrides.
 - **Breaking**: the default emissions metric key is `TotalEquivalentWtw`
   (formerly `TotalEquivalentWTW`), following navigate-zcs renaming its
   report properties — the key must match the report column navigate writes.
@@ -95,6 +90,8 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   `horizon --pueue-cli` forces the CLI path outright.
 
 ### Removed
+- Network-filesystem latency probe and adaptive generation pool size: the
+  default is `min(8, CPU count)`; `--gen-workers N` sets it explicitly.
 - `--no-shared-includes`: the shared include store is the only behaviour.
 
 ### Fixed
