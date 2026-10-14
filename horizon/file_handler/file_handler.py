@@ -262,8 +262,7 @@ class FileHandler:
         except FileNotFoundError:
             raise FileOperationError(f"UNC template file not found: {unc_path}")
 
-        template_program = self._compile_template(unc_content)
-        self._annotate_include_names(template_program, unc_path)
+        template_program = self._compile_template(unc_content, unc_path)
 
         # inactive scenario parameters contribute only their default value
         scenario_keys = [scenario.token for scenario in scenario_parameters]
@@ -342,16 +341,21 @@ class FileHandler:
         self.generate_commands_list(solver=solver, navigate_flags=navigate_flags)
 
     @staticmethod
-    def _compile_template(unc_content):
+    def _compile_template(unc_content, unc_path):
         """Compile template lines into a render program.
 
         Returns a list of ('text', parts) and ('include', info) items. Runs
         of consecutive non-include lines are merged and compiled once, so
         per-realization rendering touches each token slot instead of
         re-scanning every line. Include items carry the original line, its
-        indentation, and the quoted path (compiled for token interpolation);
-        a malformed include line (no quoted path) keeps ``raw_path=None`` and
-        is handled per realization exactly like before.
+        indentation, the quoted path (None if malformed, compiled for token
+        interpolation) and ``stem_suffix``.
+
+        Rewritten copies of an include are named after the source file's stem
+        so two different .inc files replacing the same tokens do not overwrite
+        each other. ``stem_suffix`` is a hash of the source path when two
+        static include paths share a stem or the path itself contains tokens
+        (its resolution is unknown until rendering), otherwise empty.
         """
         program = []
         text_run = []
@@ -359,60 +363,35 @@ class FileHandler:
             if not _is_include_line(line):
                 text_run.append(line)
                 continue
+
             if text_run:
                 program.append(('text', _compile_parts(''.join(text_run))))
                 text_run = []
-            indent = line[:len(line) - len(line.lstrip())]
-            try:
-                raw_path = line.split('"')[1]
-            except IndexError:
-                raw_path = None
+            raw_path = line.split('"')[1] if line.count('"') else None
             program.append(('include', {
                 'line': line,
-                'indent': indent,
+                'indent': line[:len(line) - len(line.lstrip())],
                 'raw_path': raw_path,
                 'path_parts': _compile_parts(raw_path) if raw_path is not None else None,
             }))
         if text_run:
             program.append(('text', _compile_parts(''.join(text_run))))
-        return program
 
-    @staticmethod
-    def _annotate_include_names(template_program, unc_path):
-        """Assign each include a collision-safe name stem for rewritten copies.
-
-        Rewritten include files used to be named by replaced tokens and sample
-        number alone, so two different .inc files replacing the same token set
-        silently overwrote each other inside a realization (both nav lines then
-        pointed at whichever was written last). Names now carry the source
-        file's stem; when two static include paths share a stem, or when the
-        path itself is tokenized (its resolution is unknown until rendering),
-        a deterministic hash of the source path disambiguates.
-
-        Sets payload['name_stem'] for static paths and payload['stem_hash']
-        for tokenized paths (whose stem is composed at render time).
-        """
         unc_dir = os.path.dirname(unc_path)
-        stem_sources = {}
-        for kind, payload in template_program:
-            if kind != 'include' or payload['raw_path'] is None:
-                continue
-            if len(payload['path_parts']) == 1:  # static path, no tokens
-                full = os.path.normpath(os.path.join(unc_dir, payload['raw_path']))
-                payload['full_path'] = full
-                stem_sources.setdefault(_path_stem(full), set()).add(full)
-        for kind, payload in template_program:
-            if kind != 'include' or payload['raw_path'] is None:
-                continue
+        includes = [payload for kind, payload in program if kind == 'include' and payload['raw_path'] is not None]
+        stem_sources = collections.defaultdict(set)
+        for payload in includes:
             if len(payload['path_parts']) == 1:
-                stem = _path_stem(payload['full_path'])
-                if len(stem_sources[stem]) == 1:
-                    payload['name_stem'] = stem
-                else:
-                    payload['name_stem'] = f"{stem}_{_short_hash(payload['full_path'])}"
+                payload['full_path'] = os.path.normpath(os.path.join(unc_dir, payload['raw_path']))
+                stem_sources[_path_stem(payload['full_path'])].add(payload['full_path'])
+        for payload in includes:
+            if len(payload['path_parts']) > 1:
+                payload['stem_suffix'] = f"_{_short_hash(payload['raw_path'])}"
+            elif len(stem_sources[_path_stem(payload['full_path'])]) > 1:
+                payload['stem_suffix'] = f"_{_short_hash(payload['full_path'])}"
             else:
-                payload['name_stem'] = None
-                payload['stem_hash'] = _short_hash(payload['raw_path'])
+                payload['stem_suffix'] = ""
+        return program
 
     @staticmethod
     def _probe_fs_latency(folder):
@@ -546,12 +525,8 @@ class FileHandler:
 
             full_include_path = os.path.normpath(os.path.join(unc_dir, include_path_relative))
 
-            # Collision-safe stem for rewritten copies: static paths carry a
-            # precomputed stem; tokenized paths compose it from the resolved
-            # file plus a hash of the template's path pattern.
-            name_stem = payload.get('name_stem')
-            if name_stem is None and payload['raw_path'] is not None:
-                name_stem = f"{_path_stem(include_path_relative)}_{payload['stem_hash']}"
+            # collision-safe stem for rewritten copies (see _compile_template)
+            name_stem = _path_stem(include_path_relative) + payload.get('stem_suffix', "")
 
             try:
                 updated_line = self._process_and_update_include_file(
@@ -633,7 +608,7 @@ class FileHandler:
         simulation_includes/; a scenario-only rewrite goes to the shared store.
         `indent` is the leading whitespace of the template line, carried over so
         the generated .nav keeps the template's indentation. `name_stem` is the
-        collision-safe stem for the rewritten copy (see _annotate_include_names);
+        collision-safe stem for the rewritten copy (see _compile_template);
         `combo_name` names the realization's scenario combination.
         """
         parts = self._compiled_include(include_file_path)
