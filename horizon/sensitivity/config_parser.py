@@ -38,14 +38,10 @@ from horizon.exceptions import ParseError, ValidationError
 from horizon.sensitivity.analyze import (
     _AGGREGATIONS,
     MetricSpec,
-    _metric_display_name,
+    _make_metric_spec,
 )
 
 logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Public data structure
-# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -58,10 +54,6 @@ class SensitivityConfig:
     metrics: list[MetricSpec] = field(default_factory=list)
 
 
-# ---------------------------------------------------------------------------
-# Regex helpers
-# ---------------------------------------------------------------------------
-
 _COMMENT_RE = re.compile(r"#.*$", re.MULTILINE)
 _TOP_BLOCK_RE = re.compile(
     r"SensitivityAnalysis\s*\{", re.IGNORECASE,
@@ -73,10 +65,6 @@ _KV_RE = re.compile(
     r'(\w+)\s*=\s*(".*?"|\S+)',
 )
 
-
-# ---------------------------------------------------------------------------
-# Brace-depth block extraction (mirrors horizon/parser/parser.py)
-# ---------------------------------------------------------------------------
 
 def _extract_block(text, start_of_brace):
     """Return the body between matched ``{`` … ``}`` starting at *start_of_brace*."""
@@ -97,10 +85,6 @@ def _strip_quotes(val):
         return val[1:-1]
     return val
 
-
-# ---------------------------------------------------------------------------
-# Metric block parsing
-# ---------------------------------------------------------------------------
 
 def _parse_metric_block(label, body):
     """Parse a single ``Metric "label" { … }`` block into a MetricSpec."""
@@ -131,40 +115,22 @@ def _parse_metric_block(label, body):
                 f"got '{attrs['year']}'."
             )
 
-    # difference/cumulative don't use year
-    if aggregation in ("difference", "cumulative"):
-        year = None
-
-    display = label or _metric_display_name(key, year, aggregation)
-    return MetricSpec(
-        metric_key=key, year=year,
-        display_name=display, aggregation=aggregation,
-    )
+    return _make_metric_spec(key, year, aggregation, display_name=label)
 
 
-# ---------------------------------------------------------------------------
-# Top-level parsing
-# ---------------------------------------------------------------------------
-
-def _parse_top_level_kv(body):
-    """Extract key-value pairs from the SensitivityAnalysis block body.
-
-    Skips over nested ``Metric`` blocks so their contents don't pollute
-    the top-level values.
-    """
-    # Remove nested Metric blocks first
-    cleaned = body
+def _split_blocks(body):
+    """Split a SensitivityAnalysis body into top-level text and ``(label, body)`` Metric blocks."""
+    top_level, metric_blocks, pos = [], [], 0
     for m in _METRIC_BLOCK_RE.finditer(body):
-        brace_pos = body.index("{", m.start() + len(m.group(0)) - 1)
-        inner = _extract_block(body, brace_pos)
-        # Remove the full "Metric … { … }" span
-        full_span = body[m.start():brace_pos + len(inner) + 2]
-        cleaned = cleaned.replace(full_span, "", 1)
+        if m.start() < pos:
+            continue
 
-    result = {}
-    for m in _KV_RE.finditer(cleaned):
-        result[m.group(1)] = _strip_quotes(m.group(2))
-    return result
+        inner = _extract_block(body, m.end() - 1)
+        top_level.append(body[pos:m.start()])
+        metric_blocks.append((m.group(1), inner))
+        pos = m.end() + len(inner) + 1
+    top_level.append(body[pos:])
+    return "".join(top_level), metric_blocks
 
 
 def parse_sensitivity_config(file_path):
@@ -205,8 +171,8 @@ def parse_sensitivity_config(file_path):
     brace_start = text.index("{", top_match.start())
     body = _extract_block(text, brace_start)
 
-    # Top-level key-value pairs
-    kv = _parse_top_level_kv(body)
+    top_level, metric_blocks = _split_blocks(body)
+    kv = {key: _strip_quotes(value) for key, value in _KV_RE.findall(top_level)}
 
     base_dir = os.path.dirname(file_path)
 
@@ -219,28 +185,15 @@ def parse_sensitivity_config(file_path):
     if not samples_csv:
         raise ParseError("Missing required 'SamplesCSV' in .sen file.")
 
-    source_dir = kv.get("SourceDir")
-    if not source_dir:
-        # Default to the directory containing the .sen file
-        source_dir = base_dir
-
     report_csv = kv.get("ReportCSV")
     output_dir = kv.get("OutputDir")
 
-    # Parse Metric blocks
-    metrics = []
-    for m in _METRIC_BLOCK_RE.finditer(body):
-        label = m.group(1)
-        brace_pos = body.index("{", m.start() + len(m.group(0)) - 1)
-        metric_body = _extract_block(body, brace_pos)
-        metrics.append(_parse_metric_block(label, metric_body))
-
     config = SensitivityConfig(
         samples_csv=_resolve(samples_csv),
-        source_dir=_resolve(source_dir),
+        source_dir=_resolve(kv.get("SourceDir")) or base_dir,
         report_csv=_resolve(report_csv) if report_csv else None,
         output_dir=_resolve(output_dir) if output_dir else None,
-        metrics=metrics,
+        metrics=[_parse_metric_block(label, inner) for label, inner in metric_blocks],
     )
 
     logger.info(

@@ -61,12 +61,11 @@ MetricSpec.__new__.__defaults__ = ("point",)  # backward compatible
 # Valid aggregation modes
 _AGGREGATIONS = {"point", "difference", "cumulative"}
 
-# Default metrics when the user provides none.
-# Each entry is (metric_key, aggregation).
+# default metrics when the user provides none
 _DEFAULT_METRICS = [
-    ("TotalEquivalentWTW", "difference"),
-    ("Expenses", "difference"),
-    ("TotalEquivalentWTW", "cumulative"),
+    "TotalEquivalentWTW:difference",
+    "Expenses:difference",
+    "TotalEquivalentWTW:cumulative",
 ]
 
 # Known CSV filenames for the parameter samples file
@@ -320,14 +319,18 @@ def _parse_metric_spec(spec_str):
     if not metric_key:
         raise ValidationError(f"Empty metric key in spec '{spec_str}'.")
 
-    # For difference/cumulative, year is not applicable
-    if aggregation in ("difference", "cumulative"):
+    return _make_metric_spec(metric_key, year, aggregation)
+
+
+def _make_metric_spec(metric_key, year, aggregation, display_name=None):
+    """Build a MetricSpec; difference/cumulative aggregations take no year."""
+    if aggregation != "point":
         year = None
 
-    display = _metric_display_name(metric_key, year, aggregation)
     return MetricSpec(
-        metric_key=metric_key, year=year,
-        display_name=display, aggregation=aggregation,
+        metric_key, year,
+        display_name or _metric_display_name(metric_key, year, aggregation),
+        aggregation,
     )
 
 
@@ -343,37 +346,19 @@ def _resolve_metric_specs(raw_specs, probe_year_fn):
 
     Parameters
     ----------
-    raw_specs : list[str] | list[tuple] | list[MetricSpec] | None
-        Metric specification strings (e.g. ``"TotalEquivalentWTW@2050"``),
-        ``(key, aggregation)`` tuples (from defaults), or pre-built
-        :class:`MetricSpec` objects (from a config file parser).
+    raw_specs : list[str | MetricSpec] | None
+        Metric specification strings (e.g. ``"TotalEquivalentWTW@2050"``) or
+        pre-built :class:`MetricSpec` objects (from a config file parser).
     probe_year_fn : callable
         Zero-argument callable returning the final year (int) or *None*.
     """
-    if not raw_specs:
-        raw_specs = list(_DEFAULT_METRICS)
-
-    # Normalise heterogeneous input into MetricSpec objects.
-    specs = []
-    for item in raw_specs:
-        if isinstance(item, MetricSpec):
-            specs.append(item)
-        elif isinstance(item, tuple):
-            key, agg = item
-            specs.append(MetricSpec(
-                metric_key=key, year=None,
-                display_name=_metric_display_name(key, None, agg),
-                aggregation=agg,
-            ))
-        else:
-            specs.append(_parse_metric_spec(item))
-
-    # For *point* specs with year=None, probe one report to find the final
-    # year.  Difference/cumulative specs never need a year.
-    needs_year = [
-        s for s in specs if s.aggregation == "point" and s.year is None
+    specs = [
+        item if isinstance(item, MetricSpec) else _parse_metric_spec(item)
+        for item in raw_specs or _DEFAULT_METRICS
     ]
-    if needs_year:
+
+    # point specs without a year take the final year found in the data
+    if any(s.aggregation == "point" and s.year is None for s in specs):
         final_year = probe_year_fn()
         if final_year is None:
             raise SensitivityAnalysisError(
@@ -382,11 +367,7 @@ def _resolve_metric_specs(raw_specs, probe_year_fn):
                 "(e.g. --metric 'TotalEquivalentWTW@2050')."
             )
         specs = [
-            MetricSpec(
-                s.metric_key, final_year,
-                _metric_display_name(s.metric_key, final_year, s.aggregation),
-                s.aggregation,
-            )
+            _make_metric_spec(s.metric_key, final_year, "point")
             if s.aggregation == "point" and s.year is None else s
             for s in specs
         ]
