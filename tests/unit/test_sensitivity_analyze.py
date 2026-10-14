@@ -31,10 +31,10 @@ class TestParseMetricSpec:
     """Tests for metric specification parsing."""
 
     def test_metric_with_year(self):
-        spec = _parse_metric_spec("TotalEquivalentWTW@2050")
-        assert spec.metric_key == "TotalEquivalentWTW"
+        spec = _parse_metric_spec("TotalEquivalentWtw@2050")
+        assert spec.metric_key == "TotalEquivalentWtw"
         assert spec.year == 2050
-        assert spec.display_name == "TotalEquivalentWTW@2050"
+        assert spec.display_name == "TotalEquivalentWtw@2050"
 
     def test_metric_without_year(self):
         spec = _parse_metric_spec("Expenses")
@@ -42,13 +42,13 @@ class TestParseMetricSpec:
         assert spec.year is None
 
     def test_metric_with_whitespace(self):
-        spec = _parse_metric_spec("  TotalEquivalentWTW @ 2040  ")
-        assert spec.metric_key == "TotalEquivalentWTW"
+        spec = _parse_metric_spec("  TotalEquivalentWtw @ 2040  ")
+        assert spec.metric_key == "TotalEquivalentWtw"
         assert spec.year == 2040
 
     def test_invalid_year_raises(self):
         with pytest.raises(ValidationError, match="not an integer"):
-            _parse_metric_spec("TotalEquivalentWTW@abc")
+            _parse_metric_spec("TotalEquivalentWtw@abc")
 
     def test_empty_metric_key_raises(self):
         with pytest.raises(ValidationError, match="Empty metric key"):
@@ -245,7 +245,7 @@ class TestCollectedReport:
         folder_names : list[str]
             e.g. ["s1_sample001", "s1_sample002"]
         metrics : list[str]
-            e.g. ["TotalEquivalentWTW", "Expenses"]
+            e.g. ["TotalEquivalentWtw", "Expenses"]
         years : list[int]
             e.g. [2030, 2050]
         values : dict[(folder, metric, year), float]
@@ -290,18 +290,18 @@ class TestCollectedReport:
         """Extract metrics from a small collected report."""
         csv_path = tmp_path / "report.csv"
         folders = ["s1_sample001", "s1_sample002"]
-        metrics = ["TotalEquivalentWTW", "Expenses"]
+        metrics = ["TotalEquivalentWtw", "Expenses"]
         years = [2030, 2050]
         vals = {
-            ("s1_sample001", "TotalEquivalentWTW", 2050): 100.0,
+            ("s1_sample001", "TotalEquivalentWtw", 2050): 100.0,
             ("s1_sample001", "Expenses", 2050): 200.0,
-            ("s1_sample002", "TotalEquivalentWTW", 2050): 150.0,
+            ("s1_sample002", "TotalEquivalentWtw", 2050): 150.0,
             ("s1_sample002", "Expenses", 2050): 250.0,
         }
         self._make_collected_csv(csv_path, folders, metrics, years, vals)
 
         specs = [
-            MetricSpec("TotalEquivalentWTW", 2050, "TotalEquivalentWTW@2050"),
+            MetricSpec("TotalEquivalentWtw", 2050, "TotalEquivalentWtw@2050"),
             MetricSpec("Expenses", 2050, "Expenses@2050"),
         ]
         df = _read_collected_report(str(csv_path))
@@ -316,12 +316,12 @@ class TestCollectedReport:
         """Scenario labels with suffix should match folder names by prefix."""
         csv_path = tmp_path / "report.csv"
         folders = ["s1_sample001"]
-        metrics = ["TotalEquivalentWTW"]
+        metrics = ["TotalEquivalentWtw"]
         years = [2050]
-        vals = {("s1_sample001", "TotalEquivalentWTW", 2050): 42.0}
+        vals = {("s1_sample001", "TotalEquivalentWtw", 2050): 42.0}
         self._make_collected_csv(csv_path, folders, metrics, years, vals)
 
-        specs = [MetricSpec("TotalEquivalentWTW", 2050, "TotalEquivalentWTW@2050")]
+        specs = [MetricSpec("TotalEquivalentWtw", 2050, "TotalEquivalentWtw@2050")]
         df = _read_collected_report(str(csv_path))
         result = _load_metrics_from_collected_report(df, folders, specs)
 
@@ -332,12 +332,12 @@ class TestCollectedReport:
         """Labels that don't match any folder names produce empty results."""
         csv_path = tmp_path / "report.csv"
         folders = ["s1_sample001"]
-        metrics = ["TotalEquivalentWTW"]
+        metrics = ["TotalEquivalentWtw"]
         years = [2050]
-        vals = {("s1_sample001", "TotalEquivalentWTW", 2050): 42.0}
+        vals = {("s1_sample001", "TotalEquivalentWtw", 2050): 42.0}
         self._make_collected_csv(csv_path, folders, metrics, years, vals)
 
-        specs = [MetricSpec("TotalEquivalentWTW", 2050, "TotalEquivalentWTW@2050")]
+        specs = [MetricSpec("TotalEquivalentWtw", 2050, "TotalEquivalentWtw@2050")]
         df = _read_collected_report(str(csv_path))
         # Pass folder names that don't match the labels
         result = _load_metrics_from_collected_report(
@@ -477,8 +477,8 @@ class TestAggregationParsing:
     """Tests for metric aggregation mode parsing."""
 
     def test_difference_spec(self):
-        spec = _parse_metric_spec("TotalEquivalentWTW:difference")
-        assert spec.metric_key == "TotalEquivalentWTW"
+        spec = _parse_metric_spec("TotalEquivalentWtw:difference")
+        assert spec.metric_key == "TotalEquivalentWtw"
         assert spec.aggregation == "difference"
         assert spec.year is None
         assert "difference" in spec.display_name
@@ -490,18 +490,18 @@ class TestAggregationParsing:
         assert spec.year is None
 
     def test_explicit_point_spec(self):
-        spec = _parse_metric_spec("TotalEquivalentWTW@2050:point")
-        assert spec.metric_key == "TotalEquivalentWTW"
+        spec = _parse_metric_spec("TotalEquivalentWtw@2050:point")
+        assert spec.metric_key == "TotalEquivalentWtw"
         assert spec.year == 2050
         assert spec.aggregation == "point"
 
     def test_year_ignored_for_difference(self):
-        spec = _parse_metric_spec("TotalEquivalentWTW@2050:difference")
+        spec = _parse_metric_spec("TotalEquivalentWtw@2050:difference")
         assert spec.aggregation == "difference"
         assert spec.year is None  # year not applicable
 
     def test_backward_compat_no_aggregation(self):
-        spec = _parse_metric_spec("TotalEquivalentWTW@2050")
+        spec = _parse_metric_spec("TotalEquivalentWtw@2050")
         assert spec.aggregation == "point"
         assert spec.year == 2050
 
@@ -552,7 +552,7 @@ class TestResolveMetricSpecsAggregation:
             return None
 
         specs = _resolve_metric_specs(
-            ["TotalEquivalentWTW:difference", "Expenses:cumulative"],
+            ["TotalEquivalentWtw:difference", "Expenses:cumulative"],
             bad_probe,
         )
         assert not called
@@ -561,7 +561,7 @@ class TestResolveMetricSpecsAggregation:
     def test_mixed_point_and_difference(self):
         """Point spec without year triggers probe; difference does not."""
         specs = _resolve_metric_specs(
-            ["TotalEquivalentWTW", "Expenses:difference"],
+            ["TotalEquivalentWtw", "Expenses:difference"],
             lambda: 2050,
         )
         point = [s for s in specs if s.aggregation == "point"]
@@ -610,17 +610,17 @@ class TestCollectedReportAggregation:
     def test_difference_metric(self, tmp_path):
         csv_path = tmp_path / "report.csv"
         folders = ["s1_sample001"]
-        metrics = ["TotalEquivalentWTW"]
+        metrics = ["TotalEquivalentWtw"]
         years = [2026, 2030, 2050]
         vals = {
-            ("s1_sample001", "TotalEquivalentWTW", 2026): 1000.0,
-            ("s1_sample001", "TotalEquivalentWTW", 2030): 800.0,
-            ("s1_sample001", "TotalEquivalentWTW", 2050): 500.0,
+            ("s1_sample001", "TotalEquivalentWtw", 2026): 1000.0,
+            ("s1_sample001", "TotalEquivalentWtw", 2030): 800.0,
+            ("s1_sample001", "TotalEquivalentWtw", 2050): 500.0,
         }
         self._make_collected_csv(csv_path, folders, metrics, years, vals)
 
-        spec = MetricSpec("TotalEquivalentWTW", None,
-                          "TotalEquivalentWTW (difference)", "difference")
+        spec = MetricSpec("TotalEquivalentWtw", None,
+                          "TotalEquivalentWtw (difference)", "difference")
         df = _read_collected_report(str(csv_path))
         result = _load_metrics_from_collected_report(df, folders, [spec])
 
@@ -650,19 +650,19 @@ class TestCollectedReportAggregation:
     def test_mixed_point_and_difference(self, tmp_path):
         csv_path = tmp_path / "report.csv"
         folders = ["s1_sample001"]
-        metrics = ["TotalEquivalentWTW"]
+        metrics = ["TotalEquivalentWtw"]
         years = [2026, 2050]
         vals = {
-            ("s1_sample001", "TotalEquivalentWTW", 2026): 1000.0,
-            ("s1_sample001", "TotalEquivalentWTW", 2050): 500.0,
+            ("s1_sample001", "TotalEquivalentWtw", 2026): 1000.0,
+            ("s1_sample001", "TotalEquivalentWtw", 2050): 500.0,
         }
         self._make_collected_csv(csv_path, folders, metrics, years, vals)
 
         specs = [
-            MetricSpec("TotalEquivalentWTW", 2050,
-                       "TotalEquivalentWTW@2050", "point"),
-            MetricSpec("TotalEquivalentWTW", None,
-                       "TotalEquivalentWTW (difference)", "difference"),
+            MetricSpec("TotalEquivalentWtw", 2050,
+                       "TotalEquivalentWtw@2050", "point"),
+            MetricSpec("TotalEquivalentWtw", None,
+                       "TotalEquivalentWtw (difference)", "difference"),
         ]
         df = _read_collected_report(str(csv_path))
         result = _load_metrics_from_collected_report(df, folders, specs)

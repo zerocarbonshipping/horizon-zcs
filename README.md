@@ -169,7 +169,9 @@ defaults adapt to the machine, and two knobs cover the extremes:
 ## Editor support
 
 The [`syntax/`](syntax/) folder contains Notepad++ user-defined-language
-files with syntax highlighting for `.hor`, `.sen`, and Navigate files.
+files with syntax highlighting for `.hor`, `.sen`, and Navigate files. It
+also holds a VS Code extension for `.hor` and `.sen` files; install it with
+`code --install-extension syntax/horizon-language-1.1.0.vsix`.
 
 ## Documentation
 

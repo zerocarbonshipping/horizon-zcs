@@ -30,12 +30,12 @@ class TestParseSensitivityConfig:
             OutputDir = "output"
 
             Metric "Emissions reduction" {
-                key = "TotalEquivalentWTW"
+                key = "TotalEquivalentWtw"
                 aggregation = difference
             }
 
             Metric "Lifetime emissions" {
-                key = "TotalEquivalentWTW"
+                key = "TotalEquivalentWtw"
                 aggregation = cumulative
             }
 
@@ -53,7 +53,7 @@ class TestParseSensitivityConfig:
         assert len(config.metrics) == 3
 
         diff = config.metrics[0]
-        assert diff.metric_key == "TotalEquivalentWTW"
+        assert diff.metric_key == "TotalEquivalentWtw"
         assert diff.aggregation == "difference"
         assert diff.year is None
         assert diff.display_name == "Emissions reduction"
@@ -189,7 +189,7 @@ class TestParseSensitivityConfig:
             SamplesCSV = "samples.csv"
             SourceDir = "."
             Metric "just key" {
-                key = "TotalEquivalentWTW"
+                key = "TotalEquivalentWtw"
             }
         }
         """)
