@@ -17,15 +17,12 @@ A `.hor` file contains parameter blocks and one `Horizon` block that wires
 them together:
 
 ```
-ContinuousParameter "Fuel price multiplier" {
-    name = "Fuel price multiplier"
-    token = "FUEL_PRICE"
-    active = TRUE
-    default = 1.0
+ContinuousParameter "FUEL_PRICE" {
     low_val = 0.8
+    mid_val = 1.0
     high_val = 1.5
     decimals = 2
-    distribution = "uniform"
+    distribution = "triangular"
 }
 
 Horizon {
@@ -34,13 +31,26 @@ Horizon {
     NumberOfSamples = 100
     SamplingMethod = LHS
     RandomSeed = 42
-
-    ContinuousParameter("FUEL_PRICE")
 }
 ```
 
-Only parameters referenced inside the `Horizon` block (by token) take part
-in the study.
+Every parameter block in the file takes part in the study. Use
+`active = FALSE` to fix a parameter at its default; delete or comment out a
+block to leave it out completely. Two blocks with the same name are an error,
+also across parameter types.
+
+Older files list parameters in the `Horizon` block
+(`Parameters = [ContinuousParameter("FUEL_PRICE")]`). That list still filters
+the study, but it is deprecated and logs a warning.
+
+### Shared parameter fields
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `token` | no | Placeholder name in the `.unc` template (`%TOKEN%`). Defaults to the block name, which must then use only letters, digits and `_`. |
+| `name` | no | Display name. Defaults to the block name. |
+| `active` | no | `FALSE` fixes the parameter at `default`. Default `TRUE`. |
+| `default` | see below | Value for `sample_1` and for inactive parameters. For `ContinuousParameter` it defaults to `mid_val`; if there is no `mid_val`, `default` is required. |
 
 ### Horizon block keys
 
@@ -63,10 +73,8 @@ branches. Every combination of active scenario parameter values becomes its
 own branch of the study.
 
 ```
-ScenarioParameter "Policy scenario" {
+ScenarioParameter "POLICY" {
     name = "Policy scenario"
-    token = "POLICY"
-    active = TRUE
     default = "baseline"
     values = ["baseline", "carbon_levy"]
 }
@@ -84,10 +92,8 @@ rounding of sampled values.
 optional probabilities (uniform if omitted):
 
 ```
-DiscreteParameter "Fleet renewal rate" {
+DiscreteParameter "RENEWAL" {
     name = "Fleet renewal rate"
-    token = "RENEWAL"
-    active = TRUE
     default = 0.05
     values = [0.03, 0.05, 0.08]
     probabilities = [0.25, 0.5, 0.25]
@@ -120,17 +126,23 @@ Parameter definitions can change per scenario using `if` blocks inside the
 parameter block:
 
 ```
-ContinuousParameter "Fuel price multiplier" {
+ContinuousParameter "FUEL_PRICE" {
     ...
     low_val = 0.8
+    mid_val = 1.0
     high_val = 1.5
 
-    if POLICY = carbon_levy {
+    if POLICY in (carbon_levy, fuel_standard) {
         low_val = 1.0
+        mid_val = 1.4
         high_val = 2.0
     }
 }
 ```
+
+Scenarios without a matching `if` block use the base values. If the base has
+no explicit `default`, an override that changes `mid_val` also moves the
+default.
 
 Conditions support equality (`token = value`), membership
 (`token in (a, b)`), and conjunction (`and`). When overrides are present and

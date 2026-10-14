@@ -50,6 +50,14 @@ _num_float_re = re.compile(r'^-?\d+\.\d+$')
 _num_int_re = re.compile(r'^-?\d+$')
 
 
+_valid_token_re = re.compile(r'^[A-Za-z0-9_]+$')
+
+
+def _format_default(value, decimals):
+    """Format a mid_val used as default the way the sampler rounds values."""
+    return int(round(value)) if decimals == 0 else round(value, decimals)
+
+
 def _coerce_literal(s):
     """Coerce a literal string into int/float/bool/string as appropriate."""
     if isinstance(s, (int, float, bool)):
@@ -241,6 +249,7 @@ def parse_hor_file(file_path):
 
     scenario_parameters = []
     parameters = []
+    seen_tokens = {}  # token -> block type, to reject duplicate definitions
 
     # Parse parameter blocks using predefined patterns
     for block_start in param_block_pattern.finditer(content):
@@ -278,16 +287,28 @@ def parse_hor_file(file_path):
             except ValueError as e:
                 raise ValueError(f"Error parsing overrides in parameter block '{block_start.group(2)}': {e}")
 
-        # Extract basic attributes shared by all parameter types
-        name_match = name_pattern.search(base_content)
-        if not name_match:
-            raise ParseError("Missing 'name' field in parameter block")
-        name = name_match.group(1)
-
+        # Extract basic attributes shared by all parameter types.
+        # token and name are optional and default to the block header name.
+        header_name = block_start.group(2)
         token_match = token_pattern.search(base_content)
-        if not token_match:
-            raise ParseError(f"Missing 'token' field in parameter block for '{name}'")
-        token = token_match.group(1)
+        if token_match:
+            token = token_match.group(1)
+        elif _valid_token_re.match(header_name):
+            token = header_name
+        else:
+            raise ParseError(
+                f"Parameter block '{header_name}' has no 'token' field, and its name cannot be used as one. "
+                "Use only letters, digits and underscores in the block name, or set token explicitly."
+            )
+        if token in seen_tokens:
+            raise ParseError(
+                f"Parameter '{token}' is defined twice ({seen_tokens[token]} and {block_start.group(1)}). "
+                "Parameter names must be unique."
+            )
+        seen_tokens[token] = block_start.group(1)
+
+        name_match = name_pattern.search(base_content)
+        name = name_match.group(1) if name_match else header_name
         active_str = active_pattern.search(base_content)
         active = (not active_str or active_str.group(1) == "TRUE")
         default_val = default_pattern.search(base_content)
@@ -400,9 +421,25 @@ def parse_hor_file(file_path):
                         value, token, all_scenario_values[token]
                     )
 
-    # Filter parameters based on tokens extracted from the Horizon block
-    filtered_scenario_parameters = [param for param in scenario_parameters if param.token in scenario_param_tokens]
-    filtered_parameters = [param for param in parameters if param.token in parameter_tokens]
+    # Every defined parameter block is part of the run; active = FALSE fixes it at its default.
+    # Legacy files may still list parameters in the Horizon block (ScenarioParameters = [...],
+    # Parameters = [...]). Such a list still filters the run, with a deprecation warning.
+    if scenario_param_tokens:
+        logger.warning(
+            "ScenarioParameters list in the Horizon block is deprecated: every defined ScenarioParameter "
+            "block is now included. Remove the list, and delete or comment out blocks you do not want."
+        )
+        filtered_scenario_parameters = [p for p in scenario_parameters if p.token in scenario_param_tokens]
+    else:
+        filtered_scenario_parameters = scenario_parameters
+    if parameter_tokens:
+        logger.warning(
+            "Parameters list in the Horizon block is deprecated: every defined parameter block is now "
+            "included. Remove the list, and delete or comment out blocks you do not want."
+        )
+        filtered_parameters = [p for p in parameters if p.token in parameter_tokens]
+    else:
+        filtered_parameters = parameters
 
     return (unc_file_path, output_path, number_of_samples, filtered_scenario_parameters, filtered_parameters,
             sampling_method, plot, max_parallel_workers, random_seed, sample_only, exclusion_rules, inclusion_rules)
@@ -472,12 +509,22 @@ def create_parameter(param_type, name, token, active, default, block_content):
         if decimals < 0:
             raise ValidationError(f"Parameter '{token}': decimals must be non-negative, got {decimals}")
 
+        # default is optional when mid_val is set: it then follows mid_val (also in overrides).
+        default_from_mid = attributes["default"] is None
+        if default_from_mid:
+            if mid_val is None:
+                raise ParseError(
+                    f"Parameter '{token}' has no mid_val and no default. Set default explicitly."
+                )
+            attributes["default"] = _format_default(mid_val, decimals)
+
         attributes.update({
             "low_val": low_val,
             "mid_val": mid_val,
             "high_val": high_val,
             "decimals": decimals,
-            "distribution": distribution
+            "distribution": distribution,
+            "default_from_mid": default_from_mid,
         })
 
         # parse optional overrides (if ... { ... } blocks)

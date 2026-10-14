@@ -11,6 +11,7 @@ Covers:
 
 import pytest
 
+from horizon.exceptions import ParseError
 from horizon.parser.parser import _base_content, _strip_comment, parse_hor_file
 
 HORIZON_BLOCK = """
@@ -101,6 +102,7 @@ ContinuousParameter "OP_EE" {
     token = "OP_EE"
     low_val = 0.10
     high_val = 0.20
+    default = 0.15
     decimals = 3
 }
 
@@ -124,6 +126,7 @@ ContinuousParameter "OP_EE" {
     token = "OP_EE"
     low_val = 0.10
     high_val = 0.20
+    default = 0.15
     decimals = 3
 }
 
@@ -182,7 +185,7 @@ ContinuousParameter "OP_EE" {
             _parse(tmp_path, content)
 
     def test_mid_val_only_in_if_block_does_not_leak(self, tmp_path):
-        """mid_val set only inside an override stays out of the base value."""
+        """mid_val/default set only inside an override do not count as base values."""
         content = SCENARIO_BLOCK + """
 ContinuousParameter "OP_EE" {
     name = "Operational EE"
@@ -197,9 +200,5 @@ ContinuousParameter "OP_EE" {
     }
 }
 """ + HORIZON_BLOCK
-        param = _continuous(tmp_path, content)
-
-        assert param.mid_val is None
-        assert param.default is None
-        assert param.distribution == "uniform"
-        assert param.overrides[0]["attrs"] == {"mid_val": 0.18, "default": 0.18, "distribution": "triangular"}
+        with pytest.raises(ParseError, match="no mid_val and no default"):
+            _continuous(tmp_path, content)

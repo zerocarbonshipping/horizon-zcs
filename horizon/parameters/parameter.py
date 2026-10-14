@@ -90,9 +90,11 @@ class ContinuousParameter(BaseParameter):
 
     def __init__(self, name, token, active, default, low_val, mid_val, high_val,
                  distribution='uniform', decimals=2, emissions_low=None, emissions_high=None,
-                 overrides=None):
+                 overrides=None, default_from_mid=False):
 
         super().__init__(name, token, active, default)
+        # True when no default was set in the .hor file, so default follows mid_val
+        self.default_from_mid = default_from_mid
         self.low_val = low_val
         self.mid_val = mid_val
         self.high_val = high_val
@@ -101,6 +103,15 @@ class ContinuousParameter(BaseParameter):
         self.emissions_low = emissions_low
         self.emissions_high = emissions_high
         self.overrides = overrides or []
+
+    def shallow_copy_with_overrides(self, attrs):
+        """Like BaseParameter.shallow_copy_with_overrides, but an override that changes
+        mid_val also moves default when the .hor file did not set default explicitly."""
+        if self.default_from_mid and "mid_val" in attrs and "default" not in attrs:
+            decimals = attrs.get("decimals", self.decimals)
+            mid = attrs["mid_val"]
+            attrs = {**attrs, "default": int(round(mid)) if decimals == 0 else round(mid, decimals)}
+        return super().shallow_copy_with_overrides(attrs)
 
     def __repr__(self):
         return (f"ContinuousParameter({self.name}, token={self.token}, active={self.active}, default={self.default}, "
