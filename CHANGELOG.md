@@ -39,8 +39,7 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   being copied into every realization folder. Include-heavy studies save one
   file creation per such include per realization — the dominant generation
   cost on network filesystems. Sample-dependent rewrites stay per-realization
-  in `simulation_includes/`; `--no-shared-includes` restores full
-  per-realization copies.
+  in `simulation_includes/`.
 - Rewritten include filenames now carry the source file's stem (e.g.
   `policy_POLICY_sample_1.inc` instead of `POLICY_sample_1.inc`), with a
   short hash suffix when two sources share a stem or the include path is
@@ -94,6 +93,9 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   connection (older pueue, TCP-configured daemon, protocol error mid-run)
   falls back to the pueue CLI automatically without losing tasks;
   `horizon --pueue-cli` forces the CLI path outright.
+
+### Removed
+- `--no-shared-includes`: the shared include store is the only behaviour.
 
 ### Fixed
 - Two different `.inc` files replacing the same token set were rewritten to

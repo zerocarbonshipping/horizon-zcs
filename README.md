@@ -136,8 +136,7 @@ defaults adapt to the machine, and two knobs cover the extremes:
   bound by files-per-realization, not CPU. Two things address this. First,
   rewritten includes whose content only varies per scenario are written once
   per scenario combination into `shared_includes/` instead of into every
-  realization folder (on by default; `--no-shared-includes` restores full
-  copies). Second, Horizon probes the output filesystem's latency at
+  realization folder. Second, Horizon probes the output filesystem's latency at
   generation start and automatically sizes the pool at `min(64, 4×CPU)`
   when it looks network-backed — threads blocked on round trips cost
   nothing, so more in-flight operations directly raise throughput. The log

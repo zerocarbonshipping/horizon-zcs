@@ -213,8 +213,7 @@ class FileHandler:
     # -------------------------
     def generate_scenarios_and_nav_files(self, unc_path, sampled_parameters, scenario_parameters, output_folder,
                                          exclusion_rules=None, inclusion_rules=None, solver=None,
-                                         navigate_flags=None, command_sink=None, max_workers=None,
-                                         shared_includes=True):
+                                         navigate_flags=None, command_sink=None, max_workers=None):
         """
         Generate .nav files for all realizations.
 
@@ -232,9 +231,6 @@ class FileHandler:
         max_workers : generation thread-pool size. Default: ``min(8, cpu_count)``,
             or up to ``min(64, 4 x cpu_count)`` when the output filesystem probes
             as network storage (see _select_worker_count).
-        shared_includes : when True, a rewrite that replaces only scenario tokens is
-            written once per scenario combination under ``<output_folder>/shared_includes/``
-            instead of into every realization folder.
         """
         # Realization folders are created under output_folder; absolutize once
         # so every derived path (and the navigate commands) is absolute.
@@ -266,7 +262,7 @@ class FileHandler:
         pre_resolved = bool(scenario_keys) and bool(sampled_parameters) and all(
             all(k in s for k in scenario_keys) for s in sampled_parameters)
 
-        self._shared_root = os.path.join(output_folder, "shared_includes") if shared_includes else None
+        self._shared_root = os.path.join(output_folder, "shared_includes")
         self._shared_scenario_keys = set(scenario_keys) | {"SCENARIO"}
 
         # The include/exclude decision depends only on the scenario
@@ -552,8 +548,7 @@ class FileHandler:
             # A rewrite that replaces only scenario tokens has identical
             # content for every sample of the combination: write it once per
             # combination in the shared store instead of once per realization.
-            if (self._shared_root and combo_name
-                    and set(tokens_replaced) <= self._shared_scenario_keys):
+            if combo_name and set(tokens_replaced) <= self._shared_scenario_keys:
                 return self._shared_include_line(
                     parts, replacements, tokens_replaced, name_stem,
                     combo_name, indent, realization_folder)
