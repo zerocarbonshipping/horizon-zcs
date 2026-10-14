@@ -203,7 +203,7 @@ def _validate_tokens(unc_file_path, scenario_parameters, parameters):
 
 def create_files(hor_file_path, max_files=None, priority="normal", solver=None,
                  navigate_flags=None, output_dir=None, dry_run=False, full_task_env=False,
-                 pueue_cli=False, gen_workers=None, shared_includes=True):
+                 pueue_cli=False, gen_workers=None, shared_includes=True, samples=None):
     """
     Main entrypoint to create files based on the .hor configuration.
 
@@ -224,6 +224,7 @@ def create_files(hor_file_path, max_files=None, priority="normal", solver=None,
         shared_includes: write scenario-only rewritten includes once per scenario
             combination under shared_includes/ instead of into every realization
             folder (default True; see FileHandler.generate_scenarios_and_nav_files)
+        samples: optional number of samples that replaces NumberOfSamples for this run (the file is not edited)
     Returns:
         sample_only (bool) if we terminated early because SampleOnly=True, otherwise None
     """
@@ -237,6 +238,10 @@ def create_files(hor_file_path, max_files=None, priority="normal", solver=None,
         # the CLI prints the one-line message; the traceback stays in output.log
         logger.debug("Failed to parse .hor file '%s'", hor_file_path, exc_info=True)
         raise
+
+    if samples is not None:
+        logger.info("NumberOfSamples overridden by --samples: %d (the file says %d)", samples, number_of_samples)
+        number_of_samples = samples
 
     logger.info("Read %d scenario parameters and %d sample parameters", len(scenario_parameters), len(parameters))
     logger.info("Sampling method: %s, Random seed: %s", sampling_method, random_seed)

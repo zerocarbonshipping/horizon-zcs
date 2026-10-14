@@ -1,7 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Fonden Mærsk Mc-Kinney Møller Center for Zero Carbon Shipping
 # SPDX-License-Identifier: Apache-2.0
 
-"""CLI behaviour on a broken .hor file: one clean error line, exit code 1, traceback only in output.log."""
+"""CLI behaviour: a broken .hor file gives one clean error line, exit code 1 and the traceback only in
+output.log; --samples overrides NumberOfSamples."""
 
 import os
 import subprocess
@@ -60,3 +61,13 @@ def test_missing_file_is_a_clean_error(tmp_path):
 
     assert result.returncode == 1
     assert "Traceback" not in result.stderr
+
+
+def test_samples_flag(tmp_path):
+    (tmp_path / "run.hor").write_text(BROKEN_HOR.replace("hgh_val = 0.5", "high_val = 0.5\n    default = 0.2"))
+
+    result = run_horizon(tmp_path, "run.hor", "--dry-run", "--samples", "1")
+
+    assert result.returncode == 0, result.stderr
+    assert "overridden by --samples: 1" in result.stderr
+    assert "Total realizations to generate: 1" in result.stderr

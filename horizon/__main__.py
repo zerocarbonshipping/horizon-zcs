@@ -67,6 +67,9 @@ def main():
                             help="Generate calibration comparison dashboard from completed simulation results.")
     cli_parser.add_argument("--dry-run", action="store_true",
                             help="Validate configuration and preview what would be generated without running simulations.")
+    cli_parser.add_argument("--samples", type=int, default=None, metavar="N",
+                            help="Use N samples instead of NumberOfSamples for this run, without editing "
+                                 "the file (e.g. --samples 1 for a smoke test).")
     cli_parser.add_argument("--status", type=str, default=None, metavar="OUTPUT_DIR",
                             help="Check pueue task status and report failures for the given output directory.")
     cli_parser.add_argument("--replot", action="store_true",
@@ -190,7 +193,7 @@ def main():
                          navigate_flags=args.navigate_flags, output_dir=args.output_dir,
                          dry_run=args.dry_run, full_task_env=args.full_task_env,
                          pueue_cli=args.pueue_cli, gen_workers=args.gen_workers,
-                         shared_includes=not args.no_shared_includes)
+                         shared_includes=not args.no_shared_includes, samples=args.samples)
         except (HorizonError, ValueError) as error:
             _exit_with_error(file_name, error)
 
