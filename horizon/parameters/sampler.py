@@ -185,45 +185,14 @@ class ParameterSampler:
         sample_1 = defaults
         sample_2 = emissions_low
         sample_3 = emissions_high
-        sample_4..N = random MC samples
-
-        Uses batch generation of uniform random draws and vectorized PPF
-        mapping for better performance with many parameters.
+        sample_4..N = random MC samples (uniform draws mapped through each parameter's PPF)
         """
         self._set_random_seed(seed)
-        self._validate_parameters(parameters)
 
-        simulation_sets = self._build_base_simulation_sets(parameters, num_samples)
-        remaining = num_samples - len(simulation_sets)
+        def _compute_draws(remaining):
+            return np.random.uniform(0.0, 1.0, size=(remaining, len(parameters)))
 
-        if remaining <= 0:
-            return simulation_sets
-
-        # Pre-generate uniform random draws for all continuous parameters at
-        # once. Seeded draws are cached so scenario combinations share one
-        # matrix instead of regenerating the identical one per combination.
-        dim = len(parameters)
-        uniform_draws = self._cached_draw(
-            "mc", dim, remaining, seed,
-            lambda: np.random.uniform(0.0, 1.0, size=(remaining, dim)))
-
-        start = len(simulation_sets)
-        for i in range(remaining):
-            sample = {"sample": f"sample_{start + i + 1}"}
-
-            for j, p in enumerate(parameters):
-                if not p.active:
-                    sample[p.token] = p.default
-                elif isinstance(p, ContinuousParameter):
-                    sample[p.token] = self._continuous_ppf(p, uniform_draws[i, j])
-                elif isinstance(p, DiscreteParameter):
-                    sample[p.token] = self._discrete_ppf(p, uniform_draws[i, j])
-                else:
-                    raise ValueError(f"Unsupported parameter type: {type(p)}")
-
-            simulation_sets.append(sample)
-
-        return simulation_sets
+        return self._sample(parameters, num_samples, seed, "mc", _compute_draws)
 
     def sample_latin_hypercube(self, parameters, num_samples, seed=None):
         """
@@ -235,6 +204,22 @@ class ParameterSampler:
         sample_4..N = LHS samples (inverse CDF per parameter)
         """
         self._set_random_seed(seed)
+
+        def _compute_draws(remaining):
+            if remaining == 1:
+                return np.full((1, len(parameters)), 0.5)
+            # The seed must be passed to lhs() explicitly: pyDOE3 >= 1.5 draws from its own numpy
+            # Generator and ignores the legacy global numpy.random.seed() state.
+            return np.clip(lhs(len(parameters), samples=remaining, criterion="maximin", seed=seed), 0.0, 1.0)
+
+        return self._sample(parameters, num_samples, seed, "lhs", _compute_draws)
+
+    def _sample(self, parameters, num_samples, seed, kind, compute_draws):
+        """Defaults and emissions samples followed by random samples from a (cached) draw matrix.
+
+        Seeded matrices are cached so per-scenario sampling pays for the identical, seed-determined
+        draw (LHS maximin is O(n^2)) only once. The matrices are never mutated downstream.
+        """
         self._validate_parameters(parameters)
 
         simulation_sets = self._build_base_simulation_sets(parameters, num_samples)
@@ -243,26 +228,7 @@ class ParameterSampler:
         if remaining <= 0:
             return simulation_sets
 
-        dim = len(parameters)
-
-        def _compute_lhs():
-            if remaining == 1:
-                matrix = np.full((1, dim), 0.5)
-            else:
-                # The seed must be passed to lhs() explicitly: pyDOE3 >= 1.5
-                # draws from its own numpy Generator and ignores the legacy
-                # global numpy.random.seed() state, so seeding only via
-                # _set_random_seed leaves LHS studies irreproducible. Passing
-                # it here also keeps the draw matrix identical across
-                # per-scenario sampling runs, so sample_i aligns across
-                # scenario combinations as documented.
-                matrix = lhs(dim, samples=remaining, criterion="maximin", seed=seed)
-            return np.clip(matrix, 0.0, 1.0)
-
-        # Seeded matrices are cached: the maximin criterion is O(n^2) per
-        # call, and per-scenario sampling would otherwise recompute the
-        # identical matrix for every scenario combination.
-        lhs_matrix = self._cached_draw("lhs", dim, remaining, seed, _compute_lhs)
+        draws = self._cached_draw(kind, len(parameters), remaining, seed, lambda: compute_draws(remaining))
 
         start = len(simulation_sets)
         for i in range(remaining):
@@ -271,16 +237,10 @@ class ParameterSampler:
             for j, p in enumerate(parameters):
                 if not p.active:
                     sample[p.token] = p.default
-                    continue
-
-                u = float(lhs_matrix[i, j])
-
-                if isinstance(p, ContinuousParameter):
-                    sample[p.token] = self._continuous_ppf(p, u)
-                elif isinstance(p, DiscreteParameter):
-                    sample[p.token] = self._discrete_ppf(p, u)
+                elif isinstance(p, ContinuousParameter):
+                    sample[p.token] = self._continuous_ppf(p, draws[i, j])
                 else:
-                    raise ValueError(f"Unsupported parameter type: {type(p)}")
+                    sample[p.token] = self._discrete_ppf(p, draws[i, j])
 
             simulation_sets.append(sample)
 
