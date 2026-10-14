@@ -63,8 +63,7 @@ def parse_exclude_directive(pairs_text):
         key = m.group(1)
         raw_value = m.group(2).strip()
         # Strip surrounding quotes if present
-        if (raw_value.startswith('"') and raw_value.endswith('"')) or \
-           (raw_value.startswith("'") and raw_value.endswith("'")):
+        if raw_value[0] in "\"'" and raw_value[-1] == raw_value[0]:
             raw_value = raw_value[1:-1]
         pairs[key] = raw_value
 
@@ -72,6 +71,22 @@ def parse_exclude_directive(pairs_text):
         raise ValueError(f"No valid key=value pairs found in Exclude directive: '{pairs_text}'")
 
     return pairs
+
+
+def _parse_directives(directive_re, horizon_content, kind):
+    """Parse every directive matched by directive_re into a rule dict; invalid ones are skipped with a warning."""
+    rules = []
+    for m in directive_re.finditer(horizon_content):
+        pairs_text = m.group(1).strip()
+        if not pairs_text:
+            continue
+
+        try:
+            rules.append(parse_exclude_directive(pairs_text))
+        except ValueError as e:
+            logger.warning("Skipping invalid %s directive: %s", kind, e)
+
+    return rules
 
 
 def parse_all_exclusions(horizon_content):
@@ -89,18 +104,7 @@ def parse_all_exclusions(horizon_content):
         List of exclusion rules, each a dict mapping token names to values.
         Empty list if no Exclude() directives found.
     """
-    exclusion_rules = []
-    for m in _EXCLUDE_DIRECTIVE_RE.finditer(horizon_content):
-        pairs_text = m.group(1).strip()
-        if not pairs_text:
-            continue
-        try:
-            rule = parse_exclude_directive(pairs_text)
-            exclusion_rules.append(rule)
-        except ValueError as e:
-            logger.warning("Skipping invalid Exclude directive: %s", e)
-
-    return exclusion_rules
+    return _parse_directives(_EXCLUDE_DIRECTIVE_RE, horizon_content, "Exclude")
 
 
 def parse_all_inclusions(horizon_content):
@@ -118,70 +122,32 @@ def parse_all_inclusions(horizon_content):
         List of inclusion rules, each a dict mapping token names to values.
         Empty list if no Include() directives found.
     """
-    inclusion_rules = []
-    for m in _INCLUDE_DIRECTIVE_RE.finditer(horizon_content):
-        pairs_text = m.group(1).strip()
-        if not pairs_text:
-            continue
-        try:
-            # Reuse parse_exclude_directive — format is identical
-            rule = parse_exclude_directive(pairs_text)
-            inclusion_rules.append(rule)
-        except ValueError as e:
-            logger.warning("Skipping invalid Include directive: %s", e)
+    inclusion_rules = _parse_directives(_INCLUDE_DIRECTIVE_RE, horizon_content, "Include")
 
     # Validate _name consistency: either all Include rules have _name or none do
-    if inclusion_rules:
-        has_name = [("_name" in rule) for rule in inclusion_rules]
-        if any(has_name) and not all(has_name):
-            raise ParseError(
-                "Mixed _name usage in Include directives: if any Include rule "
-                "has _name, all must have it."
-            )
+    has_name = [("_name" in rule) for rule in inclusion_rules]
+    if any(has_name) and not all(has_name):
+        raise ParseError(
+            "Mixed _name usage in Include directives: if any Include rule "
+            "has _name, all must have it."
+        )
 
     return inclusion_rules
 
 
-def is_combination_excluded(scenario_map, exclusion_rules):
-    """
-    Check whether a scenario combination should be excluded.
-
-    Uses partial matching: a rule matches if ALL of its token-value pairs
-    are present in the scenario_map with matching values.
-
-    Parameters
-    ----------
-    scenario_map : dict
-        The full scenario combination, e.g. {"BIO": "high", "ELEC": "low", "POLICY": "strict"}.
-    exclusion_rules : list[dict] or None
-        List of exclusion rules from parse_all_exclusions(). None or empty means no exclusions.
-
-    Returns
-    -------
-    bool
-        True if the combination matches any exclusion rule (should be excluded).
-    """
-    if not exclusion_rules:
-        return False
-
-    for rule in exclusion_rules:
-        if all(scenario_map.get(token) == value for token, value in rule.items()):
-            return True
-
-    return False
-
-
 def _matches_any_rule(scenario_map, rules):
-    """Check if scenario_map matches any rule in the list (partial matching).
+    """Check if scenario_map matches any rule in the list (partial matching: all of a rule's
+    token-value pairs must be present).
 
-    The reserved ``_name`` key is skipped during matching — it is used only
-    for labeling, not filtering.
+    The reserved ``_name`` key is skipped during matching: it is used only for labeling.
     """
-    for rule in rules:
-        if all(scenario_map.get(token) == value
-               for token, value in rule.items() if token != "_name"):
-            return True
-    return False
+    return any(all(scenario_map.get(token) == value for token, value in rule.items() if token != "_name")
+               for rule in rules)
+
+
+def is_combination_excluded(scenario_map, exclusion_rules):
+    """True if scenario_map matches any exclusion rule (None or empty rules exclude nothing)."""
+    return _matches_any_rule(scenario_map, exclusion_rules or [])
 
 
 def get_scenario_label(scenario_map, inclusion_rules):
@@ -205,9 +171,10 @@ def get_scenario_label(scenario_map, inclusion_rules):
         name = rule.get("_name")
         if name is None:
             return None  # no labels defined
-        filter_items = {k: v for k, v in rule.items() if k != "_name"}
-        if all(scenario_map.get(token) == value for token, value in filter_items.items()):
+
+        if _matches_any_rule(scenario_map, [rule]):
             return name
+
     return None
 
 
@@ -236,13 +203,7 @@ def should_skip_combination(scenario_map, exclusion_rules, inclusion_rules):
         True if the combination should be skipped.
     """
     # If inclusion rules exist, combo must match at least one to be kept
-    if inclusion_rules:
-        if not _matches_any_rule(scenario_map, inclusion_rules):
-            return True
+    if inclusion_rules and not _matches_any_rule(scenario_map, inclusion_rules):
+        return True
 
-    # If exclusion rules exist, combo must not match any
-    if exclusion_rules:
-        if _matches_any_rule(scenario_map, exclusion_rules):
-            return True
-
-    return False
+    return is_combination_excluded(scenario_map, exclusion_rules)
