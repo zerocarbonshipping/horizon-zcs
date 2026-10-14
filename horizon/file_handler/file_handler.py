@@ -21,10 +21,10 @@ from horizon.parser.exclusions import get_scenario_label, should_skip_combinatio
 _TOKEN_RE = re.compile(r'%([A-Za-z0-9_]+)%')
 
 # Include directive at the start of a line, e.g. `    Include "includes/a.inc"`.
-# Matched case-insensitively so legacy templates using the old all-caps
-# `INCLUDE` spelling are still recognised; the emitted .nav is always written
-# with the spelling below.
-_INCLUDE_LINE_RE = re.compile(r'^(\s*)Include\b', re.IGNORECASE)
+_INCLUDE_LINE_RE = re.compile(r'^\s*Include\b')
+
+# The legacy all-caps spelling, which Navigate rejects and Horizon no longer rewrites.
+_LEGACY_INCLUDE_RE = re.compile(r'^\s*INCLUDE\b')
 
 # Spelling Navigate's grammar accepts for the deck-level include directive.
 # Navigate parses `Include` in Title case only; anything else is a deck syntax
@@ -42,13 +42,20 @@ def _is_include_line(line):
     return _INCLUDE_LINE_RE.match(line) is not None
 
 
-def _normalize_include_keyword(line):
-    """Rewrite the leading include keyword to Navigate's `Include` spelling.
+def _read_template(unc_path):
+    """Read a .unc template's lines; reject the unsupported all-caps `INCLUDE` spelling."""
+    try:
+        with open(unc_path, 'r') as fh:
+            lines = fh.readlines()
+    except FileNotFoundError:
+        raise FileOperationError(f"UNC template file not found: {unc_path}")
 
-    Leaves indentation and the rest of the line untouched, so a legacy
-    `\\tINCLUDE "a.inc"` template line becomes `\\tInclude "a.inc"`.
-    """
-    return _INCLUDE_LINE_RE.sub(lambda m: f'{m.group(1)}{_INCLUDE_KEYWORD}', line, count=1)
+    for line_number, line in enumerate(lines, start=1):
+        if _LEGACY_INCLUDE_RE.match(line):
+            raise FileOperationError(
+                f"{unc_path}:{line_number}: all-caps INCLUDE is no longer supported; write `Include`: "
+                f"{line.strip()}")
+    return lines
 
 
 def _format_include_line(path, indent='\t'):
@@ -130,11 +137,7 @@ def extract_template_tokens(unc_path):
     set[str]
         Set of unique token names found in the template and its includes.
     """
-    try:
-        with open(unc_path, 'r') as fh:
-            lines = fh.readlines()
-    except FileNotFoundError:
-        raise FileOperationError(f"UNC template file not found: {unc_path}")
+    lines = _read_template(unc_path)
 
     tokens = set(_TOKEN_RE.findall(''.join(lines)))
     for line in lines:
@@ -239,12 +242,7 @@ class FileHandler:
         # Read the UNC template once and compile it into a render program:
         # runs of plain lines become compiled literal/token segments, include
         # lines keep their raw text plus a compiled path for interpolation.
-        try:
-            with open(unc_path, 'r') as fh:
-                unc_content = fh.readlines()
-        except FileNotFoundError:
-            raise FileOperationError(f"UNC template file not found: {unc_path}")
-
+        unc_content = _read_template(unc_path)
         unc_dir = os.path.dirname(unc_path)
         template_program = self._compile_template(unc_content, unc_dir)
 
@@ -438,9 +436,8 @@ class FileHandler:
                 logger.exception("Failed to process include file: %s", full_include_path)
                 updated_line = None
 
-            # Fall back to the template line if the include could not be handled, but still
-            # normalize the keyword so the .nav never carries a legacy spelling Navigate rejects.
-            nav_content.append(updated_line if updated_line else _normalize_include_keyword(line))
+            # fall back to the template line if the include could not be handled
+            nav_content.append(updated_line or line)
 
         nav_filepath = os.path.join(realization_folder, f"{simulation_name}.nav")
         includes_folder = os.path.join(realization_folder, "simulation_includes")

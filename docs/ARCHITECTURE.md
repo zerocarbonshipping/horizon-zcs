@@ -72,9 +72,12 @@ rules.
 ### File handler (`horizon/file_handler/`)
 
 Generates `.nav` files from the `.unc` template: processes `Include`
-directives (tokenizing `.inc` files as well), replaces `%TOKEN%`
+directives (tokenizing `.inc` files as well; the old all-caps `INCLUDE` is an
+error), replaces `%TOKEN%`
 placeholders with sampled values, creates one directory per realization, and
-builds the corresponding `navigate` command list. Scenario and sample tokens
+writes scenario-only include rewrites once per scenario combination to
+`shared_includes/`, and streams each `navigate` command to the queue as its
+`.nav` is written. Scenario and sample tokens
 are replaced uniformly.
 
 ### Command execution (`horizon/run/`)

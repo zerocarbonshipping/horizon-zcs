@@ -10,7 +10,7 @@ Covers the format of the include directives Horizon writes into generated
 deck fail to parse. These tests pin the emitted spelling.
 
 Also covers:
-- include-line detection (case-insensitive, word-boundary aware)
+- include-line detection (word-boundary aware) and rejection of the all-caps ``INCLUDE``
 - token replacement in include paths and in the .inc files themselves
 - indentation of the generated include lines
 """
@@ -19,12 +19,12 @@ import os
 
 import pytest
 
+from horizon.exceptions import FileOperationError
 from horizon.file_handler.file_handler import (
     FileHandler,
     _compile_parts,
     _format_include_line,
     _is_include_line,
-    _normalize_include_keyword,
     _render_parts,
     extract_template_tokens,
 )
@@ -83,9 +83,6 @@ class TestIsIncludeLine:
         'Include "a.inc"',
         '    Include "a.inc"',
         '\tInclude "a.inc"',
-        '\tINCLUDE "a.inc"',
-        'include "a.inc"',
-        'InClUdE "a.inc"',
     ])
     def test_matches_include_directives(self, line):
         assert _is_include_line(line)
@@ -100,27 +97,6 @@ class TestIsIncludeLine:
     ])
     def test_rejects_non_include_lines(self, line):
         assert not _is_include_line(line)
-
-
-class TestNormalizeIncludeKeyword:
-    """Tests for _normalize_include_keyword()."""
-
-    def test_uppercase_is_rewritten(self):
-        assert _normalize_include_keyword('\tINCLUDE "a.inc"\n') == '\tInclude "a.inc"\n'
-
-    def test_lowercase_is_rewritten(self):
-        assert _normalize_include_keyword('include "a.inc"\n') == 'Include "a.inc"\n'
-
-    def test_indentation_is_preserved(self):
-        assert _normalize_include_keyword('    INCLUDE "a.inc"\n') == '    Include "a.inc"\n'
-
-    def test_already_correct_is_unchanged(self):
-        line = '    Include "a.inc"\n'
-        assert _normalize_include_keyword(line) == line
-
-    def test_path_is_untouched(self):
-        line = '\tINCLUDE "../inc/INCLUDE_dir/a.inc"\n'
-        assert _normalize_include_keyword(line) == '\tInclude "../inc/INCLUDE_dir/a.inc"\n'
 
 
 class TestFormatIncludeLine:
@@ -421,35 +397,22 @@ class TestSharedIncludeStore:
         assert sorted(os.listdir(tmp_path / "out" / "shared_includes")) == ["bau", "levy"]
 
 
-class TestLegacyTemplateNormalization:
-    """Templates still using the old all-caps INCLUDE are normalized."""
+class TestLegacyIncludeRejected:
+    """The old all-caps INCLUDE is an error naming the file and line."""
 
-    def test_legacy_uppercase_template_emits_title_case(self, tmp_path):
+    def test_generation_raises_with_file_and_line(self, tmp_path):
         _write(tmp_path / "inc" / "plain.inc", 'Vessel "a" {\n    Length = 300\n}\n')
-        _write(tmp_path / "inc" / "tokened.inc", 'Vessel "b" {\n    Length = %LEN%\n}\n')
-        unc = _write(
-            tmp_path / "legacy.unc",
-            'DEFINE {\n'
-            '\tINCLUDE "inc/plain.inc"\n'
-            '\tinclude "inc/tokened.inc"\n'
-            '}\n',
-        )
+        unc = _write(tmp_path / "legacy.unc",
+                     'DEFINE {\n\tInclude "inc/plain.inc"\n\tINCLUDE "inc/plain.inc"\n}\n')
 
-        handler = _generate(unc, tmp_path / "out", [{"sample": 1, "LEN": 250.0}])
-        content = open(handler.nav_filepaths[0]).read()
+        with pytest.raises(FileOperationError, match=r"legacy\.unc:3: .*write `Include`"):
+            _generate(unc, tmp_path / "out", [{"sample": 1}])
 
-        assert "INCLUDE" not in content
-        assert content.count('Include "') == 2
+    def test_token_extraction_raises_too(self, tmp_path):
+        unc = _write(tmp_path / "legacy.unc", 'DEFINE {\n\tINCLUDE "inc/tokened.inc"\n}\n')
 
-    def test_missing_include_file_still_normalizes_keyword(self, tmp_path):
-        """A dangling include keeps its path but must not keep a legacy keyword."""
-        unc = _write(tmp_path / "legacy.unc", 'DEFINE {\n\tINCLUDE "inc/missing.inc"\n}\n')
-
-        handler = _generate(unc, tmp_path / "out", [{"sample": 1}])
-        content = open(handler.nav_filepaths[0]).read()
-
-        assert '\tInclude "inc/missing.inc"\n' in content
-        assert "INCLUDE" not in content
+        with pytest.raises(FileOperationError, match=r"legacy\.unc:2: "):
+            extract_template_tokens(str(unc))
 
     def test_non_include_lines_are_left_alone(self, tmp_path):
         """`IncludeRate` is an attribute, not a directive, and must pass through."""
@@ -468,8 +431,3 @@ class TestExtractTemplateTokens:
     def test_collects_tokens_from_template_and_includes(self, template_project):
         tokens = extract_template_tokens(str(template_project))
         assert {"LEN", "POLICY"} <= tokens
-
-    def test_follows_legacy_uppercase_include(self, tmp_path):
-        _write(tmp_path / "inc" / "tokened.inc", "Length = %LEN%\n")
-        unc = _write(tmp_path / "legacy.unc", 'DEFINE {\n\tINCLUDE "inc/tokened.inc"\n}\n')
-        assert "LEN" in extract_template_tokens(str(unc))

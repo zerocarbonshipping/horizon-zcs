@@ -90,6 +90,9 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   `horizon --pueue-cli` forces the CLI path outright.
 
 ### Removed
+- All-caps `INCLUDE` in `.unc` templates is no longer normalized to `Include`;
+  generation and token extraction now fail with an error naming the file and
+  line. Write `Include`.
 - Network-filesystem latency probe and adaptive generation pool size: the
   default is `min(8, CPU count)`; `--gen-workers N` sets it explicitly.
 - `--no-shared-includes`: the shared include store is the only behaviour.
@@ -118,9 +121,7 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   current `Include` spelling instead of the legacy all-caps `INCLUDE`, which
   Navigate's grammar rejects. Every include line in a generated `.nav` was
   affected, so any template with includes failed to run.
-- Templates still using `INCLUDE` (or lowercase `include`) are normalized to
-  `Include` on generation, and the generated include lines now keep the
-  template's own indentation.
+- Generated include lines now keep the template's own indentation.
 - Include-line detection is word-boundary aware, so an attribute such as
   `IncludeRate = 5` is no longer mistaken for an include directive.
 - `.hor` parsing strips trailing `#` comments (a `#` inside a quoted string is
