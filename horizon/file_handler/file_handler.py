@@ -56,6 +56,12 @@ def _format_include_line(path, indent='\t'):
     return f'{indent}{_INCLUDE_KEYWORD} "{path}"\n'
 
 
+def unquoted_default(scenario_parameter):
+    """Default value of a scenario parameter with surrounding quotes stripped."""
+    default = scenario_parameter.default
+    return default.strip('"').strip("'") if isinstance(default, str) else default
+
+
 def _short_hash(text):
     """Deterministic 8-hex-char tag used to disambiguate include names."""
     return hashlib.sha1(text.encode("utf-8", errors="surrogateescape")).hexdigest()[:8]
@@ -266,11 +272,8 @@ class FileHandler:
 
         # inactive scenario parameters contribute only their default value
         scenario_keys = [scenario.token for scenario in scenario_parameters]
-        scenario_values = [
-            scenario.values if scenario.active else [scenario.default.strip('"').strip("'")
-                                                     if isinstance(scenario.default, str) else scenario.default]
-            for scenario in scenario_parameters
-        ]
+        scenario_values = [scenario.values if scenario.active else [unquoted_default(scenario)]
+                           for scenario in scenario_parameters]
 
         # Pre-resolved mode: each sample already carries all scenario tokens
         # and yields exactly one NAV; otherwise every scenario combination is

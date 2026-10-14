@@ -35,7 +35,7 @@ import time
 from itertools import product
 from pathlib import Path
 
-from horizon.file_handler.file_handler import FileHandler, extract_template_tokens
+from horizon.file_handler.file_handler import FileHandler, extract_template_tokens, unquoted_default
 from horizon.misc.util import output_sampled_parameters_to_csv
 from horizon.parameters.parameter import ContinuousParameter, DiscreteParameter
 from horizon.parameters.sampler import ParameterSampler, resolve_parameters_for_scenario
@@ -150,16 +150,9 @@ def _sample_for_active_combos(scenario_parameters, parameters, number_of_samples
         total_combos += 1
         active_map = dict(zip(active_tokens, combo_values))
 
-        # Build full scenario_map: active tokens from combo, inactive tokens -> default (strip quotes)
-        scenario_map = {}
-        for sp in scenario_parameters:
-            if sp.active:
-                scenario_map[sp.token] = active_map[sp.token]
-            else:
-                default_val = sp.default
-                if isinstance(default_val, str):
-                    default_val = default_val.strip('"').strip("'")
-                scenario_map[sp.token] = default_val
+        # active tokens from the combination, inactive ones at their default
+        scenario_map = {sp.token: active_map[sp.token] if sp.active else unquoted_default(sp)
+                        for sp in scenario_parameters}
 
         # Check inclusion/exclusion rules before sampling
         if should_skip_combination(scenario_map, exclusion_rules, inclusion_rules):
@@ -175,11 +168,9 @@ def _sample_for_active_combos(scenario_parameters, parameters, number_of_samples
         # Resolve parameters for this scenario (apply overrides)
         params_for_scenario = resolve_parameters_for_scenario(parameters, scenario_map)
 
-        # Use shared deterministic seed so sample_i corresponds across scenarios
-        seed_for_combo = random_seed
-
+        # the same seed for every combination keeps sample_i aligned across scenarios
         sampled_for_combo = sample_parameters(params_for_scenario, number_of_samples, sampling_method,
-                                              seed_for_combo, sampler=shared_sampler)
+                                              random_seed, sampler=shared_sampler)
 
         # Annotate samples with full scenario_map and sample numbers 1..N
         for i, row in enumerate(sampled_for_combo):
@@ -210,12 +201,7 @@ def _validate_tokens(unc_file_path, scenario_parameters, parameters):
         logger.warning("Could not scan template for token validation; skipping.")
         return
 
-    # Collect all defined tokens
-    defined_tokens = set()
-    for p in scenario_parameters:
-        defined_tokens.add(p.token)
-    for p in parameters:
-        defined_tokens.add(p.token)
+    defined_tokens = {p.token for p in scenario_parameters} | {p.token for p in parameters}
 
     # Tokens in template but not defined
     undefined = template_tokens - defined_tokens - BUILTIN_TOKENS
@@ -378,9 +364,8 @@ def create_files(hor_file_path, max_files=None, priority="normal", solver=None,
         except Exception:
             logger.exception("Sampling diagnostics failed.")
 
-        if sample_only:
-            logger.info("SampleOnly = TRUE; terminating after diagnostics.")
-            return sample_only
+        logger.info("SampleOnly = TRUE; terminating after diagnostics.")
+        return sample_only
 
     # Prepare file generation
     if output_dir is not None:
