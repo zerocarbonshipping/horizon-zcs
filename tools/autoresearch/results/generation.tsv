@@ -1,0 +1,5 @@
+de362b0	ok	6643	1.50	5.67	kept	baseline
+52a9b56	ok	6633	3.57	5.58	kept	file_handler: inline template read, write_to_file takes str only
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01VkXGKVSafWLgrVfrcYHJTL

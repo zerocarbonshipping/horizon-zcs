@@ -167,22 +167,10 @@ class FileHandler:
     # Low-level file helpers
     # -------------------------
     @staticmethod
-    def _read_file_lines(filepath):
-        with open(filepath, 'r') as fh:
-            return fh.readlines()
-
-    @staticmethod
     def _write_to_file(filepath, content):
-        """
-        Write content (a string or a list of lines) to filepath. The parent
-        directory must already exist - callers create it once per realization
-        instead of paying a makedirs round trip on every write.
-        """
+        """Write a string to filepath; the parent directory must already exist."""
         with open(filepath, 'w') as fh:
-            if isinstance(content, str):
-                fh.write(content)
-            else:
-                fh.writelines(content)
+            fh.write(content)
 
     @staticmethod
     def _format_value_for_template(v):
@@ -276,7 +264,8 @@ class FileHandler:
         # runs of plain lines become compiled literal/token segments, include
         # lines keep their raw text plus a compiled path for interpolation.
         try:
-            unc_content = self._read_file_lines(unc_path)
+            with open(unc_path, 'r') as fh:
+                unc_content = fh.readlines()
         except FileNotFoundError:
             raise FileOperationError(f"UNC template file not found: {unc_path}")
 
