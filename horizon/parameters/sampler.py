@@ -68,15 +68,13 @@ def ensure_mid_val(p):
         return
 
     lo, hi = p.low_val, p.high_val
-    dist = (p.distribution or "uniform").lower()
-
     if lo == hi:
         p.mid_val = lo
-    elif "triangular" in dist and "log" in dist:
+    elif p.distribution == "log-triangular":
         if lo <= 0 or hi <= 0:
             raise ValueError(f"Log distributions require positive bounds for '{p.token}'. Cannot infer mid_val.")
         p.mid_val = math.sqrt(lo * hi)
-    elif "triangular" in dist:
+    elif p.distribution == "triangular":
         p.mid_val = (lo + hi) / 2.0
     else:
         return
@@ -119,12 +117,12 @@ class ParameterSampler:
         """
         if seed is None:
             return compute()
+
         key = (kind, dim, rows, seed)
-        matrix = self._draw_cache.get(key)
-        if matrix is None:
-            matrix = compute()
-            self._draw_cache[key] = matrix
-        return matrix
+        if key not in self._draw_cache:
+            self._draw_cache[key] = compute()
+
+        return self._draw_cache[key]
 
     def sample_group(self, parameters, num_samples, seed=None):
         """
@@ -231,7 +229,7 @@ class ParameterSampler:
                 base[p.token] = p.default
             elif isinstance(p, ContinuousParameter):
                 # triangular distributions use their (inferred) mid_val, all others the arithmetic midpoint
-                if "triangular" in (p.distribution or "uniform").lower():
+                if "triangular" in p.distribution:
                     ensure_mid_val(p)
                     base[p.token] = p.mid_val
                 else:
@@ -306,7 +304,7 @@ class ParameterSampler:
     # ------------------------------------------------------------------
 
     def _continuous_ppf(self, p, u):
-        dist = (p.distribution or "uniform").lower()
+        dist = p.distribution
         u = float(np.clip(u, 0.0, 1.0))
 
         if dist == "uniform":
