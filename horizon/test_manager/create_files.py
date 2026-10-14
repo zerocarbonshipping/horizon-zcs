@@ -19,7 +19,6 @@ import logging
 import os
 import time
 from itertools import product
-from pathlib import Path
 
 from horizon.file_handler.file_handler import FileHandler, extract_template_tokens, unquoted_default
 from horizon.misc.util import output_sampled_parameters_to_csv
@@ -230,12 +229,11 @@ def create_files(hor_file_path, max_files=None, priority="normal", solver=None,
         sample_only (bool) if we terminated early because SampleOnly=True, otherwise None
     """
     start_time = time.time()
-    hor_path = Path(hor_file_path)
 
     try:
         (unc_file_path, output_path, number_of_samples, scenario_parameters, parameters,
          sampling_method, plot, max_parallel_workers, random_seed, sample_only,
-         exclusion_rules, inclusion_rules) = parse_hor_file(str(hor_path))
+         exclusion_rules, inclusion_rules) = parse_hor_file(str(hor_file_path))
     except Exception as e:
         logger.exception("Failed to parse .hor file '%s': %s", hor_file_path, e)
         raise
@@ -390,18 +388,10 @@ def create_files(hor_file_path, max_files=None, priority="normal", solver=None,
         except Exception:
             logger.exception("Failed to finish queue submission.")
 
-    # Log generated files
-    if logger.isEnabledFor(logging.DEBUG):
-        for path in file_handler.nav_filepaths:
-            logger.debug("Generated NAV file: %s", path)
-
     skip_note = " (%d combination(s) skipped by filters)" % file_handler.skipped_count if file_handler.skipped_count > 0 else ""
     logger.info("Generated %d NAV file(s) in %s%s", len(file_handler.nav_filepaths), output_folder, skip_note)
 
     logger.info("Queued %d navigate command(s)", len(file_handler.commands))
-    if logger.isEnabledFor(logging.DEBUG):
-        for cmd in file_handler.commands:
-            logger.debug("Command: %s", cmd)
 
     # Timing
     end_time = time.time()
