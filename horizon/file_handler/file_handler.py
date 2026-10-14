@@ -392,15 +392,13 @@ class FileHandler:
                             'combo_name': scenario_combination_name,
                         }
 
-        solver_flag = f' --solver {solver}' if solver else ''
-        extra_flags = f' {navigate_flags}' if navigate_flags else ''
         if command_sink is not None:
             command_sink.start(expected_navs)
 
         # Generate NAV files in parallel, consuming the generator on demand
         self._generate_nav_files_parallel(_generate_work_items(), template_program, unc_path,
-                                          command_sink=command_sink,
-                                          solver_flag=solver_flag, extra_flags=extra_flags,
+                                          command_sink=command_sink, solver=solver,
+                                          navigate_flags=navigate_flags,
                                           max_workers=max_workers, output_folder=output_folder)
 
         # After nav files created, prepare command list
@@ -534,7 +532,7 @@ class FileHandler:
         return workers
 
     def _generate_nav_files_parallel(self, work_items, template_program, unc_path,
-                                     command_sink=None, solver_flag='', extra_flags='',
+                                     command_sink=None, solver=None, navigate_flags=None,
                                      max_workers=None, output_folder=None):
         """Generate NAV files using a thread pool for I/O-bound parallelism.
 
@@ -544,11 +542,7 @@ class FileHandler:
         completed .nav's navigate command is submitted immediately, so
         queuing (and the first simulations) overlap generation.
         """
-        if output_folder is not None:
-            max_workers = self._select_worker_count(max_workers, output_folder)
-        elif max_workers is None:
-            max_workers = min(8, os.cpu_count() or 4)
-        max_workers = max(1, max_workers)
+        max_workers = self._select_worker_count(max_workers, output_folder)
         nav_filepaths = []
         future_to_name = {}
 
@@ -572,7 +566,7 @@ class FileHandler:
                         nav_filepaths.append(nav_filepath)
                         if command_sink is not None:
                             command_sink.submit(
-                                self._build_command(nav_filepath, solver_flag, extra_flags))
+                                self._build_command(nav_filepath, solver, navigate_flags))
                         completed += 1
                         if completed % _PROGRESS_HEARTBEAT_INTERVAL == 0:
                             logger.info("File creation progress: %d NAV files generated...", completed)
@@ -707,27 +701,15 @@ class FileHandler:
         return _format_include_line(os.path.relpath(shared_path, realization_folder).replace(os.sep, '/'), indent)
 
     @staticmethod
-    def _build_command(path, solver_flag, extra_flags):
-        """Build one navigate command for a generated .nav file.
-
-        Paths from generation are already absolute (the output folder is
-        absolutized at generation entry); isabs is a pure string check, so
-        the common case pays no per-path abspath round trip.
-        """
-        return 'navigate "{}"{}{}'.format(
-            (path if os.path.isabs(path) else os.path.abspath(path)).replace(os.sep, '/'),
-            solver_flag,
-            extra_flags
-        )
+    def _build_command(path, solver=None, navigate_flags=None):
+        """Build one navigate command for a generated (absolute) .nav path."""
+        solver_flag = f' --solver {solver}' if solver else ''
+        extra_flags = f' {navigate_flags}' if navigate_flags else ''
+        return f'navigate "{path.replace(os.sep, "/")}"{solver_flag}{extra_flags}'
 
     def generate_commands_list(self, solver=None, navigate_flags=None):
         """Generate list of commands to run NavigaTE on all generated .nav files."""
-        solver_flag = f' --solver {solver}' if solver else ''
-        extra_flags = f' {navigate_flags}' if navigate_flags else ''
-        self.commands = [
-            self._build_command(path, solver_flag, extra_flags)
-            for path in self.nav_filepaths
-        ]
+        self.commands = [self._build_command(path, solver, navigate_flags) for path in self.nav_filepaths]
 
     def _process_and_update_include_file(self, include_file_path, replacements, sample_number,
                                          simulation_includes_folder, realization_folder,
