@@ -11,3 +11,10 @@ f46dd6b	ok	6600	1.77	6.48	kept	file_handler: build navigate commands from solver
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01VkXGKVSafWLgrVfrcYHJTL
+6aa4f7f	ok	6546	1.80	6.35	kept	file_handler: one work-item generator for pre-resolved and legacy modes
+
+Both modes now share rule evaluation, labels, naming and counting; work
+items are plain tuples instead of dicts.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01VkXGKVSafWLgrVfrcYHJTL

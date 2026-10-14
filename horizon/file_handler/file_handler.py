@@ -4,6 +4,7 @@
 """Generation of NavigaTE .nav simulation files from .unc templates, with
 %TOKEN% replacement and scenario-combination filtering."""
 
+import collections
 import concurrent.futures
 import hashlib
 import itertools
@@ -266,131 +267,69 @@ class FileHandler:
         template_program = self._compile_template(unc_content)
         self._annotate_include_names(template_program, unc_path)
 
-        # Build adjusted lists of scenario tokens and values:
-        adjusted_scenario_values = []
-        adjusted_scenario_keys = []
-        for scenario in scenario_parameters:
-            if scenario.active:
-                adjusted_scenario_values.append(scenario.values)
-                adjusted_scenario_keys.append(scenario.token)
-            else:
-                # inactive scenario: use default only
-                default_val = scenario.default
-                if isinstance(default_val, str):
-                    default_val = default_val.strip('"').strip("'")
-                adjusted_scenario_values.append([default_val])
-                adjusted_scenario_keys.append(scenario.token)
+        # inactive scenario parameters contribute only their default value
+        scenario_keys = [scenario.token for scenario in scenario_parameters]
+        scenario_values = [
+            scenario.values if scenario.active else [scenario.default.strip('"').strip("'")
+                                                     if isinstance(scenario.default, str) else scenario.default]
+            for scenario in scenario_parameters
+        ]
 
-        # Detect pre-resolved mode: each sample already has all scenario tokens
-        pre_resolved = (
-            bool(adjusted_scenario_keys)
-            and sampled_parameters
-            and all(all(k in s for k in adjusted_scenario_keys) for s in sampled_parameters)
-        )
+        # Pre-resolved mode: each sample already carries all scenario tokens
+        # and yields exactly one NAV; otherwise every scenario combination is
+        # generated for every sample.
+        pre_resolved = bool(scenario_keys) and bool(sampled_parameters) and all(
+            all(k in s for k in scenario_keys) for s in sampled_parameters)
 
-        # Configuration for the scenario-shared include store (read-only
-        # during generation; see the shared_includes parameter).
         self._shared_cfg = {
             'enabled': bool(shared_includes),
             'root': os.path.join(output_folder, "shared_includes"),
-            'scenario_keys': set(adjusted_scenario_keys) | {"SCENARIO"},
+            'scenario_keys': set(scenario_keys) | {"SCENARIO"},
         }
 
         # The include/exclude decision depends only on the scenario
-        # combination, which repeats for every sample - evaluate the rules
-        # once per combination. Doing it up front also yields the expected
-        # realization count, which a streaming command sink needs before the
-        # first submission (the per-task thread env is sized from it).
-        skip_by_combo = {}
+        # combination, so evaluate the rules once per combination. This also
+        # yields the expected realization count, which a streaming command
+        # sink needs before the first submission.
         if pre_resolved:
-            for sample in sampled_parameters:
-                combo_key = tuple(sample[k] for k in adjusted_scenario_keys)
-                if combo_key not in skip_by_combo:
-                    skip_by_combo[combo_key] = should_skip_combination(
-                        dict(zip(adjusted_scenario_keys, combo_key)), exclusion_rules, inclusion_rules)
-            expected_navs = sum(
-                1 for sample in sampled_parameters
-                if not skip_by_combo[tuple(sample[k] for k in adjusted_scenario_keys)])
+            combination_counts = collections.Counter(tuple(s[k] for k in scenario_keys) for s in sampled_parameters)
         else:
-            for combination in itertools.product(*adjusted_scenario_values):
-                skip_by_combo[combination] = should_skip_combination(
-                    dict(zip(adjusted_scenario_keys, combination)), exclusion_rules, inclusion_rules)
-            active_combos = sum(1 for skip in skip_by_combo.values() if not skip)
-            expected_navs = active_combos * len(sampled_parameters)
+            combination_counts = dict.fromkeys(itertools.product(*scenario_values), len(sampled_parameters))
+        skip_by_combo = {
+            combination: should_skip_combination(dict(zip(scenario_keys, combination)), exclusion_rules, inclusion_rules)
+            for combination in combination_counts
+        }
+        expected_navs = sum(n for combination, n in combination_counts.items() if not skip_by_combo[combination])
+        self.skipped_count += sum(skip_by_combo.values())
+        labels = {combination: get_scenario_label(dict(zip(scenario_keys, combination)), inclusion_rules)
+                  for combination in combination_counts}
 
-        # Generate work items lazily using a generator to avoid
-        # materializing all realizations in memory at once
         def _generate_work_items():
             if pre_resolved:
-                logger.debug("Samples appear pre-resolved with scenario tokens; generating one NAV per sample.")
-                for sample_idx, sample in enumerate(sampled_parameters, start=1):
-                    scenario_dict = {k: sample[k] for k in adjusted_scenario_keys}
-
-                    if skip_by_combo[tuple(scenario_dict.values())]:
-                        logger.debug("Skipping scenario combination %s (filtered by inclusion/exclusion rules)", scenario_dict)
-                        self.skipped_count += 1
-                        continue
-
-                    scenario_label = sample.get("SCENARIO")
-                    if scenario_label is not None:
-                        scenario_combination_name = scenario_label
-                    else:
-                        scenario_combination_name = '_'.join(str(scenario_dict[k]) for k in adjusted_scenario_keys)
-
-                    sample_name = sample.get("sample", f"sample_{sample_idx}")
-                    sample_number_for_includes = sample_idx
-                    sample_suffix = sample_name
-
-                    if isinstance(sample_name, str) and sample_name.startswith("sample_"):
-                        try:
-                            n = int(sample_name.split("_", 1)[1])
-                            sample_suffix = f"sample{n:03d}"
-                            sample_number_for_includes = n
-                        except Exception:
-                            sample_suffix = sample_name
-                            sample_number_for_includes = sample_idx
-
-                    realization_folder_name = f"{scenario_combination_name}_{sample_suffix}"
-                    realization_folder = os.path.join(output_folder, realization_folder_name)
-
-                    yield {
-                        'sample': sample,
-                        'simulation_name': realization_folder_name,
-                        'scenario_dict': scenario_dict,
-                        'realization_folder': realization_folder,
-                        'sample_number': sample_number_for_includes,
-                        'combo_name': scenario_combination_name,
-                    }
-
+                rows = ((tuple(s[k] for k in scenario_keys), i, s) for i, s in enumerate(sampled_parameters, 1))
             else:
-                # Legacy behaviour: expand scenario combinations lazily
-                for combination in itertools.product(*adjusted_scenario_values):
-                    scenario_dict = dict(zip(adjusted_scenario_keys, combination))
+                rows = ((c, i, s) for c in combination_counts for i, s in enumerate(sampled_parameters, 1))
 
-                    if skip_by_combo[combination]:
-                        logger.debug("Skipping scenario combination %s (filtered by inclusion/exclusion rules)", scenario_dict)
-                        self.skipped_count += 1
-                        continue
+            for combination, sample_idx, sample in rows:
+                if skip_by_combo[combination]:
+                    continue
 
-                    label = get_scenario_label(scenario_dict, inclusion_rules)
-                    if label is not None:
-                        scenario_dict["SCENARIO"] = label
-                        scenario_combination_name = label
-                    else:
-                        scenario_combination_name = '_'.join(str(x) for x in combination)
+                scenario_dict = dict(zip(scenario_keys, combination))
+                label = labels[combination]
+                if label is not None:
+                    scenario_dict["SCENARIO"] = label
+                combo_name = label if label is not None else '_'.join(str(v) for v in combination)
 
-                    for sample_idx, sample in enumerate(sampled_parameters, start=1):
-                        realization_folder_name = f"{scenario_combination_name}_sample{sample_idx:03d}"
-                        realization_folder = os.path.join(output_folder, realization_folder_name)
+                sample_suffix = sample_name = sample.get("sample", f"sample_{sample_idx}")
+                sample_number = sample_idx
+                if isinstance(sample_name, str) and sample_name.startswith("sample_"):
+                    try:
+                        sample_number = int(sample_name.split("_", 1)[1])
+                        sample_suffix = f"sample{sample_number:03d}"
+                    except ValueError:
+                        sample_number = sample_idx
 
-                        yield {
-                            'sample': sample,
-                            'simulation_name': realization_folder_name,
-                            'scenario_dict': scenario_dict,
-                            'realization_folder': realization_folder,
-                            'sample_number': sample_idx,
-                            'combo_name': scenario_combination_name,
-                        }
+                yield sample, f"{combo_name}_{sample_suffix}", scenario_dict, sample_number, combo_name
 
         if command_sink is not None:
             command_sink.start(expected_navs)
@@ -548,14 +487,9 @@ class FileHandler:
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             for item in work_items:
-                future = executor.submit(
-                    self._generate_nav_file_for_sample,
-                    unc_path, template_program,
-                    item['sample'], item['simulation_name'],
-                    item['scenario_dict'], item['realization_folder'],
-                    item['sample_number'], item['combo_name']
-                )
-                future_to_name[future] = item['simulation_name']
+                future = executor.submit(self._generate_nav_file_for_sample, unc_path, template_program,
+                                         *item, output_folder)
+                future_to_name[future] = item[1]
 
             completed = 0
             for future in concurrent.futures.as_completed(future_to_name):
@@ -576,13 +510,13 @@ class FileHandler:
         self.nav_filepaths = nav_filepaths
 
     def _generate_nav_file_for_sample(self, unc_path, template_program, sample, simulation_name,
-                                      scenario_parameters, realization_folder, sample_number,
-                                      combo_name=None):
+                                      scenario_parameters, sample_number, combo_name, output_folder):
         """
         Create one .nav file for a given sample + scenario.
         - Copies & replaces tokens in included .inc files when needed into simulation_includes/
         - Returns the nav filepath on success, or None on failure.
         """
+        realization_folder = os.path.join(output_folder, simulation_name)
         os.makedirs(realization_folder, exist_ok=True)
         # simulation_includes/ is created lazily and at most once per
         # realization - on network filesystems every extra makedirs is a
