@@ -103,6 +103,16 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   template's own indentation.
 - Include-line detection is word-boundary aware, so an attribute such as
   `IncludeRate = 5` is no longer mistaken for an include directive.
+- `.hor` parsing strips trailing `#` comments (a `#` inside a quoted string is
+  kept). Before, only full-line comments were removed, so a trailing comment
+  containing the word `if` (e.g. `default = 0.5  # if needed`) was parsed as
+  an override header and broke the parameter.
+- Base parameter fields (`low_val`, `mid_val`, `default`, `distribution`,
+  `decimals`, `values`, ...) are read only outside `if ... { ... }` override
+  blocks. Before, a field missing from the base but set in an override was
+  silently taken as the base value; a missing required field now raises the
+  missing-field error. Attribute patterns also match whole keys only
+  (`xname =` no longer matches `name`).
 
 ## [1.0.1] - 2026-10-13
 
