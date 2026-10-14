@@ -647,34 +647,23 @@ def _build_summary_tables(runs, data_by_folder, param_defaults):
         {regulation: pd.DataFrame} where rows = param_token, cols = param_value,
         values = final-year TotalEquivalentWTW.
     """
-    groups = defaultdict(list)
+    groups = defaultdict(lambda: defaultdict(list))
     for run in runs:
-        groups[run.regulation].append(run)
+        groups[run.regulation][run.param_token].append(run)
 
     summaries = {}
-
-    for regulation, reg_runs in sorted(groups.items()):
-        # Group by param_token
-        by_param = defaultdict(list)
-        for run in reg_runs:
-            by_param[run.param_token].append(run)
-
+    for regulation, by_param in sorted(groups.items()):
         rows = []
-        for param_token in sorted(by_param.keys()):
-            param_runs = sorted(by_param[param_token], key=lambda r: _safe_float(r.param_value))
+        for param_token, param_runs in sorted(by_param.items()):
             row = {"parameter": param_token}
-            for run in param_runs:
+            for run in sorted(param_runs, key=lambda r: _safe_float(r.param_value)):
                 report = data_by_folder.get(run.folder_name)
                 if report and "TotalEquivalentWTW" in report:
-                    df = report["TotalEquivalentWTW"]
-                    final_val = df.iloc[-1, 0]
-                    is_def = str(run.param_value) == str(param_defaults.get(param_token))
-                    label = f"{run.param_value}{'*' if is_def else ''}"
-                    row[label] = final_val
+                    is_default = str(run.param_value) == str(param_defaults.get(param_token))
+                    row[f"{run.param_value}{'*' if is_default else ''}"] = report["TotalEquivalentWTW"].iloc[-1, 0]
             rows.append(row)
 
-        if rows:
-            summaries[regulation] = pd.DataFrame(rows).set_index("parameter")
+        summaries[regulation] = pd.DataFrame(rows).set_index("parameter")
 
     return summaries
 
