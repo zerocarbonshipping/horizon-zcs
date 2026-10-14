@@ -750,118 +750,106 @@ def _write_dashboard(figures, summaries, output_path, fuel_share_figures, recomm
     logger.info("Dashboard written to %s", output_path)
 
 
-def _render_recommendations_html(recommendations, round2_grids=None):
+_CONFIDENCE_STYLES = {
+    "HIGH": "background:#eefae8;border:2px solid #286464;color:#23464b",
+    "MEDIUM": "background:#fcf8e4;border:2px solid #a2703c;color:#a2703c",
+    "LOW": "background:#ffeeea;border:2px solid #804040;color:#804040",
+}
+
+_ROUND2_RATIONALES = {
+    "fleet_inertia": "Coarse below 0.5, fine grid 0.5\u20130.9 where behavior changes",
+    "bunkering_inertia": "Coarse low end, dense 0.5\u20130.9",
+    "fleet_beta": "Full range; 0.5 kept as outlier reference",
+    "producer_inertia": "Coarse low end, denser toward 1",
+    "producer_inter_beta": "Coarse grid confirms insensitivity",
+    "producer_intra_beta": "Coarse grid confirms insensitivity",
+}
+
+_SCORE_BAR_STYLES = {
+    "sensitivity": ("Sensitivity", "#2c4068"),
+    "monotonicity": ("Monotonicity", "#3c5e86"),
+    "cross_scenario": ("Cross-scenario", "#68a4c2"),
+    "fuel_share_realism": ("Fuel share realism", "#286464"),
+    "smoothness": ("Smoothness", "#96c8e4"),
+}
+
+
+def _render_recommendations_html(recommendations, round2_grids):
     """Render the Recommendations tab content as HTML."""
-    _CONF_STYLES = {
-        "HIGH": ("background:#eefae8;border:2px solid #286464;color:#23464b", "HIGH"),
-        "MEDIUM": ("background:#fcf8e4;border:2px solid #a2703c;color:#a2703c", "MEDIUM"),
-        "LOW": ("background:#ffeeea;border:2px solid #804040;color:#804040", "LOW"),
-    }
-
-    parts = []
-
-    # Parameter cards
-    parts.append(
+    parts = [
         '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(380px,1fr));gap:16px;margin-bottom:24px;">'
-    )
+    ]
     for rec in recommendations:
-        style, label = _CONF_STYLES.get(rec.confidence, _CONF_STYLES["LOW"])
-        bd = rec.scores_breakdown
-
-        # Score bar: simple inline SVG bars
-        bar_html = _render_score_bars(bd)
+        badge_style = _CONFIDENCE_STYLES[rec.confidence]
+        # the card template ends in a literal "# noqa: E122" that is part of the rendered output
+        review_note = ""
+        if rec.confidence == "LOW":
+            review_note = (
+                '<div style="margin-top:8px;padding:6px 10px;background:#ffeeea;border-radius:6px;'
+                'font-size:12px;color:#804040;">'
+                'Needs human review — low confidence in automated recommendation</div>'
+            )
 
         parts.append(f'''<div class="param-section" style="margin-bottom:0;">
   <h3 style="margin-bottom:8px;">{rec.param_token.replace('_', ' ').title()}</h3>
   <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;">
     <span style="font-size:28px;font-weight:700;color:#2c4068;">{rec.recommended_value}</span>
-    <span style="padding:4px 12px;border-radius:12px;font-size:13px;font-weight:600;{style}">{label}</span>
+    <span style="padding:4px 12px;border-radius:12px;font-size:13px;font-weight:600;{badge_style}">{rec.confidence}</span>
     <span style="color:#888;font-size:13px;">default: {rec.current_default}</span>
   </div>
   <div style="font-size:13px;color:#585858;margin-bottom:6px;">
-    Aggregate: <strong>{bd.get("aggregate", 0):.2f}</strong>
+    Aggregate: <strong>{rec.scores_breakdown.get("aggregate", 0):.2f}</strong>
   </div>
-  {bar_html}
-  {('<div style="margin-top:8px;padding:6px 10px;background:#ffeeea;border-radius:6px;font-size:12px;color:#804040;">'
-    'Needs human review — low confidence in automated recommendation</div>')  # noqa: E122
-    if rec.confidence == "LOW" else ""}  # noqa: E122
+  {_render_score_bars(rec.scores_breakdown)}
+  {review_note}  # noqa: E122
 </div>''')
 
     parts.append("</div>")  # grid
 
-    # Round 2 discretization table
-    if round2_grids:
-        parts.append('<div class="param-section">')
-        parts.append("<h3>Suggested Round 2 Discretization</h3>")
-        parts.append('<table style="border-collapse:collapse;width:100%;font-size:14px;">')
-        parts.append('<tr style="background:#2c4068;color:white;">'
-                     '<th style="padding:8px 12px;text-align:left;">Parameter</th>'
-                     '<th style="padding:8px 12px;text-align:left;">Values</th>'
-                     '<th style="padding:8px 12px;text-align:center;">Count</th>'
-                     '<th style="padding:8px 12px;text-align:left;">Rationale</th></tr>')
+    parts.append('<div class="param-section">')
+    parts.append("<h3>Suggested Round 2 Discretization</h3>")
+    parts.append('<table style="border-collapse:collapse;width:100%;font-size:14px;">')
+    parts.append('<tr style="background:#2c4068;color:white;">'
+                 '<th style="padding:8px 12px;text-align:left;">Parameter</th>'
+                 '<th style="padding:8px 12px;text-align:left;">Values</th>'
+                 '<th style="padding:8px 12px;text-align:center;">Count</th>'
+                 '<th style="padding:8px 12px;text-align:left;">Rationale</th></tr>')
 
-        _RATIONALES = {
-            "fleet_inertia": "Coarse below 0.5, fine grid 0.5\u20130.9 where behavior changes",
-            "bunkering_inertia": "Coarse low end, dense 0.5\u20130.9",
-            "fleet_beta": "Full range; 0.5 kept as outlier reference",
-            "producer_inertia": "Coarse low end, denser toward 1",
-            "producer_inter_beta": "Coarse grid confirms insensitivity",
-            "producer_intra_beta": "Coarse grid confirms insensitivity",
-        }
+    total_sims = 0
+    for pt, vals in sorted(round2_grids.items()):
+        vals_str = ", ".join(str(v) for v in vals)
+        total_sims += len(vals)
+        parts.append(f'<tr style="border-bottom:1px solid #dcdcdc;">'
+                     f'<td style="padding:8px 12px;font-weight:500;">{pt}</td>'
+                     f'<td style="padding:8px 12px;">{vals_str}</td>'
+                     f'<td style="padding:8px 12px;text-align:center;">{len(vals)}</td>'
+                     f'<td style="padding:8px 12px;color:#585858;">{_ROUND2_RATIONALES.get(pt, "")}</td></tr>')
 
-        total_sims = 0
-        for pt, vals in sorted(round2_grids.items()):
-            vals_str = ", ".join(str(v) for v in vals)
-            n = len(vals)
-            total_sims += n
-            rationale = _RATIONALES.get(pt, "")
-            parts.append(f'<tr style="border-bottom:1px solid #dcdcdc;">'
-                         f'<td style="padding:8px 12px;font-weight:500;">{pt}</td>'
-                         f'<td style="padding:8px 12px;">{vals_str}</td>'
-                         f'<td style="padding:8px 12px;text-align:center;">{n}</td>'
-                         f'<td style="padding:8px 12px;color:#585858;">{rationale}</td></tr>')
+    n_scenarios = 3
+    parts.append(f'<tr style="background:#f2f2f2;font-weight:600;">'
+                 f'<td style="padding:8px 12px;" colspan="2">Total simulations '
+                 f'({total_sims} values \u00d7 {n_scenarios} scenarios)</td>'
+                 f'<td style="padding:8px 12px;text-align:center;">{total_sims * n_scenarios}</td>'
+                 f'<td></td></tr>')
 
-        n_scenarios = 3
-        parts.append(f'<tr style="background:#f2f2f2;font-weight:600;">'
-                     f'<td style="padding:8px 12px;" colspan="2">Total simulations '
-                     f'({total_sims} values \u00d7 {n_scenarios} scenarios)</td>'
-                     f'<td style="padding:8px 12px;text-align:center;">{total_sims * n_scenarios}</td>'
-                     f'<td></td></tr>')
-
-        parts.append("</table>")
-        parts.append("</div>")
+    parts.append("</table>")
+    parts.append("</div>")
 
     return "\n".join(parts)
 
 
 def _render_score_bars(scores_breakdown):
     """Render horizontal score bars as inline HTML."""
-    _SCORE_COLORS = {
-        "sensitivity": "#2c4068",
-        "monotonicity": "#3c5e86",
-        "cross_scenario": "#68a4c2",
-        "fuel_share_realism": "#286464",
-        "smoothness": "#96c8e4",
-    }
-    _SCORE_LABELS = {
-        "sensitivity": "Sensitivity",
-        "monotonicity": "Monotonicity",
-        "cross_scenario": "Cross-scenario",
-        "fuel_share_realism": "Fuel share realism",
-        "smoothness": "Smoothness",
-    }
-
     parts = ['<div style="font-size:12px;">']
     for key in _SCORE_WEIGHTS:
+        label, color = _SCORE_BAR_STYLES[key]
         val = scores_breakdown.get(key, 0)
-        color = _SCORE_COLORS.get(key, "#888")
-        label = _SCORE_LABELS.get(key, key)
-        pct = max(0, min(100, val * 100))
         parts.append(
             f'<div style="display:flex;align-items:center;gap:6px;margin-bottom:3px;">'
             f'<span style="width:110px;text-align:right;color:#585858;">{label}</span>'
             f'<div style="flex:1;background:#f2f2f2;border-radius:3px;height:14px;">'
-            f'<div style="width:{pct:.0f}%;background:{color};height:100%;border-radius:3px;"></div>'
+            f'<div style="width:{max(0, min(100, val * 100)):.0f}%;background:{color};'
+            f'height:100%;border-radius:3px;"></div>'
             f'</div>'
             f'<span style="width:36px;color:#585858;">{val:.2f}</span>'
             f'</div>'
@@ -870,19 +858,25 @@ def _render_score_bars(scores_breakdown):
     return "\n".join(parts)
 
 
+def _heat_color(norm):
+    """Map 0 (best) .. 1 (worst) to a green-yellow-red rgb() string."""
+    if norm < 0.5:
+        t, start, end = norm * 2, (238, 250, 232), (250, 230, 170)
+    else:
+        t, start, end = (norm - 0.5) * 2, (250, 230, 170), (128, 64, 64)
+    r, g, b = (int(a + (z - a) * t) for a, z in zip(start, end))
+    return f"rgb({r},{g},{b})"
+
+
 def _render_summary_table(summary_data):
-    """Render per-parameter summary as an HTML table with colored cells.
+    """Render per-parameter final-year values as an HTML table with colored cells.
 
     Parameters
     ----------
-    summary_data : dict
-        {param_token: list[dict]} where each dict has 'label', 'value', 'is_default'.
-        Or pd.DataFrame with param_token as index.
-
-    Returns colored HTML table where each parameter row has its own values.
+    summary_data : pd.DataFrame
+        Rows = param_token, columns = "{value}" or "{value}*" (default); NaN where
+        a value does not apply to that parameter.
     """
-    # summary_data is a DataFrame: rows = param_token, cols = "{value}" or "{value}*"
-    # But columns differ per row (NaN for non-applicable). Restructure.
     parts = ['<table style="border-collapse:collapse;width:100%;font-size:14px;">']
     parts.append('<tr style="background:#2c4068;color:white;">'
                  '<th style="padding:8px 16px;text-align:left;">Parameter</th>'
@@ -895,29 +889,12 @@ def _render_summary_table(summary_data):
             continue
 
         values = [(col, float(val)) for col, val in row.items()]
-        if not values:
-            continue
-
-        vals_only = [v for _, v in values]
-        v_min, v_max = min(vals_only), max(vals_only)
+        v_min = min(val for _, val in values)
+        v_max = max(val for _, val in values)
         v_range = v_max - v_min if v_max > v_min else 1.0
 
         cells_html = []
         for label, val in values:
-            # Normalize 0 (best/green) to 1 (worst/red)
-            norm = (val - v_min) / v_range if v_range > 0 else 0.5
-            # Interpolate green -> yellow -> red
-            if norm < 0.5:
-                r = int(238 + (250 - 238) * norm * 2)
-                g = int(250 + (230 - 250) * norm * 2)
-                b = int(232 + (170 - 232) * norm * 2)
-            else:
-                t = (norm - 0.5) * 2
-                r = int(250 + (128 - 250) * t)
-                g = int(230 + (64 - 230) * t)
-                b = int(170 + (64 - 170) * t)
-            bg = f"rgb({r},{g},{b})"
-
             fmt_val = f"{val:.2e}" if abs(val) >= 1e6 else f"{val:.1f}"
             is_default = label.endswith("*")
             border = "3px solid #2c4068" if is_default else "1px solid #dcdcdc"
@@ -925,7 +902,7 @@ def _render_summary_table(summary_data):
 
             cells_html.append(
                 f'<span style="display:inline-block;padding:6px 12px;margin:2px;'
-                f'border-radius:4px;background:{bg};border:{border};'
+                f'border-radius:4px;background:{_heat_color((val - v_min) / v_range)};border:{border};'
                 f'font-weight:{font_weight};font-size:12px;">'
                 f'{label}<br>{fmt_val}</span>'
             )
