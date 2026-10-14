@@ -4,8 +4,9 @@
 #
 # One autoresearch evaluation of the Horizon checkout this script lives in.
 # Gates: tests, lint, byte-identical output against the golden snapshot.
-# Metrics: LOC of horizon/, CLI import time, generation wall time.
-# Prints one TSV line: status loc import_s gen_s  (status = ok | FAIL:<gate>)
+# Metrics: LOC of horizon/, CLI import time, generation wall time of the
+# synthetic study and of the full production IMO study (3 000 realizations).
+# Prints one TSV line: status loc import_s gen_s imo_s  (status = ok | FAIL:<gate>)
 #
 #   tools/autoresearch/eval.sh            evaluate this checkout
 #   tools/autoresearch/eval.sh --golden   (re)write the golden snapshot from this checkout
@@ -18,7 +19,7 @@ WORK=$(mktemp -d "${TMPDIR:-/tmp}/ar_eval.XXXX")
 LOG=$WORK/eval.log
 trap 'rm -rf "$WORK"' EXIT
 export PYTHONPATH=$REPO PATH=$FIX/stubbin:$PATH HORIZON_TASK_ENV=PUEUE_STUB_LOG
-fail() { echo -e "FAIL:$1\t-\t-\t-"; tail -40 "$LOG" >&2; exit 1; }
+fail() { echo -e "FAIL:$1\t-\t-\t-\t-"; tail -40 "$LOG" >&2; exit 1; }
 
 cd "$REPO"
 if [[ ${1:-} != --golden ]]; then
@@ -56,6 +57,11 @@ print(f"{min(ts):.2f}")
 PY
 }
 imp=$(best python -c "import horizon.__main__") || fail import_time
-cd "$WORK/synth"; export PUEUE_STUB_LOG=/dev/null
-gen=$(best python -m horizon study.hor --pueue-cli --output-dir "$WORK/t_out") || fail gen_time
-echo -e "ok\t$loc\t$imp\t$gen"
+# Timed runs write to tmpfs when available: disk noise otherwise swamps 10 % effects.
+OUT=$(mktemp -d "$( [[ -d /dev/shm ]] && echo /dev/shm || echo "$WORK" )/ar_out.XXXX"); trap 'rm -rf "$WORK" "$OUT"' EXIT
+export PUEUE_STUB_LOG=/dev/null
+cd "$WORK/synth"
+gen=$(best python -m horizon study.hor --pueue-cli --output-dir "$OUT/synth") || fail gen_time
+cp -r "$FIX/imo_full" "$WORK/imo_full" && cd "$WORK/imo_full/october"
+imo=$(best python -m horizon run.hor --pueue-cli --output-dir "$OUT/imo") || fail imo_time
+echo -e "ok\t$loc\t$imp\t$gen\t$imo"

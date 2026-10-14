@@ -19,13 +19,23 @@ for the synthetic 2 000-realization study and the production IMO October study.
 
 | | dev base | after round 1 |
 |---|---|---|
-| `horizon/` LOC (non-blank, non-comment) | 6 790 | 5 432 (-20 %) |
+| `horizon/` LOC (non-blank, non-comment) | 6 790 | 5 444 (-20 %) |
 | `horizon/` raw lines | 9 023 | 7 194 |
 | `import horizon.__main__` / `horizon --help` | 1.38 s / 1.41 s | 0.17 s / 0.16 s |
-| synthetic study, 2 000 realizations | 5.66 s | 5.76 s (same; I/O bound) |
-| IMO October study, 10 x 300 realizations | IMO_BASE | IMO_NEW |
+| `horizon study.hor`, synthetic, 2 000 realizations | 5.26 s | 4.35 s (-17 %) |
+| `horizon run.hor`, IMO October, 10 x 300 realizations (54 000 files) | 12.96 s | 11.61 s (-10 %) |
 
-Timings are best of 5 on a 4-CPU container with nothing else running.
+End-to-end CLI wall time, best of 3, 4-CPU container, nothing else running,
+output on tmpfs, queue through the recording pueue stub.
+
+**Regression caught after merging.** The merged tracks first made the IMO study
+about 10 % *slower* (pure generation 10.1 s vs 11.1 s) while the synthetic
+eval study showed no change. Profiling found two simplifications that cost
+per-file time: `pathlib.Path(...).write_text` (about 30 us per file) and
+dropping the include-relpath cache (two `getcwd` calls per include per
+realization). Commit 24a1a71 restores plain `open()` writes and a 4-line
+cached relpath. The eval now also times the full IMO study (`imo_s`) so the
+next round cannot miss this kind of regression.
 
 | Track | Kept commits | Discarded | Main changes |
 |---|---|---|---|

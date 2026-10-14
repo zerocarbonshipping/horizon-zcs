@@ -13,7 +13,7 @@ identical output*.
 
 ## The evaluation (`eval.sh`)
 
-One command, one TSV line: `status  loc  import_s  gen_s`.
+One command, one TSV line: `status  loc  import_s  gen_s  imo_s`.
 
 Gates (any failure means discard):
 
@@ -30,12 +30,17 @@ Metrics (lower is better):
 - `loc`: non-blank, non-comment lines in `horizon/`.
 - `import_s`: best-of-3 time to `import horizon.__main__` (CLI startup).
 - `gen_s`: best-of-3 wall time of `horizon study.hor` on the synthetic study.
+- `imo_s`: best-of-3 wall time of the full production IMO study (10 policies x
+  300 samples, about 54 000 files). Round 1 showed why it is needed: the
+  synthetic study has few includes per realization and hid a 10 % per-file
+  regression that the real study exposed.
 
 Fixture setup (once per machine, from a checkout of the baseline commit):
 
 ```bash
 python tools/benchmark/make_study.py $AR_FIXTURES/synth --preset medium --fresh
 cp -r <simulations>/production/2026_imo $AR_FIXTURES/imo   # set NumberOfSamples = 10
+cp -r <simulations>/production/2026_imo $AR_FIXTURES/imo_full   # unchanged, timing only
 mkdir $AR_FIXTURES/stubbin && cp tools/benchmark/pueue-stub $AR_FIXTURES/stubbin/pueue
 tools/autoresearch/eval.sh --golden
 ```
@@ -48,12 +53,12 @@ tools/autoresearch/eval.sh --golden
 3. Run `tools/autoresearch/eval.sh`.
 4. **Keep** (commit, one commit per experiment, message says what and why)
    if every gate passes and either:
-   - `loc` went down and `import_s`/`gen_s` did not regress beyond noise
+   - `loc` went down and no timing metric regressed beyond noise
      (about 5 %), or
    - a timing metric improved clearly and `loc` grew only a little.
    Otherwise **discard** (`git checkout -- . && git clean -fd horizon tests`).
 5. Append a line to `tools/autoresearch/results/<track>.tsv`:
-   `commit  status  loc  import_s  gen_s  kept|discarded  description`
+   `commit  status  loc  import_s  gen_s  imo_s  kept|discarded  description`
    (commit is `-` for discarded attempts). Commit the log with each kept change.
 6. Repeat. Stop when ideas run out or several attempts in a row fail.
 
