@@ -108,34 +108,21 @@ def _parse_conditions(cond_text):
     return conditions
 
 
+# key = value, where value is a bracketed list, a quoted string, or a bare token/number/TRUE/FALSE
+_kv_re = re.compile(r'([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(\[[^]]*]|".*?"|\'.*?\'|[^\s,}]+)', flags=re.S)
+
+
 def _parse_kv_block(body_text):
     """
-    Parse key=value pairs inside an override block body.
-
-    Supports:
-      - key = value
-      - key = "quoted string"
-      - key = [v1, v2, ...]  # list of literals
-
-    Values are coerced via _coerce_literal().
+    Parse key=value pairs inside an override block body; values (or the items of a
+    `[v1, v2, ...]` list) are coerced via _coerce_literal().
     """
     kv = {}
-    # Match key = value where value may be:
-    #   - bracketed list: [ ... ]
-    #   - quoted string
-    #   - bare token/number/TRUE/FALSE
-    kv_pattern = re.compile(r'([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(\[[^]]*]|".*?"|\'.*?\'|[^\s,}]+)', flags=re.S)
-    for m in kv_pattern.finditer(body_text):
-        key = m.group(1)
-        raw = m.group(2).strip()
-        # list
+    for m in _kv_re.finditer(body_text):
+        key, raw = m.group(1), m.group(2).strip()
         if raw.startswith('[') and raw.endswith(']'):
             inner = raw[1:-1].strip()
-            if inner == '':
-                kv[key] = []
-            else:
-                items = [item.strip() for item in inner.split(',')]
-                kv[key] = [_coerce_literal(item) for item in items]
+            kv[key] = [_coerce_literal(item) for item in inner.split(',')] if inner else []
         else:
             kv[key] = _coerce_literal(raw)
     return kv
