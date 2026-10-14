@@ -196,7 +196,7 @@ values are replaced with `%TOKEN%` placeholders. Horizon writes one `.nav`
 file per sample/scenario combination, substituting each token with the
 sampled value. `Include` directives referencing `.inc` files are processed
 the same way, so tokens work across included files too. Write the directive as `Include`;
-the old all-caps `INCLUDE` is rejected with an error naming the file and line. Refer to the
+any other spelling (`INCLUDE`, `include`, ...) is rejected with an error naming the file and line. Refer to the
 [Navigate documentation](https://zerocarbonshipping.github.io/navigate-zcs/)
 for the simulation file format itself.
 

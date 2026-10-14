@@ -393,20 +393,27 @@ class TestSharedIncludeStore:
 
 
 class TestLegacyIncludeRejected:
-    """The old all-caps INCLUDE is an error naming the file and line."""
+    """An include directive not spelled `Include` is an error naming the file and line."""
 
     def test_generation_raises_with_file_and_line(self, tmp_path):
         _write(tmp_path / "inc" / "plain.inc", 'Vessel "a" {\n    Length = 300\n}\n')
         unc = _write(tmp_path / "legacy.unc",
                      'DEFINE {\n\tInclude "inc/plain.inc"\n\tINCLUDE "inc/plain.inc"\n}\n')
 
-        with pytest.raises(FileOperationError, match=r"legacy\.unc:3: .*write `Include`"):
+        with pytest.raises(FileOperationError, match=r"legacy\.unc:3: write the include directive as `Include`"):
             _generate(unc, tmp_path / "out", [{"sample": 1}])
 
     def test_token_extraction_raises_too(self, tmp_path):
         unc = _write(tmp_path / "legacy.unc", 'DEFINE {\n\tINCLUDE "inc/tokened.inc"\n}\n')
 
         with pytest.raises(FileOperationError, match=r"legacy\.unc:2: "):
+            extract_template_tokens(str(unc))
+
+    @pytest.mark.parametrize("spelling", ["include", "INCLUDE", "InClUdE"])
+    def test_any_other_spelling_raises(self, tmp_path, spelling):
+        unc = _write(tmp_path / "t.unc", f'DEFINE {{\n\t{spelling} "inc/a.inc"\n}}\n')
+
+        with pytest.raises(FileOperationError, match=r"t\.unc:2: "):
             extract_template_tokens(str(unc))
 
     def test_non_include_lines_are_left_alone(self, tmp_path):

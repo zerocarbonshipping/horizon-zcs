@@ -90,7 +90,7 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   `horizon --pueue-cli` forces the CLI path outright.
 
 ### Removed
-- All-caps `INCLUDE` in `.unc` templates is no longer normalized to `Include`;
+- Include directives not spelled `Include` (`INCLUDE`, `include`, ...) in `.unc` templates are no longer normalized;
   generation and token extraction now fail with an error naming the file and
   line. Write `Include`.
 - Network-filesystem latency probe and adaptive generation pool size: the

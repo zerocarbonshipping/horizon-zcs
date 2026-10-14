@@ -72,7 +72,7 @@ rules.
 ### File handler (`horizon/file_handler/`)
 
 Generates `.nav` files from the `.unc` template: processes `Include`
-directives (tokenizing `.inc` files as well; the old all-caps `INCLUDE` is an
+directives (tokenizing `.inc` files as well; any spelling other than `Include` is an
 error), replaces `%TOKEN%`
 placeholders with sampled values, creates one directory per realization, and
 writes scenario-only include rewrites once per scenario combination to

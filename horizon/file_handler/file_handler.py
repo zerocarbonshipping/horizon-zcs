@@ -23,8 +23,8 @@ _TOKEN_RE = re.compile(r'%([A-Za-z0-9_]+)%')
 # Include directive at the start of a line, e.g. `    Include "includes/a.inc"`.
 _INCLUDE_LINE_RE = re.compile(r'^\s*Include\b')
 
-# The legacy all-caps spelling, which Navigate rejects and Horizon no longer rewrites.
-_LEGACY_INCLUDE_RE = re.compile(r'^\s*INCLUDE\b')
+# Any other spelling (`INCLUDE`, `include`, ...): Navigate rejects it and Horizon no longer rewrites it.
+_LEGACY_INCLUDE_RE = re.compile(r'^\s*(?!(?-i:Include)\b)include\b', re.IGNORECASE)
 
 # Spelling Navigate's grammar accepts for the deck-level include directive.
 # Navigate parses `Include` in Title case only; anything else is a deck syntax
@@ -43,7 +43,7 @@ def _is_include_line(line):
 
 
 def _read_template(unc_path):
-    """Read a .unc template's lines; reject the unsupported all-caps `INCLUDE` spelling."""
+    """Read a .unc template's lines; reject include directives not spelled `Include`."""
     try:
         with open(unc_path, 'r') as fh:
             lines = fh.readlines()
@@ -53,7 +53,7 @@ def _read_template(unc_path):
     for line_number, line in enumerate(lines, start=1):
         if _LEGACY_INCLUDE_RE.match(line):
             raise FileOperationError(
-                f"{unc_path}:{line_number}: all-caps INCLUDE is no longer supported; write `Include`: "
+                f"{unc_path}:{line_number}: write the include directive as `Include` (Navigate's spelling): "
                 f"{line.strip()}")
     return lines
 
