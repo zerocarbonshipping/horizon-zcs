@@ -12,7 +12,6 @@ exceptions when validation fails. All validators follow a consistent pattern:
 """
 
 import os
-from typing import Any, Collection
 
 from horizon.exceptions import FileOperationError, ValidationError
 
@@ -37,75 +36,6 @@ def validate_file_exists(path: str, context: str = "") -> None:
     if not os.path.isfile(path):
         context_msg = f" ({context})" if context else ""
         raise FileOperationError(f"Path exists but is not a file{context_msg}: {path}")
-
-
-def validate_numeric_range(
-    value: float,
-    min_val: float,
-    max_val: float,
-    name: str,
-    context: str = ""
-) -> None:
-    """Validate that a numeric value is within a specified range.
-
-    Args:
-        value: The value to validate
-        min_val: Minimum allowed value (inclusive)
-        max_val: Maximum allowed value (inclusive)
-        name: Descriptive name of the parameter for error messages
-        context: Optional context string for error message
-
-    Raises:
-        ValidationError: If value is outside the specified range
-
-    Example:
-        >>> validate_numeric_range(50.0, 0.0, 100.0, "temperature", "parameter validation")
-    """
-    if not (min_val <= value <= max_val):
-        context_msg = f" ({context})" if context else ""
-        raise ValidationError(
-            f"{name}{context_msg} value {value} is outside valid range [{min_val}, {max_val}]"
-        )
-
-
-def validate_non_empty(collection: Collection, name: str, context: str = "") -> None:
-    """Validate that a collection is non-empty.
-
-    Args:
-        collection: The collection to check (list, set, dict, etc.)
-        name: Descriptive name of the collection for error messages
-        context: Optional context string for error message
-
-    Raises:
-        ValidationError: If the collection is empty
-
-    Example:
-        >>> validate_non_empty(parameter_list, "parameters", "sampling")
-    """
-    if not collection:
-        context_msg = f" ({context})" if context else ""
-        raise ValidationError(f"{name}{context_msg} cannot be empty")
-
-
-def validate_positive_integer(value: Any, name: str, context: str = "") -> None:
-    """Validate that a value is a positive integer.
-
-    Args:
-        value: The value to validate
-        name: Descriptive name of the parameter for error messages
-        context: Optional context string for error message
-
-    Raises:
-        ValidationError: If value is not a positive integer
-
-    Example:
-        >>> validate_positive_integer(max_workers, "max_parallel_workers", "configuration")
-    """
-    if not isinstance(value, int) or value <= 0:
-        context_msg = f" ({context})" if context else ""
-        raise ValidationError(
-            f"{name}{context_msg} must be a positive integer, got: {value} ({type(value).__name__})"
-        )
 
 
 def validate_bounds_order(
