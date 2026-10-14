@@ -188,7 +188,9 @@ def _check_template(hor_file, unc_file_path, scenario_parameters, parameters):
     for token in sorted(set(used) - defined - _BUILTIN_TOKENS):
         errors.append(f"{used[token]}: error: token %{token}% has no matching parameter in {hor_file}")
 
-    for token in sorted(defined - set(used)):
+    # a scenario parameter that only drives `if` overrides needs no token in the templates
+    conditioned = {c["token"] for p in parameters for ov in p.overrides for c in ov["conditions"]}
+    for token in sorted(defined - set(used) - conditioned):
         warnings.append(f"{hor_file}: warning: parameter '{token}' is not used in {unc_file_path} "
                         "or the files it includes")
 
@@ -213,7 +215,9 @@ def _explain_row(parameter, scenario_map):
     resolved = parameter.shallow_copy_with_overrides(attrs)
     origin = "base"
     if override:
-        origin = f"if {override_label(override['conditions'])} ({', '.join(attrs) or 'no change'})"
+        label = override_label(override['conditions'])
+        label = label if len(label) <= 40 else label[:36] + ' ...)'
+        origin = f"if {label} ({', '.join(attrs) or 'no change'})"
 
     notes = [] if parameter.active else ["inactive, fixed at default"]
     scenario = ", ".join(f"{token}={value}" for token, value in scenario_map.items()) or "*"

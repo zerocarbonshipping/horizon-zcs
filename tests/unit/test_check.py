@@ -104,6 +104,15 @@ def test_unused_parameter_is_a_warning(study):
     assert report.endswith("0 errors, 1 warnings\n")
 
 
+def test_scenario_parameter_used_only_in_if_conditions_is_not_a_warning(study):
+    (study / "run.unc").write_text(UNC.replace('    Include "inc/policy_%policy%.inc"\n', ''))
+
+    report, code = check(study)
+
+    assert code == 0
+    assert report.endswith("0 errors, 0 warnings\n")
+
+
 def test_tokens_in_commented_out_include_are_not_followed(study):
     (study / "inc" / "not_there.inc").write_text("%unknown_in_unused_file%\n")
     (study / "run.unc").write_text(UNC.replace("#Include", "# Include"))
