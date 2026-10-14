@@ -16,7 +16,6 @@ import logging
 import math
 
 import numpy as np
-from pyDOE3 import lhs
 
 from horizon.exceptions import SamplingError
 from horizon.parameters.parameter import ContinuousParameter, DiscreteParameter
@@ -256,6 +255,7 @@ class ParameterSampler:
                 # it here also keeps the draw matrix identical across
                 # per-scenario sampling runs, so sample_i aligns across
                 # scenario combinations as documented.
+                from pyDOE3 import lhs
                 matrix = lhs(dim, samples=remaining, criterion="maximin", seed=seed)
             return np.clip(matrix, 0.0, 1.0)
 

@@ -533,9 +533,8 @@ class TestDrawMatrixReuse:
     per-combination recomputation dominated sampling time)."""
 
     def test_seeded_lhs_computed_once_per_sampler(self, mocker):
-        import horizon.parameters.sampler as sampler_module
-        real_lhs = sampler_module.lhs
-        spy = mocker.patch.object(sampler_module, "lhs", side_effect=real_lhs)
+        import pyDOE3
+        spy = mocker.patch.object(pyDOE3, "lhs", side_effect=pyDOE3.lhs)
 
         sampler = ParameterSampler()
         run1 = sampler.sample_latin_hypercube(_make_params(0.0, 1.0), 12, seed=42)
@@ -546,9 +545,8 @@ class TestDrawMatrixReuse:
         assert run1[3]["A"] != run2[3]["A"]
 
     def test_unseeded_lhs_never_cached(self, mocker):
-        import horizon.parameters.sampler as sampler_module
-        real_lhs = sampler_module.lhs
-        spy = mocker.patch.object(sampler_module, "lhs", side_effect=real_lhs)
+        import pyDOE3
+        spy = mocker.patch.object(pyDOE3, "lhs", side_effect=pyDOE3.lhs)
 
         sampler = ParameterSampler()
         sampler.sample_latin_hypercube(_make_params(), 12, seed=None)

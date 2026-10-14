@@ -8,7 +8,6 @@ import logging
 import os
 import sys
 
-from horizon.collect_reports.collect_reports import collect_reports
 from horizon.logging.logging import setup_logging
 from horizon.test_manager.create_files import create_files
 
@@ -175,6 +174,7 @@ def main():
             target_file = os.path.join(source_dir, target_file)
 
         logger.info(f"Collecting reports from {source_dir} to {target_file}")
+        from horizon.collect_reports.collect_reports import collect_reports
         collect_reports([source_dir], target_file, sort_flag=True, name_pattern=args.report_name)
 
     else:
