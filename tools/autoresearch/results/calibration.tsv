@@ -4,3 +4,4 @@ be8e166	ok	6607	-	-	kept	share one line-figure builder between metric and fuel-s
 1f8646b	ok	6562	-	-	kept	simplify _find_report/_read_report/_safe_float (-19 loc)
 921507e	ok	6541	-	-	kept	tighten scoring helpers (-21 loc)
 882eeb2	ok	6530	-	-	kept	hoist value-independent scores out of recommendation loop (-11 loc)
+32d263b	ok	6522	-	-	kept	simplify _build_summary_tables (-8 loc)
