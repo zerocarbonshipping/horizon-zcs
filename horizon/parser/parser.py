@@ -63,8 +63,6 @@ _valid_token_re = re.compile(r'^[A-Za-z0-9_]+$')
 
 def _coerce_literal(s):
     """Coerce a literal string into int/float/bool/string as appropriate."""
-    if isinstance(s, (int, float, bool)):
-        return s
     s = s.strip()
     if s.upper() == "TRUE":
         return True
@@ -143,6 +141,19 @@ def _parse_kv_block(body_text):
     return kv
 
 
+def _matching_brace(text, brace_idx, what):
+    """Return the index just past the '}' matching the '{' at brace_idx."""
+    depth = 0
+    for idx in range(brace_idx, len(text)):
+        if text[idx] == '{':
+            depth += 1
+        elif text[idx] == '}':
+            depth -= 1
+            if depth == 0:
+                return idx + 1
+    raise ValueError(f"Malformed {what}: unmatched '{{'")
+
+
 def _find_override_spans(block_content):
     """
     Locate all `if ... { ... }` override blocks in block_content.
@@ -151,30 +162,15 @@ def _find_override_spans(block_content):
     the index of its opening '{', and the index just past the matching '}'.
     """
     spans = []
-    i = 0
-    L = len(block_content)
-    while True:
-        m = re.search(r'\bif\b', block_content[i:], flags=re.I)
-        if not m:
-            break
-        start_if = i + m.start()
-        # find the opening brace
-        brace_idx = block_content.find('{', start_if)
+    for m in re.finditer(r'\bif\b', block_content, flags=re.I):
+        if spans and m.start() < spans[-1][2]:
+            continue  # an `if` inside the previous override's body
+
+        brace_idx = block_content.find('{', m.start())
         if brace_idx == -1:
             raise ValueError("Malformed 'if' override: missing '{'")
-        # find matching closing brace using depth counting
-        j = brace_idx + 1
-        depth = 1
-        while j < L and depth > 0:
-            if block_content[j] == '{':
-                depth += 1
-            elif block_content[j] == '}':
-                depth -= 1
-            j += 1
-        if depth != 0:
-            raise ValueError("Malformed 'if' override: unmatched '{'")
-        spans.append((start_if, brace_idx, j))
-        i = j
+
+        spans.append((m.start(), brace_idx, _matching_brace(block_content, brace_idx, "'if' override")))
     return spans
 
 
@@ -183,7 +179,7 @@ def parse_overrides(block_content):
     Extract all `if ... { ... }` override blocks from block_content.
 
     Returns list of override dicts:
-      [{'conditions': [...], 'attrs': {...}, 'start': int, 'end': int}, ...]
+      [{'conditions': [...], 'attrs': {...}}, ...]
     """
     overrides = []
     for start_if, brace_idx, j in _find_override_spans(block_content):
@@ -192,12 +188,7 @@ def parse_overrides(block_content):
         body_text = block_content[brace_idx + 1: j - 1]
         conditions = _parse_conditions(cond_text)
         attrs = _parse_kv_block(body_text)
-        overrides.append({
-            "conditions": conditions,
-            "attrs": attrs,
-            "start": start_if,
-            "end": j
-        })
+        overrides.append({"conditions": conditions, "attrs": attrs})
     return overrides
 
 
@@ -256,43 +247,22 @@ def parse_hor_file(file_path):
 
     # Parse parameter blocks using predefined patterns
     for block_start in param_block_pattern.finditer(content):
-        # Find the matching closing brace for the parameter block.
-        # The regex includes the opening '{', so the opening brace index is block_start.end() - 1.
-        start_brace_idx = block_start.end() - 1
-        if start_brace_idx < 0 or content[start_brace_idx] != '{':
-            raise ValueError(f"Malformed parameter block at position {block_start.start()}: missing '{{'")
-
-        # Walk the content to find the matching '}' taking nesting into account.
-        j = start_brace_idx + 1
-        depth = 1
-        L = len(content)
-        while j < L and depth > 0:
-            ch = content[j]
-            if ch == '{':
-                depth += 1
-            elif ch == '}':
-                depth -= 1
-            j += 1
-
-        if depth != 0:
-            raise ValueError("Malformed parameter block: unmatched '{'")
+        param_type, header_name = block_start.groups()
 
         # block_content is the text inside the outermost braces of this parameter block
-        block_content = content[block_start.end(): j - 1]
-        param_type = block_start.group(1)
+        block_end = _matching_brace(content, block_start.end() - 1, "parameter block")
+        block_content = content[block_start.end(): block_end - 1]
+
         # Base attributes are read with the `if ... { ... }` override blocks removed
         # (ScenarioParameter has no overrides).
-        if param_type == "ScenarioParameter":
-            base_content = block_content
-        else:
+        base_content = block_content
+        if param_type != "ScenarioParameter":
             try:
                 base_content = _base_content(block_content)
             except ValueError as e:
-                raise ValueError(f"Error parsing overrides in parameter block '{block_start.group(2)}': {e}")
+                raise ValueError(f"Error parsing overrides in parameter block '{header_name}': {e}")
 
-        # Extract basic attributes shared by all parameter types.
         # token and name are optional and default to the block header name.
-        header_name = block_start.group(2)
         token_match = token_pattern.search(base_content)
         if token_match:
             token = token_match.group(1)
@@ -305,28 +275,20 @@ def parse_hor_file(file_path):
             )
         if token in seen_tokens:
             raise ParseError(
-                f"Parameter '{token}' is defined twice ({seen_tokens[token]} and {block_start.group(1)}). "
+                f"Parameter '{token}' is defined twice ({seen_tokens[token]} and {param_type}). "
                 "Parameter names must be unique."
             )
-        seen_tokens[token] = block_start.group(1)
+        seen_tokens[token] = param_type
 
         name_match = name_pattern.search(base_content)
         name = name_match.group(1) if name_match else header_name
-        active_str = active_pattern.search(base_content)
-        active = (not active_str or active_str.group(1) == "TRUE")
-        default_val = default_pattern.search(base_content)
-        default = None if not default_val else default_val.group(1)
+        active_match = active_pattern.search(base_content)
+        active = not active_match or active_match.group(1) == "TRUE"
+        default_match = default_pattern.search(base_content)
+        default = default_match.group(1) if default_match else None
 
-        # Create parameter objects dynamically
-        parameter_object = create_parameter(param_type, name, token, active, default, block_content)
-        if param_type == "ScenarioParameter":
-            scenario_parameters.append(parameter_object)
-
-        elif param_type in ["ContinuousParameter", "DiscreteParameter"]:
-            parameters.append(parameter_object)
-
-        else:
-            raise ValueError(f"Parameter type not accepted: {param_type}")
+        parameter = create_parameter(param_type, name, token, active, default, block_content, base_content)
+        (scenario_parameters if param_type == "ScenarioParameter" else parameters).append(parameter)
 
     # Extract and process the Horizon block
     horizon_match = re.search(r'Horizon\s*{([\s\S]*?)}', content)
@@ -396,48 +358,26 @@ def parse_hor_file(file_path):
     else:
         filtered_scenario_parameters = scenario_parameters
         filtered_parameters = parameters
-    known_scenario_tokens = [sp.token for sp in filtered_scenario_parameters]
 
-    # Build scenario value lookup for validation
-    all_scenario_values = {}
-    if exclusion_rules or inclusion_rules:
-        for sp in filtered_scenario_parameters:
-            all_scenario_values[sp.token] = sp.values
-
-    # Validate exclusion rules against known scenario tokens and values
-    if exclusion_rules:
-        for rule in exclusion_rules:
-            for token, value in rule.items():
-                if token not in known_scenario_tokens:
-                    logger.warning(
-                        "Exclude rule references unknown scenario token '%s'. "
-                        "Known tokens: %s. This rule will never match.",
-                        token, known_scenario_tokens
-                    )
-                elif token in all_scenario_values and value not in all_scenario_values[token]:
-                    logger.warning(
-                        "Exclude rule references value '%s' for token '%s', "
-                        "but known values are: %s. This rule may never match.",
-                        value, token, all_scenario_values[token]
-                    )
-
-    # Validate inclusion rules against known scenario tokens and values
-    if inclusion_rules:
-        for rule in inclusion_rules:
+    # Validate exclusion and inclusion rules against known scenario tokens and values
+    known_values = {sp.token: sp.values for sp in filtered_scenario_parameters}
+    for kind, rules in (("Exclude", exclusion_rules), ("Include", inclusion_rules)):
+        for rule in rules:
             for token, value in rule.items():
                 if token == "_name":
-                    continue  # reserved label key, not a scenario token
-                if token not in known_scenario_tokens:
+                    continue  # reserved label key of Include rules, not a scenario token
+
+                if token not in known_values:
                     logger.warning(
-                        "Include rule references unknown scenario token '%s'. "
+                        "%s rule references unknown scenario token '%s'. "
                         "Known tokens: %s. This rule will never match.",
-                        token, known_scenario_tokens
+                        kind, token, list(known_values)
                     )
-                elif token in all_scenario_values and value not in all_scenario_values[token]:
+                elif value not in known_values[token]:
                     logger.warning(
-                        "Include rule references value '%s' for token '%s', "
+                        "%s rule references value '%s' for token '%s', "
                         "but known values are: %s. This rule may never match.",
-                        value, token, all_scenario_values[token]
+                        kind, value, token, known_values[token]
                     )
 
     return (unc_file_path, output_path, number_of_samples, filtered_scenario_parameters, filtered_parameters,
@@ -465,144 +405,85 @@ def _validate_continuous_variants(parameter, distribution_defaulted):
             )
 
 
-def create_parameter(param_type, name, token, active, default, block_content):
+def create_parameter(param_type, name, token, active, default, block_content, base_content):
     """
-    Creates a parameter object based on the specified parameter type and attributes.
+    Creates a parameter object of the given type. Base attributes are read from base_content
+    (override blocks removed); the overrides themselves are parsed from block_content.
     """
-    # Initialize with generic attributes across all parameter types
-    attributes = {
-        "name": name,
-        "token": token,
-        "active": active,
-        "default": default
-    }
+    if param_type == "ScenarioParameter":
+        return ScenarioParameter(name, token, process_values(values_pattern.search(block_content).group(1)),
+                                 active, default)
 
-    # Base attributes are read with the `if ... { ... }` override blocks removed;
-    # the overrides themselves are parsed from the full block_content.
-    base_content = block_content
-    if param_type in ("ContinuousParameter", "DiscreteParameter"):
-        try:
-            base_content = _base_content(block_content)
-        except ValueError as e:
-            raise ValueError(f"Error parsing overrides for parameter '{token}': {e}")
+    attributes = {"name": name, "token": token, "active": active, "default": default}
 
-    # Extract common attributes and then specific ones for ContinuousParameter
-    if param_type == "ContinuousParameter":
-        # pick up any per-parameter overrides
-        low_case = emission_low_pattern.search(base_content)
-        high_case = emission_high_pattern.search(base_content)
-        attributes["emissions_low"] = low_case.group(1) if low_case else None
-        attributes["emissions_high"] = high_case.group(1) if high_case else None
+    # optional per-parameter emissions patterns
+    for key, pattern in (("emissions_low", emission_low_pattern), ("emissions_high", emission_high_pattern)):
+        match = pattern.search(base_content)
+        attributes[key] = match.group(1) if match else None
 
-        # distribution is a keyword (LOG-TRIANGULAR, TRIANGULAR, LOG-UNIFORM, UNIFORM);
-        # quoted lowercase names still work. Default: log-triangular.
-        distribution_search = distribution_pattern.search(base_content)
-        try:
-            distribution = normalize_distribution(
-                distribution_search.group(1) if distribution_search else DEFAULT_DISTRIBUTION)
-        except ParameterError as e:
-            raise ParseError(f"Parameter '{token}': {e}")
+    try:
+        attributes["overrides"] = parse_overrides(block_content)
+    except Exception as e:
+        raise ValueError(f"Error parsing overrides for parameter '{token}': {e}")
 
-        low_m = low_val_pattern.search(base_content)
-        mid_m = mid_val_pattern.search(base_content)
-        high_m = high_val_pattern.search(base_content)
-        dec_m = decimals_pattern.search(base_content)
-
-        if not low_m or not high_m:
-            raise ValueError(f"Missing low_val or high_val for ContinuousParameter '{token}'.")
-
-        # Parse numeric values with error handling
-        try:
-            low_val = float(low_m.group(1))
-            mid_val = float(mid_m.group(1)) if mid_m else None
-            high_val = float(high_m.group(1))
-            # decimals is optional: without it, decimals follow the bounds (auto_decimals)
-            decimals = int(dec_m.group(1)) if dec_m else auto_decimals(low_val, high_val, distribution)
-        except ValueError as e:
-            raise ParseError(f"Invalid numeric value in parameter '{token}': {e}")
-
-        # Validate parameter constraints
-        validate_bounds_order(low_val, high_val, token, allow_equal=False, context="parameter definition")
-
-        if decimals < 0:
-            raise ValidationError(f"Parameter '{token}': decimals must be non-negative, got {decimals}")
-
-        # default is optional when mid_val is set: it then follows mid_val (also in overrides).
-        default_from_mid = attributes["default"] is None
-        if default_from_mid:
-            if mid_val is None:
-                raise ParseError(
-                    f"Parameter '{token}' has no mid_val and no default. Set default explicitly."
-                )
-            attributes["default"] = round_value(mid_val, decimals)
-
-        attributes.update({
-            "low_val": low_val,
-            "mid_val": mid_val,
-            "high_val": high_val,
-            "decimals": decimals if dec_m else None,
-            "distribution": distribution,
-            "default_from_mid": default_from_mid,
-        })
-
-        # parse optional overrides (if ... { ... } blocks)
-        try:
-            attributes["overrides"] = parse_overrides(block_content)
-        except Exception as e:
-            raise ValueError(f"Error parsing overrides for parameter '{token}': {e}")
-
-        parameter = ContinuousParameter(**attributes)
-        _validate_continuous_variants(parameter, distribution_defaulted=distribution_search is None)
-        return parameter
-
-    elif param_type == "DiscreteParameter":
-        if attributes["default"] is None:
+    if param_type == "DiscreteParameter":
+        if default is None:
             raise ParseError(f"Parameter '{token}' has no default. Set default explicitly.")
 
-        # pick up any per-parameter overrides
-        low_case = emission_low_pattern.search(base_content)
-        high_case = emission_high_pattern.search(base_content)
-        attributes["emissions_low"] = low_case.group(1) if low_case else None
-        attributes["emissions_high"] = high_case.group(1) if high_case else None
-
-        # Extracting values and probabilities
-        values_str = values_pattern.search(base_content).group(1)
+        # Values are kept as strings; probabilities are floats, scaled to sum to 1.0, or uniform
+        values = [value.strip().strip('"') for value in values_pattern.search(base_content).group(1).split(',')]
         probabilities_str = probabilities_pattern.search(base_content).group(1)
+        probabilities = [float(prob) for prob in probabilities_str.split(',')]
+        total = sum(probabilities)
+        if not np.isclose(total, 1.0):
+            probabilities = [p / total for p in probabilities]
 
-        # Parsing values as they are, not converting to float
-        values = [value.strip().strip('"') for value in values_str.split(',')]
+        return DiscreteParameter(values=values, probabilities=probabilities, **attributes)
 
-        # Parsing probabilities (must be floats)
-        probabilities = [float(prob.strip()) for prob in probabilities_str.split(',')] if probabilities_str else ['uniform']
+    # distribution is a keyword (LOG-TRIANGULAR, TRIANGULAR, LOG-UNIFORM, UNIFORM);
+    # quoted lowercase names still work. Default: log-triangular.
+    distribution_search = distribution_pattern.search(base_content)
+    try:
+        distribution = normalize_distribution(
+            distribution_search.group(1) if distribution_search else DEFAULT_DISTRIBUTION)
+    except ParameterError as e:
+        raise ParseError(f"Parameter '{token}': {e}")
 
-        # If probabilities are not uniform, scale them so they sum to 1.0
-        if probabilities != ['uniform']:
-            sum_probabilities = sum(probabilities)
-            if not np.isclose(sum_probabilities, 1.0):
-                probabilities = [p / sum_probabilities for p in probabilities]
+    low_m = low_val_pattern.search(base_content)
+    mid_m = mid_val_pattern.search(base_content)
+    high_m = high_val_pattern.search(base_content)
+    dec_m = decimals_pattern.search(base_content)
 
-        attributes.update({
-            "values": values,
-            "probabilities": probabilities if probabilities != ['uniform'] else [1.0 / len(values)] * len(values)
-        })
+    if not low_m or not high_m:
+        raise ValueError(f"Missing low_val or high_val for ContinuousParameter '{token}'.")
 
-        # parse optional overrides (if ... { ... } blocks)
-        try:
-            attributes["overrides"] = parse_overrides(block_content)
-        except Exception as e:
-            raise ValueError(f"Error parsing overrides for parameter '{token}': {e}")
+    try:
+        low_val = float(low_m.group(1))
+        mid_val = float(mid_m.group(1)) if mid_m else None
+        high_val = float(high_m.group(1))
+        # decimals is optional: without it, decimals follow the bounds (auto_decimals)
+        decimals = int(dec_m.group(1)) if dec_m else auto_decimals(low_val, high_val, distribution)
+    except ValueError as e:
+        raise ParseError(f"Invalid numeric value in parameter '{token}': {e}")
 
-        return DiscreteParameter(**attributes)
+    validate_bounds_order(low_val, high_val, token, allow_equal=False, context="parameter definition")
 
-    elif param_type == "ScenarioParameter":
-        # Process values to remove quotes and whitespace in ScenarioParameters
-        values_str = values_pattern.search(block_content).group(1)
-        attributes.update({"values": process_values(values_str)})
+    if decimals < 0:
+        raise ValidationError(f"Parameter '{token}': decimals must be non-negative, got {decimals}")
 
-        return ScenarioParameter(**attributes)
+    # default is optional when mid_val is set: it then follows mid_val (also in overrides).
+    default_from_mid = default is None
+    if default_from_mid:
+        if mid_val is None:
+            raise ParseError(f"Parameter '{token}' has no mid_val and no default. Set default explicitly.")
 
-    else:
-        raise ValueError(f"Unrecognized parameter type: {param_type}")
+        attributes["default"] = round_value(mid_val, decimals)
+
+    parameter = ContinuousParameter(
+        low_val=low_val, mid_val=mid_val, high_val=high_val, distribution=distribution,
+        decimals=decimals if dec_m else None, default_from_mid=default_from_mid, **attributes)
+    _validate_continuous_variants(parameter, distribution_defaulted=distribution_search is None)
+    return parameter
 
 
 def process_values(values_string):
