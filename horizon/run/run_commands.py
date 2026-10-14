@@ -141,6 +141,18 @@ def _queue_single_command(command: str, pueue_priority: int, env_vars: str, task
         return (False, str(e))
 
 
+def _log_failure(command, error_msg):
+    logger.error("Failed to queue command: %s", command)
+    if error_msg:
+        logger.error("Pueue error: %s", error_msg)
+
+
+def _log_progress(done, total):
+    """Heartbeat for large batches."""
+    if total > _PROGRESS_HEARTBEAT_INTERVAL and done % _PROGRESS_HEARTBEAT_INTERVAL == 0 and done < total:
+        logger.info("Queuing progress: %d/%d tasks submitted...", done, total)
+
+
 class _DirectSubmitter:
     """Streams Add requests over one direct daemon connection.
 
@@ -217,10 +229,7 @@ class _DirectSubmitter:
                 continue
             if success:
                 self._ok += 1
-                if (self._expected > _PROGRESS_HEARTBEAT_INTERVAL
-                        and self._ok % _PROGRESS_HEARTBEAT_INTERVAL == 0
-                        and self._ok < self._expected):
-                    logger.info("Queuing progress: %d/%d tasks submitted...", self._ok, self._expected)
+                _log_progress(self._ok, self._expected)
             else:
                 self._failures.append((item, error_msg))
 
@@ -336,9 +345,7 @@ class StreamingQueuer:
             self._direct = None
             queued_ok += direct_ok
             for command, error_msg in failures:
-                logger.error("Failed to queue command: %s", command)
-                if error_msg:
-                    logger.error("Pueue error: %s", error_msg)
+                _log_failure(command, error_msg)
                 queued_fail += 1
             if error is not None:
                 if leftover or unknown:
@@ -394,17 +401,11 @@ class StreamingQueuer:
                 logger.debug("Successfully queued command (priority=%s): %s", self._priority, command)
                 queued_ok += 1
             else:
-                logger.error("Failed to queue command: %s", command)
-                if error_msg:
-                    logger.error("Pueue error: %s", error_msg)
+                _log_failure(command, error_msg)
                 queued_fail += 1
 
             completed += 1
-            # Progress heartbeat for large batches
-            if (num_tasks > _PROGRESS_HEARTBEAT_INTERVAL
-                    and completed % _PROGRESS_HEARTBEAT_INTERVAL == 0
-                    and completed < num_tasks):
-                logger.info("Queuing progress: %d/%d tasks submitted...", completed, num_tasks)
+            _log_progress(completed, num_tasks)
 
         self._executor.shutdown(wait=True)
         self._executor = None
