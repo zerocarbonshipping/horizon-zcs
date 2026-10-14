@@ -28,3 +28,7 @@ a683342	ok	6524	2.05	6.38	kept	file_handler: drop include lock, races are benign
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01VkXGKVSafWLgrVfrcYHJTL
+69c9327	ok	6514	2.10	5.65	kept	file_handler: executor.map instead of futures bookkeeping
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01VkXGKVSafWLgrVfrcYHJTL

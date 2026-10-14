@@ -479,31 +479,25 @@ class FileHandler:
         completed .nav's navigate command is submitted immediately, so
         queuing (and the first simulations) overlap generation.
         """
-        max_workers = self._select_worker_count(max_workers, output_folder)
+        def generate(item):
+            try:
+                return self._generate_nav_file_for_sample(unc_path, template_program, *item, output_folder)
+            except Exception:
+                logger.exception("Failed generating NAV file for %s", item[1])
+                return None
+
         nav_filepaths = []
-        future_to_name = {}
+        with concurrent.futures.ThreadPoolExecutor(
+                max_workers=self._select_worker_count(max_workers, output_folder)) as executor:
+            for nav_filepath in executor.map(generate, work_items):
+                if nav_filepath is None:
+                    continue
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-            for item in work_items:
-                future = executor.submit(self._generate_nav_file_for_sample, unc_path, template_program,
-                                         *item, output_folder)
-                future_to_name[future] = item[1]
-
-            completed = 0
-            for future in concurrent.futures.as_completed(future_to_name):
-                name = future_to_name[future]
-                try:
-                    nav_filepath = future.result()
-                    if nav_filepath:
-                        nav_filepaths.append(nav_filepath)
-                        if command_sink is not None:
-                            command_sink.submit(
-                                self._build_command(nav_filepath, solver, navigate_flags))
-                        completed += 1
-                        if completed % _PROGRESS_HEARTBEAT_INTERVAL == 0:
-                            logger.info("File creation progress: %d NAV files generated...", completed)
-                except Exception:
-                    logger.exception("Failed generating NAV file for %s", name)
+                nav_filepaths.append(nav_filepath)
+                if command_sink is not None:
+                    command_sink.submit(self._build_command(nav_filepath, solver, navigate_flags))
+                if len(nav_filepaths) % _PROGRESS_HEARTBEAT_INTERVAL == 0:
+                    logger.info("File creation progress: %d NAV files generated...", len(nav_filepaths))
 
         self.nav_filepaths = nav_filepaths
 
@@ -512,7 +506,7 @@ class FileHandler:
         """
         Create one .nav file for a given sample + scenario.
         - Copies & replaces tokens in included .inc files when needed into simulation_includes/
-        - Returns the nav filepath on success, or None on failure.
+        - Returns the nav filepath.
         """
         realization_folder = os.path.join(output_folder, simulation_name)
         # rewritten includes are collected and written after one makedirs: on
@@ -580,15 +574,11 @@ class FileHandler:
 
         nav_filepath = os.path.join(realization_folder, f"{simulation_name}.nav")
         includes_folder = os.path.join(realization_folder, "simulation_includes")
-        try:
-            os.makedirs(includes_folder if pending_includes else realization_folder, exist_ok=True)
-            for file_name, content in pending_includes:
-                self._write_to_file(os.path.join(includes_folder, file_name), content)
-            self._write_to_file(nav_filepath, ''.join(nav_content))
-            return nav_filepath
-        except Exception:
-            logger.exception("Failed writing NAV file %s", nav_filepath)
-            return None
+        os.makedirs(includes_folder if pending_includes else realization_folder, exist_ok=True)
+        for file_name, content in pending_includes:
+            self._write_to_file(os.path.join(includes_folder, file_name), content)
+        self._write_to_file(nav_filepath, ''.join(nav_content))
+        return nav_filepath
 
     def _shared_include_line(self, parts, replacements, tokens_replaced, name_stem,
                              combo_name, indent, realization_folder):
