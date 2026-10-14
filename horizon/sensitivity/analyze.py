@@ -483,21 +483,13 @@ def _match_labels_to_folders(labels, folder_names):
         return label_to_folder
 
     # Strategy 3: match by sample number
-    num_to_folder = {}
-    for fn in folder_names:
-        m = _SAMPLE_NUM_RE.search(fn)
-        if m:
-            num_to_folder[int(m.group(1))] = fn
-
-    if not num_to_folder:
-        return {}
-
+    num_to_folder = {
+        int(m.group(1)): fn for fn in folder_names if (m := _SAMPLE_NUM_RE.search(fn))
+    }
     for label in labels:
         m = _SAMPLE_NUM_RE.search(label)
-        if m:
-            n = int(m.group(1))
-            if n in num_to_folder:
-                label_to_folder[label] = num_to_folder[n]
+        if m and int(m.group(1)) in num_to_folder:
+            label_to_folder[label] = num_to_folder[int(m.group(1))]
 
     return label_to_folder
 
@@ -850,12 +842,10 @@ def _read_global_sheet(xlsx_path):
 
 def _find_report(folder_path):
     """Find the first ``.xlsx`` report in a simulation folder."""
-    xlsx_files = glob.glob(os.path.join(folder_path, "*", "*.xlsx"))
-    if xlsx_files:
-        return xlsx_files[0]
-    xlsx_files = glob.glob(os.path.join(folder_path, "*.xlsx"))
-    if xlsx_files:
-        return xlsx_files[0]
+    for pattern in (os.path.join("*", "*.xlsx"), "*.xlsx"):
+        xlsx_files = glob.glob(os.path.join(folder_path, pattern))
+        if xlsx_files:
+            return xlsx_files[0]
     return None
 
 
@@ -890,22 +880,13 @@ def _scenario_groups(scenario_df, common_index):
         Always includes an ``"ALL"`` group with every sample.
     """
     groups = {"ALL": common_index}
-
-    if scenario_df.empty or scenario_df.columns.empty:
+    if scenario_df.columns.empty:
         return groups
 
-    # Filter to common index
     sdf = scenario_df.loc[scenario_df.index.intersection(common_index)]
-    if sdf.empty:
-        return groups
-
-    # Group by unique scenario combination
-    group_cols = list(sdf.columns)
-    grouped = sdf.groupby(group_cols[0]).groups if len(group_cols) == 1 else sdf.groupby(group_cols).groups
-    for combo_vals, idx in grouped.items():
-        if not isinstance(combo_vals, tuple):
-            combo_vals = (combo_vals,)
-        label = "_".join(str(v) for v in combo_vals)
+    by = list(sdf.columns) if len(sdf.columns) > 1 else sdf.columns[0]
+    for combo, idx in sdf.groupby(by).groups.items():
+        label = "_".join(str(v) for v in (combo if isinstance(combo, tuple) else (combo,)))
         filtered = idx.intersection(common_index)
         if len(filtered) >= 4:
             groups[label] = filtered
