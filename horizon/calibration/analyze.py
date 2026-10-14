@@ -1008,48 +1008,28 @@ def calibration_plot(calibration_dir, output_path=None):
 
     logger.info("Starting calibration analysis for %s", calibration_dir)
 
-    # 1. Load index
     runs, param_defaults = _load_index(calibration_dir)
 
-    # 2. Read reports (concurrent I/O for faster Excel loading)
-    data_by_folder = {}
-    missing = 0
-    folders_to_read = []
-    for run in runs:
-        folder_path = os.path.join(calibration_dir, run.folder_name)
-        if not os.path.exists(folder_path):
-            missing += 1
-            continue
-        folders_to_read.append((run.folder_name, folder_path))
-
+    # read the Excel reports concurrently
+    folders = {
+        run.folder_name: os.path.join(calibration_dir, run.folder_name)
+        for run in runs
+        if os.path.exists(os.path.join(calibration_dir, run.folder_name))
+    }
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
-        future_to_name = {
-            executor.submit(_read_report, fp): fn
-            for fn, fp in folders_to_read
-        }
-        for future in concurrent.futures.as_completed(future_to_name):
-            folder_name = future_to_name[future]
-            report = future.result()
-            if report is not None:
-                data_by_folder[folder_name] = report
+        reports = executor.map(_read_report, folders.values())
+    data_by_folder = {name: report for name, report in zip(folders, reports) if report is not None}
 
     logger.info("Read %d reports (%d folders missing, %d runs total)",
-                len(data_by_folder), missing, len(runs))
+                len(data_by_folder), len(runs) - len(folders), len(runs))
 
     if not data_by_folder:
         logger.error("No simulation reports found. Check that simulations have completed.")
         return
 
-    # 3. Build figures
     figures = _build_figures(runs, data_by_folder, param_defaults)
-
-    # 3b. Build fuel share figures
     fuel_share_figures = _build_fuel_share_figures(runs, data_by_folder, param_defaults)
-
-    # 4. Build summary tables
     summaries = _build_summary_tables(runs, data_by_folder, param_defaults)
-
-    # 5. Build recommendations
     recommendations = _build_recommendations(runs, data_by_folder, param_defaults)
     round2_grids = _suggest_next_discretization(recommendations)
 
@@ -1058,5 +1038,4 @@ def calibration_plot(calibration_dir, output_path=None):
                     rec.param_token, rec.recommended_value, rec.confidence,
                     rec.scores_breakdown.get("aggregate", 0))
 
-    # 6. Write dashboard
     _write_dashboard(figures, summaries, output_path, fuel_share_figures, recommendations, round2_grids)
