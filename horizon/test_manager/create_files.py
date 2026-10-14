@@ -42,7 +42,7 @@ from horizon.parameters.sampler import ParameterSampler, resolve_parameters_for_
 from horizon.parser.exclusions import get_scenario_label, should_skip_combination
 from horizon.parser.parser import parse_hor_file
 from horizon.plot.plot import analyze_sampled_parameters
-from horizon.run.run_commands import StreamingQueuer
+from horizon.run.run_commands import StreamingQueuer, queue_results_collector
 
 logger = logging.getLogger(__name__)
 
@@ -399,6 +399,7 @@ def create_files(hor_file_path, max_files=None, priority="normal", solver=None,
     # simulations start while the rest of the study is still generating, and
     # total wall time becomes max(generation, queuing) instead of their sum.
     queuer = StreamingQueuer(priority=priority, full_task_env=full_task_env, pueue_cli=pueue_cli)
+    queued_ok = 0
 
     try:
         file_handler.generate_scenarios_and_nav_files(
@@ -418,9 +419,18 @@ def create_files(hor_file_path, max_files=None, priority="normal", solver=None,
         # Wait for the already-submitted tasks even if generation failed
         # midway - they are queued in pueue either way and must be reported.
         try:
-            queuer.finish()
+            queued_ok, _ = queuer.finish()
         except Exception:
             logger.exception("Failed to finish queue submission.")
+
+    # merge the results files once every simulation has succeeded; without
+    # every task id the collector could start before the last run ends
+    if len(queuer.task_ids) < queued_ok:
+        logger.warning("The ids of %d queued task(s) are unknown, so results are not collected "
+                       "automatically; run `horizon --collect-results \"%s\"` once the simulations "
+                       "have finished.", queued_ok - len(queuer.task_ids), output_folder)
+    elif queuer.task_ids:
+        queue_results_collector(output_folder, queuer.task_ids, priority=priority, full_task_env=full_task_env)
 
     # Log generated files
     if logger.isEnabledFor(logging.DEBUG):

@@ -16,20 +16,23 @@ together for anyone modifying the code.
 ```
 .hor config ──> parser ──> sampler ──> file handler ──> pueue queue ──> navigate runs
                                 │                                            │
-                                └──> samples.csv + diagnostics      reports ─┴─> horizon -c
-                                                                              └─> sensitivity / calibration analysis
+                                └──> samples.csv + diagnostics      reports ─┼─> horizon -c
+                                                                             │   └─> sensitivity / calibration analysis
+                                                              results files ─┴─> horizon --collect-results (queued)
 ```
 
 1. **CLI entry** (`horizon/__main__.py`) parses arguments, sets up logging,
    and dispatches to one of the modes: uncertainty analysis (default),
-   report collection (`-c`), batch replotting (`--replot`), sensitivity
+   report collection (`-c`), results collection (`--collect-results`),
+   batch replotting (`--replot`), sensitivity
    analysis (`--sensitivity-analysis`), calibration dashboard
    (`--calibration-plot`), or queue status (`--status`).
 
 2. **File creation pipeline** (`horizon/test_manager/create_files.py`) runs
    the main mode: parse the `.hor` file, sample parameters, write the
    samples CSV, then (unless `SampleOnly = TRUE`) generate `.nav` files from
-   the `.unc` template and queue one `navigate` command per realization.
+   the `.unc` template and queue one `navigate` command per realization,
+   followed by a results collector that waits for all of them.
 
 ## Components
 
@@ -87,6 +90,17 @@ high = 5). Thread-limiting environment variables (`OMP_NUM_THREADS`,
 labelled with its realization folder name so `pueue status` stays readable.
 Horizon never imports Navigate as a library — the seam between the two tools
 is the `navigate` CLI.
+
+### Results collection (`horizon/collect_results/`)
+
+`collect_results()` merges the Navigate results files (`.parquet`) below an
+output directory into `<output_dir>.parquet` for Lantern, adding a `run`
+(the ensemble, `<scenario>` for `<scenario>_sampleNNN`) and a `sample`
+column. The layout matches Lantern's `scripts/compile_results.py`. After
+queuing a study, `create_files()` queues `horizon --collect-results` with
+pueue `--after` on every realization's task id, which is why the queuer
+records task ids. Files are streamed one at a time and the output replaced
+only once complete, so a rerun is safe.
 
 ### Report collection (`horizon/collect_reports/`)
 

@@ -248,8 +248,11 @@ class PueueDirectConnection:
         except (OSError, _cbor.CBORError) as exc:
             raise PueueDirectError(f"pueue daemon request failed: {exc}")
 
-    def add_task(self, command, path, envs, pueue_priority, label):
-        """Submit one task; returns (success, error_message)."""
+    def add_task(self, command, path, envs, pueue_priority, label, dependencies=()):
+        """Submit one task; returns (success, error_message, task_id).
+
+        ``dependencies`` are task ids that must succeed before this task starts.
+        """
         response = self.request({
             "Add": {
                 "command": command,
@@ -259,17 +262,17 @@ class PueueDirectConnection:
                 "stashed": False,
                 "group": "default",
                 "enqueue_at": None,
-                "dependencies": [],
+                "dependencies": list(dependencies),
                 "priority": pueue_priority,
                 "label": label if label else None,
             }
         })
         if isinstance(response, dict) and "AddedTask" in response:
-            return (True, "")
+            return (True, "", response["AddedTask"].get("task_id"))
         if isinstance(response, dict) and "Failure" in response:
             # The daemon understood us but rejected the task (e.g. unknown
             # group): a per-task failure, not a protocol failure.
-            return (False, str(response["Failure"]))
+            return (False, str(response["Failure"]), None)
         raise PueueDirectError(f"unexpected daemon response: {response!r:.200}")
 
     def close(self):

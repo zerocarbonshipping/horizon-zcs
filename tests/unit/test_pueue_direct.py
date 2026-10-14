@@ -262,7 +262,7 @@ class TestDirectSubmission:
     def test_pueue_cli_flag_skips_direct(self, fake_daemon_env, mocker):
         daemon = FakeDaemon(str(fake_daemon_env))
         run_mock = mocker.patch.object(
-            run_commands, "_queue_single_command", return_value=(True, ""))
+            run_commands, "_queue_single_command", return_value=(True, "", None))
         try:
             queuer = StreamingQueuer(pueue_cli=True)
             queuer.start(2)
@@ -302,7 +302,7 @@ class TestFallback:
         config.write_text(f'shared:\n  pueue_directory: "{tmp_path}"\n')
         clean_pueue_env.setenv("PUEUE_CONFIG_PATH", str(config))
         run_mock = mocker.patch.object(
-            run_commands, "_queue_single_command", return_value=(True, ""))
+            run_commands, "_queue_single_command", return_value=(True, "", None))
 
         queuer = StreamingQueuer()
         queuer.start(2)
@@ -318,7 +318,7 @@ class TestFallback:
         fails CBOR encoding before anything is sent) must not kill the
         worker thread silently - every command is handed to the CLI."""
         run_mock = mocker.patch.object(
-            run_commands, "_queue_single_command", return_value=(True, ""))
+            run_commands, "_queue_single_command", return_value=(True, "", None))
         daemon = FakeDaemon(str(fake_daemon_env))
         try:
             queuer = StreamingQueuer()
@@ -345,7 +345,7 @@ class TestAckLossDisambiguation:
     def _run_with_drop(self, fake_daemon_env, mocker, label_lookup):
         daemon = FakeDaemon(str(fake_daemon_env), drop_at=3)
         run_mock = mocker.patch.object(
-            run_commands, "_queue_single_command", return_value=(True, ""))
+            run_commands, "_queue_single_command", return_value=(True, "", None))
         mocker.patch.object(run_commands, "_get_pueue_tasks", side_effect=label_lookup)
         try:
             queuer = StreamingQueuer()

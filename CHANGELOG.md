@@ -16,6 +16,13 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   highlighting for `.hor` and `.sen` files. It and the Notepad++ UDL now
   highlight the distribution keywords `LOG-TRIANGULAR`, `TRIANGULAR`,
   `LOG-UNIFORM` and `UNIFORM` (and the `LOG_` spellings).
+- A study now queues a results collector behind its Navigate runs. Once
+  every run has succeeded, it merges their results files (`.parquet`) into
+  `<output_dir>.parquet` next to the output directory, which Lantern shows
+  as ensembles: a realization `<scenario>_sampleNNN` joins the ensemble
+  `<scenario>`. It succeeds without writing anything when the runs wrote no
+  results files. `horizon --collect-results DIR` runs it by hand. Adds
+  `pyarrow` as a dependency.
 
 ### Changed
 - Shorter `.hor` format. `token` and `name` are optional and default to the

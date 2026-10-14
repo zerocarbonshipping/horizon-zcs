@@ -69,6 +69,10 @@ def main():
                             help="Validate configuration and preview what would be generated without running simulations.")
     cli_parser.add_argument("--status", type=str, default=None, metavar="OUTPUT_DIR",
                             help="Check pueue task status and report failures for the given output directory.")
+    cli_parser.add_argument("--collect-results", type=str, default=None, metavar="OUTPUT_DIR",
+                            help="Merge the Navigate results files (.parquet) below OUTPUT_DIR into "
+                                 "OUTPUT_DIR.parquet next to it, for Lantern. Queued automatically "
+                                 "after a study's simulations; succeeds when there is nothing to merge.")
     cli_parser.add_argument("--replot", action="store_true",
                             help="Queue replot jobs via pueue for directories containing plot_data.pkl.")
     cli_parser.add_argument("--sensitivity-analysis", nargs="?", const=True, default=None,
@@ -100,6 +104,18 @@ def main():
                             format='%(asctime)s - %(levelname)s - %(message)s')
         from horizon.run.run_commands import check_status
         check_status(args.status)
+        return
+
+    if args.collect_results:
+        logging.basicConfig(level=logging.INFO,
+                            format='%(asctime)s - %(levelname)s - %(message)s')
+        from horizon.collect_results.collect_results import collect_results
+        from horizon.exceptions import ResultsCollectionError
+        try:
+            collect_results(args.collect_results)
+        except ResultsCollectionError as error:
+            logger.error("Results collection failed: %s", error)
+            sys.exit(1)
         return
 
     if args.sensitivity_analysis is not None:

@@ -80,3 +80,8 @@ class SamplingError(HorizonError):
 class SensitivityAnalysisError(HorizonError):
     """Raised when PRCC sensitivity analysis encounters errors."""
     pass
+
+
+class ResultsCollectionError(HorizonError):
+    """Raised when Navigate results files cannot be collected into one file."""
+    pass

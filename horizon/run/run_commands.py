@@ -26,6 +26,8 @@ PRIORITY_MAP = {
 
 _PROGRESS_HEARTBEAT_INTERVAL = 50
 
+_COLLECTOR_LABEL = "collect_results"
+
 # Environment variables forwarded to pueue tasks by default. pueue stores the
 # submitting client's *entire* environment inside every task and rewrites the
 # whole task list to disk on every add, so on typical shells each task drags
@@ -121,24 +123,50 @@ def _queue_single_command(command: str, pueue_priority: int, env_vars: str, task
 
     Returns
     -------
-    tuple[bool, str]
-        (success, error_message)
+    tuple[bool, str, int | None]
+        (success, error_message, task_id)
+    """
+    return _pueue_add_cli(f'{env_vars} {command}', pueue_priority, _extract_label(command), task_env)
+
+
+def _pueue_add_cli(command: str, pueue_priority: int, label: str, task_env=None, dependencies=()) -> tuple:
+    """Add one task through the pueue CLI.
+
+    Parameters
+    ----------
+    command : str
+        Shell command the task runs.
+    pueue_priority : int
+        Pueue priority of the task.
+    label : str
+        Task label; empty for none.
+    task_env : dict or None
+        Environment of the pueue client, stored as the task's environment.
+    dependencies : iterable of int
+        Task ids that must succeed before this task starts.
+
+    Returns
+    -------
+    tuple[bool, str, int | None]
+        (success, error_message, task_id)
     """
     try:
-        label = _extract_label(command)
-        pueue_cmd = ['pueue', 'add', '--priority', str(pueue_priority)]
+        pueue_cmd = ['pueue', 'add', '--print-task-id', '--priority', str(pueue_priority)]
         if label:
             pueue_cmd += ['--label', label]
-        pueue_cmd += ['--', f'{env_vars} {command}']
+        if dependencies:
+            pueue_cmd += ['--after', *map(str, dependencies)]
+        pueue_cmd += ['--', command]
 
         result = subprocess.run(pueue_cmd, capture_output=True, text=True, env=task_env)
 
-        if result.returncode == 0:
-            return (True, "")
-        else:
-            return (False, result.stderr)
+        if result.returncode != 0:
+            return (False, result.stderr, None)
+
+        task_id = result.stdout.strip()
+        return (True, "", int(task_id) if task_id.isdigit() else None)
     except Exception as e:
-        return (False, str(e))
+        return (False, str(e), None)
 
 
 class _DirectSubmitter:
@@ -166,6 +194,7 @@ class _DirectSubmitter:
         self._expected = expected_total
         self._queue = queue.SimpleQueue()
         self._ok = 0
+        self.task_ids = []
         self._failures = []
         self._leftover = []
         self._unknown = None
@@ -198,7 +227,7 @@ class _DirectSubmitter:
                 self._leftover.append(item)
                 continue
             try:
-                success, error_msg = self._conn.add_task(
+                success, error_msg, task_id = self._conn.add_task(
                     item, self._cwd, self._envs, self._pueue_priority, _extract_label(item))
             except PueueDirectError as exc:
                 # Connection-level failure mid-request: the daemon may have
@@ -217,6 +246,8 @@ class _DirectSubmitter:
                 continue
             if success:
                 self._ok += 1
+                if task_id is not None:
+                    self.task_ids.append(task_id)
                 if (self._expected > _PROGRESS_HEARTBEAT_INTERVAL
                         and self._ok % _PROGRESS_HEARTBEAT_INTERVAL == 0
                         and self._ok < self._expected):
@@ -241,7 +272,8 @@ class StreamingQueuer:
     Protocol: ``start(expected_total)`` once (the per-task thread-limit
     environment is derived from the expected task count, exactly like the
     batch path always did), then ``submit(command)`` per task, then
-    ``finish()`` to wait for all submissions and log the summary.
+    ``finish()`` to wait for all submissions and log the summary. After
+    ``finish()``, ``task_ids`` holds the pueue ids of the queued tasks.
 
     Thread count per task is computed as ``max(2, cpu_count // num_tasks)``,
     capped at ``cpu_count``. This gives small runs more threads per task
@@ -260,6 +292,7 @@ class StreamingQueuer:
         self._task_env = _build_task_env(full_task_env)
         self._force_cli = pueue_cli
         self._direct = None
+        self.task_ids = []
 
     def start(self, expected_total: int) -> None:
         """Size the per-task thread env for ``expected_total`` tasks and
@@ -333,6 +366,7 @@ class StreamingQueuer:
 
         if self._direct is not None:
             direct_ok, failures, leftover, unknown, error = self._direct.finish()
+            self.task_ids.extend(self._direct.task_ids)
             self._direct = None
             queued_ok += direct_ok
             for command, error_msg in failures:
@@ -355,17 +389,19 @@ class StreamingQueuer:
                 # realization twice. Ask the daemon whether the label exists
                 # and only resubmit when it provably is not queued.
                 label = _extract_label(unknown)
-                verdict = _task_with_label_exists(label)
-                if verdict is True:
-                    logger.warning(
-                        "Task %r was in flight when the daemon connection broke; pueue "
-                        "reports it queued, so it is not resubmitted.", label)
-                    queued_ok += 1
-                elif verdict is False:
+                existing = _task_with_label(label)
+                if existing is False:
                     logger.warning(
                         "Task %r was in flight when the daemon connection broke and pueue "
                         "does not report it; resubmitting it via the CLI.", label)
                     leftover = [unknown] + leftover
+                elif existing is not None:
+                    logger.warning(
+                        "Task %r was in flight when the daemon connection broke; pueue "
+                        "reports it queued, so it is not resubmitted.", label)
+                    queued_ok += 1
+                    if existing.get("id") is not None:
+                        self.task_ids.append(existing["id"])
                 else:
                     logger.error(
                         "Task %r was in flight when the daemon connection broke and its "
@@ -388,11 +424,13 @@ class StreamingQueuer:
 
         for future in concurrent.futures.as_completed(self._future_to_cmd):
             command = self._future_to_cmd[future]
-            success, error_msg = future.result()
+            success, error_msg, task_id = future.result()
 
             if success:
                 logger.debug("Successfully queued command (priority=%s): %s", self._priority, command)
                 queued_ok += 1
+                if task_id is not None:
+                    self.task_ids.append(task_id)
             else:
                 logger.error("Failed to queue command: %s", command)
                 if error_msg:
@@ -454,6 +492,43 @@ def run_commands(commands: List[str], priority: str = "normal", full_task_env: b
     queuer.finish()
 
 
+def queue_results_collector(output_folder: str, task_ids: List[int], priority: str = "normal",
+                            full_task_env: bool = False) -> bool:
+    """Queue ``horizon --collect-results`` to run once the given tasks have succeeded.
+
+    Goes through the pueue CLI, the only path that takes dependencies. pueue
+    fails the collector when one of its dependencies fails; it runs again
+    when restarted after the failed realizations, or by hand.
+
+    Parameters
+    ----------
+    output_folder : str
+        Directory holding the realization folders.
+    task_ids : List[int]
+        Pueue ids of the realization tasks to wait for.
+    priority : str
+        Pueue scheduling priority ('low', 'normal', or 'high').
+    full_task_env : bool
+        Forward the entire environment to the task instead of the whitelist.
+
+    Returns
+    -------
+    bool
+        True when the collector was queued.
+    """
+    command = f'horizon --collect-results "{output_folder}"'
+    success, error_msg, task_id = _pueue_add_cli(
+        command, PRIORITY_MAP[priority], _COLLECTOR_LABEL, _build_task_env(full_task_env), task_ids)
+
+    if not success:
+        logger.error("Failed to queue results collection; run `%s` once the simulations have finished. "
+                     "Pueue error: %s", command, error_msg)
+        return False
+
+    logger.info("Queued results collection (task %s) to run after %d simulation(s)", task_id, len(task_ids))
+    return True
+
+
 def check_status(output_folder):
     """Check current pueue task status and report failures (non-blocking).
 
@@ -500,18 +575,19 @@ def check_status(output_folder):
         logger.info("Tasks still in progress.")
 
 
-def _task_with_label_exists(label):
-    """Ask the daemon (via the pueue CLI) whether a task with this label exists.
+def _task_with_label(label):
+    """Ask the daemon (via the pueue CLI) for the task with this label.
 
-    Returns True/False, or None when the answer cannot be determined (no
-    label to match, or the daemon state could not be read).
+    Returns the task, False when no task has the label, or None when the
+    answer cannot be determined (no label to match, or the daemon state
+    could not be read).
     """
     if not label:
         return None
     tasks = _get_pueue_tasks()
     if tasks is None:
         return None
-    return any(task.get("label") == label for task in tasks)
+    return next((task for task in tasks if task.get("label") == label), False)
 
 
 def _get_pueue_tasks():

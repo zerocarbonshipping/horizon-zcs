@@ -84,6 +84,16 @@ horizon --status path/to/output_dir
 horizon -c path/to/output_dir results.xlsx
 ```
 
+Step 1 also queues a results collector behind the runs. Once every run has
+succeeded it merges their Navigate results files (`.parquet`) into
+`<output_dir>.parquet` next to the output directory, one file that
+[Lantern](https://github.com/zerocarbonshipping/lantern-zcs) shows as
+ensembles. If a run fails, pueue fails the collector with it;
+`pueue restart --all-failed --in-place` reruns both, the collector again
+after the runs. `horizon --collect-results path/to/output_dir` runs it by
+hand. With no results files, for a Navigate that does not write them, it
+does nothing and succeeds.
+
 The `.hor` file defines the study: which parameters vary, over what ranges
 and distributions, across which scenario combinations. The `.unc` file it
 points at is an ordinary Navigate simulation file with `%TOKEN%`
@@ -115,6 +125,7 @@ See `horizon --help` for the full list. The most used flags:
 | `--output-dir DIR` | Directory for generated scenario folders (default: next to the `.unc` file). |
 | `--dry-run` | Validate the configuration and preview what would be generated. |
 | `--status DIR` | Check pueue task status and report failures for an output directory. |
+| `--collect-results DIR` | Merge the Navigate results files below `DIR` into `DIR.parquet` for Lantern; queued automatically after a study's runs. |
 | `--replot DIR ...` | Queue Navigate replot jobs for directories containing `plot_data.pkl`. |
 | `--sensitivity-analysis [FILE]` | Run PRCC sensitivity analysis, optionally from a `.sen` config. |
 | `--calibration-plot` | Generate a calibration comparison dashboard from completed results. |
