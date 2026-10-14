@@ -41,7 +41,6 @@ from horizon.parameters.parameter import ContinuousParameter, DiscreteParameter
 from horizon.parameters.sampler import ParameterSampler, resolve_parameters_for_scenario
 from horizon.parser.exclusions import get_scenario_label, should_skip_combination
 from horizon.parser.parser import parse_hor_file
-from horizon.plot.plot import analyze_sampled_parameters
 from horizon.run.run_commands import StreamingQueuer
 
 logger = logging.getLogger(__name__)
@@ -373,6 +372,7 @@ def create_files(hor_file_path, max_files=None, priority="normal", solver=None,
     if sample_only:
         logger.info("Running sampling diagnostics (plot=%s, sample_only=%s)", plot, sample_only)
         try:
+            from horizon.plot.plot import analyze_sampled_parameters
             analyze_sampled_parameters(sampled_parameters, parameters, output_path)
             logger.info("Sampling diagnostics completed.")
         except Exception:
