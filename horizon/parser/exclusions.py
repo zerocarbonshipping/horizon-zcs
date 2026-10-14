@@ -145,11 +145,6 @@ def _matches_any_rule(scenario_map, rules):
                for rule in rules)
 
 
-def is_combination_excluded(scenario_map, exclusion_rules):
-    """True if scenario_map matches any exclusion rule (None or empty rules exclude nothing)."""
-    return _matches_any_rule(scenario_map, exclusion_rules or [])
-
-
 def get_scenario_label(scenario_map, inclusion_rules):
     """Return the ``_name`` of the first matching Include rule, or ``None``.
 
@@ -206,4 +201,4 @@ def should_skip_combination(scenario_map, exclusion_rules, inclusion_rules):
     if inclusion_rules and not _matches_any_rule(scenario_map, inclusion_rules):
         return True
 
-    return is_combination_excluded(scenario_map, exclusion_rules)
+    return _matches_any_rule(scenario_map, exclusion_rules or [])

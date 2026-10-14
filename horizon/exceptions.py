@@ -8,6 +8,11 @@ to provide structured error handling and clear error messages.
 """
 
 
+def error_line(hor_file, error):
+    """One-line `file:line: error: message` for the CLI; errors without a location get the .hor file name."""
+    return str(error) if getattr(error, "location", None) else f"{hor_file}: error: {error}"
+
+
 class HorizonError(Exception):
     """Base exception for all Horizon-specific errors.
 
@@ -25,8 +30,23 @@ class ParseError(HorizonError):
     - Missing required fields
     - Invalid parameter block structure
     - Malformed override blocks
+
+    Parameters
+    ----------
+    message : str
+        What is wrong.
+    location : str, optional
+        ``file:line`` of the offending text. When given, ``str(error)`` is the clean
+        one-line form ``file:line: error: message``.
     """
-    pass
+
+    def __init__(self, message, location=None):
+        super().__init__(message, location)
+        self.message = message
+        self.location = location
+
+    def __str__(self):
+        return f"{self.location}: error: {self.message}" if self.location else self.message
 
 
 class ValidationError(HorizonError):
