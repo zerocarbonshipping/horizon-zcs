@@ -348,8 +348,9 @@ class FileHandler:
         of consecutive non-include lines are merged and compiled once, so
         per-realization rendering touches each token slot instead of
         re-scanning every line. Include items carry the original line, its
-        indentation, the quoted path (None if malformed, compiled for token
-        interpolation) and ``stem_suffix``.
+        indentation, the quoted path ("" if malformed, so the file lookup fails
+        and the template line is kept) compiled for token interpolation, and
+        ``stem_suffix``.
 
         Rewritten copies of an include are named after the source file's stem
         so two different .inc files replacing the same tokens do not overwrite
@@ -367,18 +368,18 @@ class FileHandler:
             if text_run:
                 program.append(('text', _compile_parts(''.join(text_run))))
                 text_run = []
-            raw_path = line.split('"')[1] if line.count('"') else None
+            raw_path = line.split('"')[1] if '"' in line else ""
             program.append(('include', {
                 'line': line,
                 'indent': line[:len(line) - len(line.lstrip())],
                 'raw_path': raw_path,
-                'path_parts': _compile_parts(raw_path) if raw_path is not None else None,
+                'path_parts': _compile_parts(raw_path),
             }))
         if text_run:
             program.append(('text', _compile_parts(''.join(text_run))))
 
         unc_dir = os.path.dirname(unc_path)
-        includes = [payload for kind, payload in program if kind == 'include' and payload['raw_path'] is not None]
+        includes = [payload for kind, payload in program if kind == 'include']
         stem_sources = collections.defaultdict(set)
         for payload in includes:
             if len(payload['path_parts']) == 1:
@@ -511,22 +512,17 @@ class FileHandler:
                 nav_content.append(_render_parts(payload, replacements))
                 continue
 
-            # Include line: interpolate tokens in the path, then process the file
+            # include line: interpolate tokens in the path, then process the file
             line = payload['line']
-            include_path_relative = payload['raw_path']
-            if include_path_relative is not None:
-                interpolated = _render_parts(payload['path_parts'], replacements)
-                if interpolated != include_path_relative:
-                    line = line.replace(include_path_relative, interpolated)
-                    include_path_relative = interpolated
-            else:
-                # malformed Include line (no quoted path); handled below via fallback
-                include_path_relative = ""
-
-            full_include_path = os.path.normpath(os.path.join(unc_dir, include_path_relative))
+            include_path = payload['raw_path']
+            full_include_path = payload.get('full_path')
+            if full_include_path is None:
+                include_path = _render_parts(payload['path_parts'], replacements)
+                line = line.replace(payload['raw_path'], include_path)
+                full_include_path = os.path.normpath(os.path.join(unc_dir, include_path))
 
             # collision-safe stem for rewritten copies (see _compile_template)
-            name_stem = _path_stem(include_path_relative) + payload.get('stem_suffix', "")
+            name_stem = _path_stem(include_path) + payload['stem_suffix']
 
             try:
                 updated_line = self._process_and_update_include_file(
