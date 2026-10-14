@@ -428,17 +428,10 @@ class FileHandler:
         # network filesystems every extra directory call is a round trip
         pending_includes = []
 
-        # Build unified replacements map: scenario params (strings) first, then sampled params
-        replacements = {}
-        for token, value in (scenario_parameters or {}).items():
-            if value is None:
-                continue
-            replacements[token] = str(value)
-
-        for token, value in (sample or {}).items():
-            if token == "sample":
-                continue
-            replacements[token] = self._format_value_for_template(value)
+        # scenario values first, then sampled values
+        replacements = {token: str(value) for token, value in scenario_parameters.items() if value is not None}
+        replacements.update({token: self._format_value_for_template(value)
+                             for token, value in sample.items() if token != "sample"})
 
         nav_content = []
         for kind, payload in template_program:
@@ -489,18 +482,10 @@ class FileHandler:
                              combo_name, indent, realization_folder):
         """Write a scenario-only rewritten include once per scenario combination.
 
-        The file lands in ``<output>/shared_includes/<combination>/`` and every
-        realization of the combination references it relatively - realization
-        folders already reference unmodified includes outside themselves, so
-        this adds no new portability constraint, and include-heavy decks save
-        one file creation per shared include per realization (the dominant
-        generation cost on network filesystems).
-
-        Concurrent first-writers may race on the same file; each writes the
-        identical content to a private temp file and atomically renames it
-        into place, so the shared file is complete the moment any thread
-        returns a line referencing it (the streamed queue can start Navigate
-        runs while generation continues).
+        Concurrent first-writers write identical content to a private temp
+        file and atomically rename it into place, so the shared file is
+        complete the moment any thread returns a line referencing it (the
+        streamed queue can start Navigate runs while generation continues).
         """
         shared_dir = os.path.join(self._shared_root, combo_name)
         file_name = f"{name_stem}_{'_'.join(tokens_replaced)}.inc"
@@ -543,15 +528,8 @@ class FileHandler:
         """
         parts = self._compiled_include(include_file_path)
 
-        # Tokens that will actually be replaced, unique, in first-appearance order
-        # (the rewritten file is named after them).
-        tokens_replaced = []
-        seen = set()
-        for i in range(1, len(parts), 2):
-            token = parts[i]
-            if token in replacements and token not in seen:
-                seen.add(token)
-                tokens_replaced.append(token)
+        # tokens that will actually be replaced, unique, in first-appearance order
+        tokens_replaced = list(dict.fromkeys(token for token in parts[1::2] if token in replacements))
 
         if tokens_replaced:
             # A rewrite that replaces only scenario tokens has identical
