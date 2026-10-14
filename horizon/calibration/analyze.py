@@ -32,7 +32,7 @@ Recommendation = namedtuple(
 # -- Target metrics from the Global sheet --
 # Single-column metrics (metric_name -> row1 value)
 SINGLE_METRICS = {
-    "TotalEquivalentWTW": "Total WTW Emissions",
+    "TotalEquivalentWtw": "Total WTW Emissions",
     "Expenses": "Total Expenses",
 }
 # Multi-column metrics (metric_name -> display label; sub-columns are fuel types)
@@ -526,7 +526,7 @@ def _find_fuel_column(columns, fuel_name):
 # 3c. Scoring functions
 # ---------------------------------------------------------------------------
 
-def _get_final_year_values(data_by_value, metric_key="TotalEquivalentWTW"):
+def _get_final_year_values(data_by_value, metric_key="TotalEquivalentWtw"):
     """Extract final-year metric value for each parameter value.
 
     Parameters
@@ -552,7 +552,7 @@ def _get_final_year_values(data_by_value, metric_key="TotalEquivalentWTW"):
     return sorted(pairs, key=lambda p: p[0])
 
 
-def _score_sensitivity(data_by_value, metric_key="TotalEquivalentWTW"):
+def _score_sensitivity(data_by_value, metric_key="TotalEquivalentWtw"):
     """Score how much a parameter affects outcomes (0-1).
 
     Computes percentage spread in final-year values; 30% spread = max score.
@@ -569,7 +569,7 @@ def _score_sensitivity(data_by_value, metric_key="TotalEquivalentWTW"):
     return min(spread_pct / 30.0, 1.0)
 
 
-def _score_monotonicity(data_by_value, metric_key="TotalEquivalentWTW"):
+def _score_monotonicity(data_by_value, metric_key="TotalEquivalentWtw"):
     """Score whether metric changes consistently with parameter value (0-1).
 
     Uses Spearman rank correlation.
@@ -587,7 +587,7 @@ def _score_monotonicity(data_by_value, metric_key="TotalEquivalentWTW"):
     return abs(corr)
 
 
-def _score_cross_scenario_consistency(data_by_value_per_reg, metric_key="TotalEquivalentWTW"):
+def _score_cross_scenario_consistency(data_by_value_per_reg, metric_key="TotalEquivalentWtw"):
     """Score whether the same value ranks best across all regulations (0-1).
 
     Parameters
@@ -651,7 +651,7 @@ def _score_fuel_share_realism(data_by_value, regulation):
     return np.mean(scores) if scores else 0.5
 
 
-def _score_trajectory_smoothness(data_by_value, metric_key="TotalEquivalentWTW"):
+def _score_trajectory_smoothness(data_by_value, metric_key="TotalEquivalentWtw"):
     """Score trajectory smoothness (0-1). Penalizes jagged time series."""
     smoothness_scores = []
     for _val_str, report in data_by_value.items():
@@ -816,7 +816,7 @@ def _build_summary_tables(runs, data_by_folder, param_defaults):
     -------
     dict
         {regulation: pd.DataFrame} where rows = param_token, cols = param_value,
-        values = final-year TotalEquivalentWTW.
+        values = final-year TotalEquivalentWtw.
     """
     groups = defaultdict(list)
     for run in runs:
@@ -836,8 +836,8 @@ def _build_summary_tables(runs, data_by_folder, param_defaults):
             row = {"parameter": param_token}
             for run in param_runs:
                 report = data_by_folder.get(run.folder_name)
-                if report and "TotalEquivalentWTW" in report:
-                    df = report["TotalEquivalentWTW"]
+                if report and "TotalEquivalentWtw" in report:
+                    df = report["TotalEquivalentWtw"]
                     final_val = df.iloc[-1, 0]
                     is_def = str(run.param_value) == str(param_defaults.get(param_token))
                     label = f"{run.param_value}{'*' if is_def else ''}"

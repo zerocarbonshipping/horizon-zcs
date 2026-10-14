@@ -13,17 +13,17 @@ File format::
         OutputDir = "prcc_analysis"       # optional
 
         Metric "Emissions reduction" {
-            key = "TotalEquivalentWTW"
+            key = "TotalEquivalentWtw"
             aggregation = difference
         }
 
         Metric "Lifetime emissions" {
-            key = "TotalEquivalentWTW"
+            key = "TotalEquivalentWtw"
             aggregation = cumulative
         }
 
         Metric "Final year emissions" {
-            key = "TotalEquivalentWTW"
+            key = "TotalEquivalentWtw"
             year = 2050
         }
     }

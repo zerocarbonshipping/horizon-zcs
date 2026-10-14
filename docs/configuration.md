@@ -17,15 +17,11 @@ A `.hor` file contains parameter blocks and one `Horizon` block that wires
 them together:
 
 ```
-ContinuousParameter "Fuel price multiplier" {
-    name = "Fuel price multiplier"
-    token = "FUEL_PRICE"
-    active = TRUE
-    default = 1.0
+ContinuousParameter "FUEL_PRICE" {
     low_val = 0.8
+    mid_val = 1.0
     high_val = 1.5
-    decimals = 2
-    distribution = "uniform"
+    distribution = TRIANGULAR
 }
 
 Horizon {
@@ -34,13 +30,27 @@ Horizon {
     NumberOfSamples = 100
     SamplingMethod = LHS
     RandomSeed = 42
-
-    ContinuousParameter("FUEL_PRICE")
 }
 ```
 
-Only parameters referenced inside the `Horizon` block (by token) take part
-in the study.
+Every parameter block in the file takes part in the study. Use
+`active = FALSE` to fix a parameter at its default; delete or comment out a
+block to leave it out completely. Two blocks with the same name are an error,
+also across parameter types.
+
+Older files list parameters in the `Horizon` block
+(`Parameters = [ContinuousParameter("FUEL_PRICE")]`). If a file has such a
+list, it is read the old way: only listed blocks take part, for scenario and
+sample parameters alike. This is deprecated and logs a warning.
+
+### Shared parameter fields
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `token` | no | Placeholder name in the `.unc` template (`%TOKEN%`). Defaults to the block name, which must then use only letters, digits and `_`. |
+| `name` | no | Display name. Defaults to the block name. |
+| `active` | no | `FALSE` fixes the parameter at `default`. Default `TRUE`. |
+| `default` | see below | Value for `sample_1` and for inactive parameters. For `ContinuousParameter` it defaults to `mid_val`; if there is no `mid_val`, `default` is required. Required for `DiscreteParameter`. |
 
 ### Horizon block keys
 
@@ -63,31 +73,40 @@ branches. Every combination of active scenario parameter values becomes its
 own branch of the study.
 
 ```
-ScenarioParameter "Policy scenario" {
+ScenarioParameter "POLICY" {
     name = "Policy scenario"
-    token = "POLICY"
-    active = TRUE
     default = "baseline"
     values = ["baseline", "carbon_levy"]
 }
 ```
 
-**`ContinuousParameter`** — numeric parameters sampled from a distribution:
-`uniform`, `triangular`, `log-uniform`, or `log-triangular`. `low_val` and
-`high_val` bound the range; `triangular` distributions also take `mid_val`
-(the mode). If `mid_val` is omitted it is inferred: the arithmetic mean
-`(low + high) / 2` for `triangular`, the geometric mean `sqrt(low * high)`
-for `log-triangular` (which requires positive bounds). `decimals` controls
-rounding of sampled values.
+**`ContinuousParameter`** — numeric parameters sampled from a distribution.
+`distribution` is a keyword: `LOG-TRIANGULAR` (default when omitted),
+`TRIANGULAR`, `LOG-UNIFORM` or `UNIFORM`. Quoted lowercase names
+(`"triangular"`) still work. `low_val` and `high_val` bound the range;
+triangular distributions also take `mid_val` (the mode). If `mid_val` is
+omitted it is inferred: the arithmetic mean `(low + high) / 2` for
+`TRIANGULAR`, the geometric mean `sqrt(low * high)` for `LOG-TRIANGULAR`.
+Log distributions require positive bounds.
+
+Sampled values are rounded. `decimals` is optional; without it Horizon picks
+the number of decimals from the bounds:
+
+- the rounding step is at most 1/10,000 of the range (`high_val - low_val`), and
+- for log distributions, values keep 4 significant digits at `low_val`, where
+  log sampling puts most of its values.
+
+Examples: 100–200 gives 2 decimals, 0.0001–0.001 gives 8, a log-triangular
+0.001–0.12 gives 6. If an `if` block changes the bounds or distribution, the
+decimals are recomputed for that scenario. Set `decimals` only to force a
+fixed number.
 
 **`DiscreteParameter`** — parameters drawn from a fixed set of values, with
 optional probabilities (uniform if omitted):
 
 ```
-DiscreteParameter "Fleet renewal rate" {
+DiscreteParameter "RENEWAL" {
     name = "Fleet renewal rate"
-    token = "RENEWAL"
-    active = TRUE
     default = 0.05
     values = [0.03, 0.05, 0.08]
     probabilities = [0.25, 0.5, 0.25]
@@ -120,17 +139,23 @@ Parameter definitions can change per scenario using `if` blocks inside the
 parameter block:
 
 ```
-ContinuousParameter "Fuel price multiplier" {
+ContinuousParameter "FUEL_PRICE" {
     ...
     low_val = 0.8
+    mid_val = 1.0
     high_val = 1.5
 
-    if POLICY = carbon_levy {
+    if POLICY in (carbon_levy, fuel_standard) {
         low_val = 1.0
+        mid_val = 1.4
         high_val = 2.0
     }
 }
 ```
+
+Scenarios without a matching `if` block use the base values. If the base has
+no explicit `default`, an override that changes `mid_val` also moves the
+default.
 
 Conditions support equality (`token = value`), membership
 (`token in (a, b)`), and conjunction (`and`). When overrides are present and
@@ -187,17 +212,17 @@ SensitivityAnalysis {
     OutputDir = "prcc_analysis"             # optional
 
     Metric "Emissions reduction" {
-        key = "TotalEquivalentWTW"
+        key = "TotalEquivalentWtw"
         aggregation = difference            # last year minus first year
     }
 
     Metric "Lifetime emissions" {
-        key = "TotalEquivalentWTW"
+        key = "TotalEquivalentWtw"
         aggregation = cumulative            # sum over all years
     }
 
     Metric "Final year emissions" {
-        key = "TotalEquivalentWTW"
+        key = "TotalEquivalentWtw"
         year = 2050
         aggregation = point                 # value at a specific year (default)
     }
@@ -218,10 +243,10 @@ Sensitivity analysis can also run without a `.sen` file:
 
 ```bash
 horizon --sensitivity-analysis --samples-csv samples.csv \
-        --metric "TotalEquivalentWTW:difference" \
+        --metric "TotalEquivalentWtw:difference" \
         --metric "Expenses:cumulative" \
         --report-csv report.csv source_dir output_dir
 ```
 
-Default metrics when none are given: `TotalEquivalentWTW:difference`,
-`Expenses:difference`, `TotalEquivalentWTW:cumulative`.
+Default metrics when none are given: `TotalEquivalentWtw:difference`,
+`Expenses:difference`, `TotalEquivalentWtw:cumulative`.
