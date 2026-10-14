@@ -16,6 +16,7 @@ Decoding additionally supports: floats (16/32/64-bit) and tagged values
 rejected - ciborium always writes definite lengths.
 """
 
+import io
 import struct
 
 
@@ -27,23 +28,19 @@ class CBORError(ValueError):
 # Encoding
 # ---------------------------------------------------------------------------
 
+_HEAD_SIZES = {24: 1, 25: 2, 26: 4, 27: 8}
+
+
 def _encode_head(major, value, out):
     if value < 24:
         out.append((major << 5) | value)
-    elif value < 0x100:
-        out.append((major << 5) | 24)
-        out.append(value)
-    elif value < 0x10000:
-        out.append((major << 5) | 25)
-        out += value.to_bytes(2, "big")
-    elif value < 0x100000000:
-        out.append((major << 5) | 26)
-        out += value.to_bytes(4, "big")
-    elif value < 0x10000000000000000:
-        out.append((major << 5) | 27)
-        out += value.to_bytes(8, "big")
-    else:
-        raise CBORError(f"integer too large to encode: {value}")
+        return
+    for info, size in _HEAD_SIZES.items():
+        if value < 1 << (8 * size):
+            out.append((major << 5) | info)
+            out += value.to_bytes(size, "big")
+            return
+    raise CBORError(f"integer too large to encode: {value}")
 
 
 def _encode(obj, out):
@@ -91,38 +88,26 @@ def dumps(obj):
 # Decoding
 # ---------------------------------------------------------------------------
 
-class _Reader:
-    __slots__ = ("data", "pos")
-
-    def __init__(self, data):
-        self.data = data
-        self.pos = 0
-
-    def take(self, n):
-        end = self.pos + n
-        if end > len(self.data):
-            raise CBORError("truncated CBOR data")
-        chunk = self.data[self.pos:end]
-        self.pos = end
-        return chunk
+def _take(reader, n):
+    chunk = reader.read(n)
+    if len(chunk) != n:
+        raise CBORError("truncated CBOR data")
+    return chunk
 
 
 def _decode_length(reader, info):
     if info < 24:
         return info
-    if info == 24:
-        return reader.take(1)[0]
-    if info == 25:
-        return int.from_bytes(reader.take(2), "big")
-    if info == 26:
-        return int.from_bytes(reader.take(4), "big")
-    if info == 27:
-        return int.from_bytes(reader.take(8), "big")
+    if info in _HEAD_SIZES:
+        return int.from_bytes(_take(reader, _HEAD_SIZES[info]), "big")
     raise CBORError(f"unsupported length encoding: info={info} (indefinite lengths are not supported)")
 
 
+_FLOAT_FORMATS = {25: ">e", 26: ">f", 27: ">d"}
+
+
 def _decode(reader):
-    initial = reader.take(1)[0]
+    initial = _take(reader, 1)[0]
     major = initial >> 5
     info = initial & 0x1F
 
@@ -131,9 +116,9 @@ def _decode(reader):
     if major == 1:  # negative int
         return -1 - _decode_length(reader, info)
     if major == 2:  # byte string
-        return bytes(reader.take(_decode_length(reader, info)))
+        return _take(reader, _decode_length(reader, info))
     if major == 3:  # text string
-        return reader.take(_decode_length(reader, info)).decode("utf-8")
+        return _take(reader, _decode_length(reader, info)).decode("utf-8")
     if major == 4:  # array
         return [_decode(reader) for _ in range(_decode_length(reader, info))]
     if major == 5:  # map
@@ -152,19 +137,15 @@ def _decode(reader):
         return True
     if info == 22 or info == 23:  # null / undefined
         return None
-    if info == 25:
-        return struct.unpack(">e", reader.take(2))[0]
-    if info == 26:
-        return struct.unpack(">f", reader.take(4))[0]
-    if info == 27:
-        return struct.unpack(">d", reader.take(8))[0]
+    if info in _FLOAT_FORMATS:
+        return struct.unpack(_FLOAT_FORMATS[info], _take(reader, _HEAD_SIZES[info]))[0]
     raise CBORError(f"unsupported CBOR item: major={major} info={info}")
 
 
 def loads(data):
     """Decode one CBOR item from bytes."""
-    reader = _Reader(data)
+    reader = io.BytesIO(data)
     value = _decode(reader)
-    if reader.pos != len(data):
-        raise CBORError(f"{len(data) - reader.pos} trailing byte(s) after CBOR item")
+    if trailing := len(data) - reader.tell():
+        raise CBORError(f"{trailing} trailing byte(s) after CBOR item")
     return value
