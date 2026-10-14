@@ -268,9 +268,7 @@ def _write_summary_csv(rows: List[Dict[str, Any]], csv_path: str):
 def _plot_continuous_diagnostics(arr: np.ndarray, p: ContinuousParameter, plots_path: str, scenario_safe_label: str = "all"):
     token = p.token
     n = len(arr)
-    x_min = float(arr.min())
-    x_max = float(arr.max())
-    xs = np.linspace(x_min, x_max, 200)
+    xs = np.linspace(arr.min(), arr.max(), 200)
 
     plt.figure(figsize=(10, 4))
     plt.hist(arr, bins=min(50, max(5, n // 2)), density=True, alpha=0.6, label="empirical")

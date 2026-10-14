@@ -41,14 +41,13 @@ def plot_tornado(prcc_df, metric_label, output_path):
     colors = ["#2c4068" if v >= 0 else "#a24040" for v in df["prcc"]]
 
     fig, ax = plt.subplots(figsize=(8, max(3, 0.4 * len(df))))
-    ax.barh(range(len(df)), df["prcc"], color=colors, height=0.7)
-    ax.set_yticks(range(len(df)))
-    ax.set_yticklabels(df["parameter"], fontsize=9)
+    ax.barh(df["parameter"], df["prcc"], color=colors, height=0.7)
+    ax.tick_params(axis="y", labelsize=9)
     ax.set_xlabel("PRCC")
     ax.set_title(f"PRCC — {metric_label}", fontsize=12)
     ax.axvline(0, color="black", linewidth=0.5)
-    ax.axvline(0.5, color="grey", linewidth=0.5, linestyle="--", alpha=0.6)
-    ax.axvline(-0.5, color="grey", linewidth=0.5, linestyle="--", alpha=0.6)
+    for threshold in (-0.5, 0.5):
+        ax.axvline(threshold, color="grey", linewidth=0.5, linestyle="--", alpha=0.6)
     ax.set_xlim(-1.05, 1.05)
     fig.tight_layout()
     fig.savefig(output_path, dpi=150)

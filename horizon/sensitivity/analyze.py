@@ -92,9 +92,8 @@ def prcc_analysis(ensemble_dir, metrics=None, output_dir=None,
         If *None*, analyses all default metrics at the final available year.
     output_dir : str or None
         Where to write results.  Defaults to ``{ensemble_dir}/prcc_analysis``.
-    samples_csv : str or None
-        Explicit path to the parameter samples CSV file.  When *None*,
-        the CSV is located automatically via ``_find_csv()``.
+    samples_csv : str
+        Path to the parameter samples CSV file.
     report_csv : str or None
         Path to a collected report (output of ``horizon -c``).  When
         provided, metric values are extracted from this single file
@@ -105,25 +104,19 @@ def prcc_analysis(ensemble_dir, metrics=None, output_dir=None,
     t_start = time.monotonic()
     logger.info("Starting PRCC analysis for %s", ensemble_dir)
 
-    # verify all inputs before expensive I/O
     if samples_csv is None:
         raise FileOperationError(
             "A samples CSV path is required (--samples-csv)."
         )
-    samples_csv = os.path.abspath(samples_csv)
-    if not os.path.isfile(samples_csv):
-        raise FileOperationError(
-            f"Specified samples CSV not found: {samples_csv}"
-        )
-    logger.info("Using samples CSV: %s", samples_csv)
 
+    # verify all inputs before expensive I/O
+    X_df, scenario_df = _load_parameter_matrix(ensemble_dir, samples_csv)
     collected_report_path = _resolve_collected_report(report_csv, ensemble_dir)
     if collected_report_path is None:
         _check_any_report_exists(ensemble_dir)
 
     os.makedirs(output_dir, exist_ok=True)
 
-    X_df, scenario_df = _load_parameter_matrix_from_csv(samples_csv)
     param_names = list(X_df.columns)
     folder_names = list(X_df.index)
     logger.info(
@@ -651,35 +644,19 @@ def _extract_output_path_from_hor(hor_path):
 
 
 def _load_parameter_matrix(ensemble_dir, samples_csv=None):
-    """Read the parameter samples CSV and return the parameter matrix.
+    """Read the samples CSV (auto-discovered near *ensemble_dir* when not given).
 
-    Prefer ``_load_parameter_matrix_from_csv()`` when the CSV path is
-    already resolved (e.g. after early validation).
-
-    Parameters
-    ----------
-    ensemble_dir : str
-        Ensemble directory (used for CSV auto-discovery fallback).
-    samples_csv : str or None
-        Explicit path to the CSV.  Skips auto-discovery when provided.
-
-    Returns
-    -------
-    X_df : pd.DataFrame
-        Sample parameters (float), indexed by folder name.
-    scenario_df : pd.DataFrame
-        Scenario columns, indexed by folder name (may be empty).
+    Returns ``(X_df, scenario_df)``: float sample parameters and scenario
+    columns, both indexed by realization folder name.
     """
-    if samples_csv is not None:
-        csv_path = os.path.abspath(samples_csv)
-        if not os.path.isfile(csv_path):
-            raise FileOperationError(
-                f"Specified samples CSV not found: {csv_path}"
-            )
-    else:
-        csv_path = _find_csv(ensemble_dir)
+    if samples_csv is None:
+        samples_csv = _find_csv(ensemble_dir)
+    elif not os.path.isfile(samples_csv):
+        raise FileOperationError(
+            f"Specified samples CSV not found: {os.path.abspath(samples_csv)}"
+        )
 
-    return _load_parameter_matrix_from_csv(csv_path)
+    return _load_parameter_matrix_from_csv(samples_csv)
 
 
 def _sample_suffix(sample_name):
@@ -691,15 +668,7 @@ def _sample_suffix(sample_name):
 
 
 def _load_parameter_matrix_from_csv(csv_path):
-    """Read a resolved CSV path and return the parameter matrix.
-
-    Returns
-    -------
-    X_df : pd.DataFrame
-        Sample parameters (float), indexed by folder name.
-    scenario_df : pd.DataFrame
-        Scenario columns, indexed by folder name (may be empty).
-    """
+    """Read a samples CSV into ``(X_df, scenario_df)`` indexed by realization folder name."""
     with open(csv_path, newline="") as f:
         reader = csv.reader(f)
         header = next(reader)
@@ -747,12 +716,9 @@ def _load_parameter_matrix_from_csv(csv_path):
         df.index = scenario_prefix + "_" + raw_samples.apply(_sample_suffix)
     df.index.name = "folder"
 
-    scenario_df = df[scenario_cols].copy() if scenario_cols else pd.DataFrame(index=df.index)
-
-    X_df = df[sample_cols].apply(pd.to_numeric, errors="coerce")
-
-    # drop non-numeric discrete tokens
-    return X_df.dropna(axis=1, how="all"), scenario_df
+    # all-NaN columns are non-numeric discrete tokens
+    X_df = df[sample_cols].apply(pd.to_numeric, errors="coerce").dropna(axis=1, how="all")
+    return X_df, df[scenario_cols]
 
 
 def _load_all_metrics(ensemble_dir, folder_names, metric_specs):
