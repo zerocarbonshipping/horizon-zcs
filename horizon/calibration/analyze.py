@@ -13,6 +13,7 @@ import csv
 import glob
 import logging
 import os
+import re
 import warnings
 from collections import Counter, defaultdict, namedtuple
 
@@ -53,14 +54,6 @@ _DEFAULT_COLOR = "#a2703c"  # yellow-7
 
 # Fuel types to track in share plots
 _FUEL_TYPES = ["OIL", "METHANE", "METHANOL", "AMMONIA"]
-
-# Per-fuel colors for share plots (one distinct color per fuel)
-_FUEL_COLORS = {
-    "OIL": "#323232",       # black-7
-    "METHANE": "#3c5e86",   # blue-6
-    "METHANOL": "#286464",  # green-6
-    "AMMONIA": "#a2703c",   # yellow-7
-}
 
 # Expected no-regulation 2050 fuel share ranges (midpoint, half-width)
 _NO_REG_SHARE_BENCHMARKS = {
@@ -168,14 +161,8 @@ def _discover_regulations(calibration_dir):
     as the regulation name. Skips the ``os.path.isdir`` check to avoid issues
     on network mounts (SMB/CIFS) where it can return False for directories.
     """
-    import re
-    pattern = re.compile(r'^(.+)_sample\d{3}$')
-    regulations = set()
-    for entry in os.listdir(calibration_dir):
-        m = pattern.match(entry)
-        if m:
-            regulations.add(m.group(1))
-    return sorted(regulations)
+    matches = (re.match(r"^(.+)_sample\d{3}$", entry) for entry in os.listdir(calibration_dir))
+    return sorted({m.group(1) for m in matches if m})
 
 
 # ---------------------------------------------------------------------------
@@ -625,12 +612,10 @@ def _suggest_next_discretization(recommendations):
     """
     result = {}
     for rec in recommendations:
-        pt = rec.param_token
-        if pt in _ROUND2_GRIDS:
-            result[pt] = _ROUND2_GRIDS[pt]
-        else:
-            v = _safe_float(rec.recommended_value)
-            result[pt] = sorted(set([v * 0.5, v * 0.75, v, v * 1.25, v * 1.5]))
+        v = _safe_float(rec.recommended_value)
+        result[rec.param_token] = _ROUND2_GRIDS.get(
+            rec.param_token, sorted({v * 0.5, v * 0.75, v, v * 1.25, v * 1.5})
+        )
     return result
 
 
