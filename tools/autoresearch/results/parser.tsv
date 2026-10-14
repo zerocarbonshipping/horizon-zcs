@@ -1,0 +1,14 @@
+de362b0	ok	6643	1.50	5.67	kept	baseline
+39541f8	ok	6620	2.54	8.47	kept	share MC/LHS sampling loop via _sample
+416d382	ok	6598	2.47	7.41	kept	delete unused _sample_continuous_mc/_sample_discrete_mc (tests moved to _continuous_ppf)
+09c12c1	ok	6576	2.22	5.80	kept	condense ensure_mid_val and sensitivity base mid computation
+2141b93	ok	6550	1.87	5.36	kept	_emissions_sample: replace nested directive helpers with opposite-directive lookup
+95c05b9	ok	6675	1.67	5.76	kept	merged new base
+e78a7ee	ok	6587	1.99	6.87	kept	parser: one brace matcher, base_content computed once, create_parameter flattened, unified exclude/include validation, drop unused override start/end
+513130d	ok	6584	1.86	6.62	kept	Horizon block settings via one setting() helper
+f12a2fe	ok	6548	1.64	5.99	kept	exclusions: _parse_directives, one matcher
+c60ac3a	ok	6545	1.71	5.30	kept	sampler: drop redundant lower()/or-uniform, simpler cache lookup
+f3d7302	ok	6536	1.73	5.50	kept	sampler: no per-draw _validate_discrete, dead None checks removed
+edf904a	ok	6524	1.49	5.66	kept	parameter.py: shallow copy docstring/import
+19642e9	ok	6515	1.72	5.73	kept	_parse_kv_block condensed
+0986026	ok	6512	1.69	4.92	kept	parse_hor_file comment stripping inline

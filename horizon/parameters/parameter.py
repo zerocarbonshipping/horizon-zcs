@@ -13,8 +13,9 @@ Contains:
 
 Overrides are stored as a list on the parameter instance. Each override is expected
 to be a dict of the form parsed by the parser's parse_overrides() helper:
-    { "conditions": [...], "attrs": {...}, "start": int, "end": int }
+    { "conditions": [...], "attrs": {...} }
 """
+import copy
 import math
 
 from horizon.exceptions import ParameterError
@@ -76,24 +77,8 @@ class BaseParameter:
         self.default = default
 
     def shallow_copy_with_overrides(self, attrs):
-        """Create a shallow copy of this parameter with specific attributes overridden.
-
-        Much faster than copy.deepcopy() since parameter objects are simple data
-        holders with immutable or shared-safe fields. Only the override attrs
-        (numeric values like low_val, high_val, mid_val, default) are changed.
-
-        Parameters
-        ----------
-        attrs : dict
-            Attribute names and values to override on the copy.
-
-        Returns
-        -------
-        BaseParameter
-            A new instance of the same class with overridden attributes.
-        """
-        import copy
-        new = copy.copy(self)  # shallow copy — shares lists/dicts by reference
+        """Return a shallow copy of this parameter with the attributes in attrs overridden."""
+        new = copy.copy(self)  # shares lists/dicts by reference
         for k, v in attrs.items():
             setattr(new, k, v)
         return new
