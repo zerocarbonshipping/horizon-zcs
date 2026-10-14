@@ -6,11 +6,11 @@
 
 import collections
 import concurrent.futures
+import functools
 import hashlib
 import itertools
 import logging
 import os
-import pathlib
 import re
 import threading
 import time
@@ -66,6 +66,23 @@ def unquoted_default(scenario_parameter):
 def _short_hash(text):
     """Deterministic 8-hex-char tag used to disambiguate include names."""
     return hashlib.sha1(text.encode("utf-8", errors="surrogateescape")).hexdigest()[:8]
+
+
+def _write(path, text):
+    """Write ``text`` to ``path`` (plain open: pathlib costs ~30 us per file)."""
+    with open(path, 'w') as fh:
+        fh.write(text)
+
+
+@functools.lru_cache(maxsize=None)
+def _include_relpath(path, output_dir):
+    """``path`` relative to any realization folder directly under ``output_dir``.
+
+    Realization folders are siblings and include files never live inside one,
+    so the answer is the same for all of them; caching it saves one relpath
+    (two getcwd calls) per include per realization.
+    """
+    return os.path.relpath(path, os.path.join(output_dir, '_')).replace(os.sep, '/')
 
 
 def _path_stem(path):
@@ -386,7 +403,7 @@ class FileHandler:
         samples = []
         for _ in range(3):
             start = time.perf_counter()
-            pathlib.Path(probe_path).write_text("probe")
+            _write(probe_path, "probe")
             samples.append(time.perf_counter() - start)
             os.remove(probe_path)
         return sorted(samples)[1]
@@ -474,8 +491,8 @@ class FileHandler:
         includes_folder = os.path.join(realization_folder, "simulation_includes")
         os.makedirs(includes_folder if pending_includes else realization_folder, exist_ok=True)
         for file_name, content in pending_includes:
-            pathlib.Path(includes_folder, file_name).write_text(content)
-        pathlib.Path(nav_filepath).write_text(''.join(nav_content))
+            _write(os.path.join(includes_folder, file_name), content)
+        _write(nav_filepath, ''.join(nav_content))
         return nav_filepath
 
     def _shared_include_line(self, parts, replacements, tokens_replaced, name_stem,
@@ -494,11 +511,11 @@ class FileHandler:
         if shared_path not in self._shared_written:
             os.makedirs(shared_dir, exist_ok=True)
             tmp_path = f"{shared_path}.{threading.get_ident()}.tmp"
-            pathlib.Path(tmp_path).write_text(_render_parts(parts, replacements))
+            _write(tmp_path, _render_parts(parts, replacements))
             os.replace(tmp_path, shared_path)
             self._shared_written.add(shared_path)
 
-        return _format_include_line(os.path.relpath(shared_path, realization_folder).replace(os.sep, '/'), indent)
+        return _format_include_line(_include_relpath(shared_path, os.path.dirname(realization_folder)), indent)
 
     @staticmethod
     def _build_command(path, solver=None, navigate_flags=None):
@@ -552,4 +569,4 @@ class FileHandler:
 
         # no tokens changed: reference the original file relative to the .nav
         return _format_include_line(
-            os.path.relpath(include_file_path, realization_folder).replace(os.sep, '/'), indent)
+            _include_relpath(include_file_path, os.path.dirname(realization_folder)), indent)
