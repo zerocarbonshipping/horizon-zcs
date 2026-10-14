@@ -85,58 +85,29 @@ def resolve_parameters_for_scenario(parameters, scenario_map):
 
 def ensure_mid_val(p):
     """
-    Ensure p.mid_val exists only for distributions that need it (triangular / log-triangular).
+    Infer p.mid_val when missing, for triangular distributions only.
 
-    - For 'log-triangular' (name contains both 'log' and 'triangular'): use geometric mean sqrt(low*high),
-      requiring positive bounds. Log an INFO message when the value is assumed.
-    - For 'triangular' (name contains 'triangular' but not 'log'): use arithmetic mean (low+high)/2 and log it.
-    - For other distributions (e.g. 'uniform', 'log-uniform', ...) do nothing (no mid_val inference, no logging).
-
-    This avoids noisy logging for uniform distributions which don't use mid_val.
+    Log-triangular uses the geometric mean (positive bounds required), triangular the arithmetic
+    mean. Degenerate bounds (low == high) give mid_val = low. Other distributions are left alone.
     """
-    # no-op if already present
-    if getattr(p, "mid_val", None) is not None:
+    if p.mid_val is not None:
         return
 
-    if getattr(p, "low_val", None) is None or getattr(p, "high_val", None) is None:
-        raise ValueError(f"Missing bounds for '{p.token}' when attempting to set default mid_val.")
+    lo, hi = p.low_val, p.high_val
+    dist = (p.distribution or "uniform").lower()
 
-    lo = p.low_val
-    hi = p.high_val
-
-    # Degenerate bounds: low == high -> mid == low (safe)
     if lo == hi:
         p.mid_val = lo
-        logger.debug("Parameter '%s' low_val == high_val; setting mid_val = %s", p.token, lo)
-        return
-
-    dist = (getattr(p, "distribution", "uniform") or "uniform").lower()
-
-    # Only infer mid_val for triangular-like distributions
-    if "triangular" in dist:
-        if "log" in dist:
-            # log-triangular: use geometric mean and require positive bounds
-            if lo <= 0 or hi <= 0:
-                raise ValueError(f"Log distributions require positive bounds for '{p.token}'. Cannot infer mid_val.")
-            mid = math.sqrt(lo * hi)
-            p.mid_val = mid
-            logger.debug(
-                "Parameter '%s' missing mid_val for log distribution '%s': "
-                "assuming geometric mean mid_val = %s (low=%s, high=%s)",
-                p.token, p.distribution, mid, lo, hi
-            )
-        else:
-            # triangular: arithmetic mean
-            mid = (lo + hi) / 2.0
-            p.mid_val = mid
-            logger.debug(
-                "Parameter '%s' missing mid_val for distribution '%s': assuming arithmetic mean mid_val = %s (low=%s, high=%s)",
-                p.token, p.distribution, mid, lo, hi
-            )
+    elif "triangular" in dist and "log" in dist:
+        if lo <= 0 or hi <= 0:
+            raise ValueError(f"Log distributions require positive bounds for '{p.token}'. Cannot infer mid_val.")
+        p.mid_val = math.sqrt(lo * hi)
+    elif "triangular" in dist:
+        p.mid_val = (lo + hi) / 2.0
     else:
-        # For distributions that don't use mid_val (e.g. uniform, log-uniform),
-        # do nothing and do not log.
         return
+
+    logger.debug("Parameter '%s' missing mid_val for distribution '%s': assuming %s", p.token, p.distribution, p.mid_val)
 
 
 class ParameterSampler:
@@ -282,18 +253,11 @@ class ParameterSampler:
             if not p.active:
                 base[p.token] = p.default
             elif isinstance(p, ContinuousParameter):
-                # For triangular/log-triangular, infer mid_val (and log it) so sensitivity base uses it.
-                # For uniform and other distributions that don't use mid_val, default the base to the arithmetic
-                # midpoint silently (no logger message).
-                dist = (getattr(p, "distribution", "uniform") or "uniform").lower()
-                if "triangular" in dist:
-                    # ensure and use mid_val (triangular/log-triangular handled inside ensure_mid_val)
+                # triangular distributions use their (inferred) mid_val, all others the arithmetic midpoint
+                if "triangular" in (p.distribution or "uniform").lower():
                     ensure_mid_val(p)
                     base[p.token] = p.mid_val
                 else:
-                    # uniform / log-uniform / others: use arithmetic midpoint as base silently
-                    if p.low_val is None or p.high_val is None:
-                        raise ValueError(f"Missing bounds for '{p.token}' when computing sensitivity base.")
                     base[p.token] = (p.low_val + p.high_val) / 2.0
             else:
                 base[p.token] = p.values[len(p.values) // 2]
