@@ -323,171 +323,66 @@ def _validate_conditions(parameters, scenario_parameters, file_path):
 
 
 # -------------------------------------------------------------------------
-# One-line forms, rewritten to the block form before parsing (line numbers are kept)
+# One-line distribution call, rewritten to the block form before parsing (line numbers are kept)
 # -------------------------------------------------------------------------
-_header_re = re.compile(r'(ScenarioParameter|ContinuousParameter|DiscreteParameter)\s+"([^"]+)"\s*([={])')
-_call_re = re.compile(r'\s*([A-Za-z][A-Za-z_-]*)\s*\(([^()]*)\)')
-_tuple_re = re.compile(r'([A-Za-z_-]*)\s*\(([^()]*)\)')
-_list_re = re.compile(r'\s*(\[[^\]]*])')
+_call_re = re.compile(r'(ContinuousParameter|DiscreteParameter)\s+"([^"]+)"\s*=\s*([A-Za-z][A-Za-z_-]*)\s*'
+                      r'\(((?:[^()\[\]]|\[[^\]]*])*)\)[ \t]*({)?')
 _discrete_args_re = re.compile(r'\s*(\[[^\]]*])\s*(?:,\s*(\[[^\]]*]))?\s*')
-_body_brace_re = re.compile(r'[ \t]*{')
-# `if <condition> = base` or `= (numbers)` or `= DIST(numbers)` on one line; a condition may span lines
-_oneline_override_re = re.compile(
-    r'^([ \t]*if\b[^{}]*?)\s*=\s*(base\b|[A-Za-z_-]*\s*\([^()]*\))[ \t]*(?=$|[,}])', flags=re.M | re.I)
 _CALL_KEYS = ("low_val", "mid_val", "high_val", "distribution", "values", "probabilities")
-_BOUND_KEYS = {2: ("low_val", "high_val"), 3: ("low_val", "mid_val", "high_val")}
 
 
-def _bound_attrs(distribution, args, where, file_path, line):
-    """`low_val = ..` attributes for the numbers in a distribution call; the arity must fit the distribution."""
-    arity = 3 if "triangular" in distribution else 2
-    numbers = [arg.strip() for arg in args.split(',')]
-    if len(numbers) != arity or any(_number(arg) is None for arg in numbers):
-        expected = "low, mode, high" if arity == 3 else "low, high"
-        raise _error(file_path, line, f"{where}: {distribution.upper()} takes {arity} numbers ({expected}), "
-                                      f"got ({' '.join(args.split())}).")
-
-    return ", ".join(f"{key} = {number}" for key, number in zip(_BOUND_KEYS[arity], numbers))
-
-
-def _expand_call(kind, content, start, where, file_path, line):
-    """Parse the call after `"name" =` at content[start:]; returns (block attributes, distribution or None,
-    index past the call)."""
-    if kind == "ScenarioParameter":
-        values = _list_re.match(content, start)
-        if not values:
-            raise _error(file_path, line, f"{where}: expected a list of values, e.g. = [a, b, c].")
-
-        return f"values = {values.group(1)}", None, values.end()
-
-    call = _call_re.match(content, start)
-    if not call:
-        raise _error(file_path, line, f"{where}: expected a distribution call after '=', e.g. UNIFORM(0, 1).")
-
-    name, args = call.groups()
+def _call_attrs(kind, name, args, where, file_path, line):
+    """Block-form attributes for `= NAME(args)`, e.g. `distribution = uniform, low_val = 0, high_val = 1`."""
     if kind == "DiscreteParameter":
         lists = _discrete_args_re.fullmatch(args)
         if name.upper() != "DISCRETE" or not lists:
             raise _error(file_path, line, f"{where}: expected DISCRETE([values], [probabilities]); "
                                           "probabilities are optional (uniform).")
-
-        probabilities = f", probabilities = {lists.group(2)}" if lists.group(2) else ""
-        return f"values = {lists.group(1)}{probabilities}", None, call.end()
+        return f"values = {lists.group(1)}" + (f", probabilities = {lists.group(2)}" if lists.group(2) else "")
 
     try:
         distribution = normalize_distribution(name)
     except ParameterError as e:
         raise _error(file_path, line, f"{where}: {e}")
 
-    return (f"distribution = {distribution}, {_bound_attrs(distribution, args, where, file_path, line)}",
-            distribution, call.end())
+    triangular = "triangular" in distribution
+    keys = ("low_val", "mid_val", "high_val") if triangular else ("low_val", "high_val")
+    numbers = [arg.strip() for arg in args.split(',')]
+    if len(numbers) != len(keys) or any(_number(arg) is None for arg in numbers):
+        expected = "low, mode, high" if triangular else "low, high"
+        raise _error(file_path, line, f"{where}: {distribution.upper()} takes {len(keys)} numbers ({expected}), "
+                                      f"got ({' '.join(args.split())}).")
+    return f"distribution = {distribution}, " + ", ".join(f"{k} = {n}" for k, n in zip(keys, numbers))
 
 
-def _expand_overrides(body, kind, distribution, where, file_path, body_line):
-    """Rewrite the one-line `if ... = ...` overrides in body as `if ... { ... }` blocks. distribution is the
-    base distribution (None: read it from the long-form body); it decides the arity of `= (...)`."""
-    if not _oneline_override_re.search(body):
-        return body
+def _expand_calls(content, file_path):
+    """Rewrite each `Kind "x" = DIST(...) [{ attrs }]` as `Kind "x" { distribution/bounds, attrs }`."""
+    pieces, pos = [], 0
+    for call in _call_re.finditer(content):
+        if call.start() < pos:
+            continue
 
-    if distribution is None:
-        rest = _base_content(_oneline_override_re.sub(lambda match: '\n' * match.group().count('\n'), body))
-        found = distribution_pattern.search(rest)
-        try:
-            distribution = normalize_distribution(found.group(1) if found else DEFAULT_DISTRIBUTION)
-        except ParameterError:
-            distribution = DEFAULT_DISTRIBUTION  # create_parameter() reports the bad value
-
-    def expand(match):
-        line = body_line + body.count('\n', 0, match.start())
-        header, rhs = match.group(1), match.group(2)
-        label = f"{where}, '{' '.join(header.split())}'"
-        try:
-            _parse_conditions(header.strip()[2:])
-        except ValueError as e:
-            raise _error(file_path, line, f"{where}: {e}")
-
-        attrs = ""
-        if rhs.lower() != "base":
-            if kind == "DiscreteParameter":
-                raise _error(file_path, line, f"{label}: a DiscreteParameter override takes `= base` or a block.")
-
-            name, args = _tuple_re.match(rhs).groups()
-            try:
-                override_distribution = normalize_distribution(name) if name else distribution
-            except ParameterError as e:
-                raise _error(file_path, line, f"{label}: {e}")
-
-            attrs = _bound_attrs(override_distribution, args, label, file_path, line)
-            if name:
-                attrs = f"distribution = {override_distribution}, {attrs}"
-
-        block = f"{header} {{ {attrs} }}"
-        return block + '\n' * max(0, match.group().count('\n') - block.count('\n'))
-
-    return _oneline_override_re.sub(expand, body)
-
-
-def _expand_short_forms(content, file_path):
-    """
-    Rewrite every `Kind "x" = call { attrs }` block and one-line override in content as the block form.
-
-    Parameters
-    ----------
-    content : str
-        The .hor text with comments removed.
-    file_path : str
-        Used to locate errors.
-
-    Returns
-    -------
-    str
-        The same text in block form, with the same line numbers.
-    """
-    pieces = []
-    pos = 0
-    while True:
-        header = _header_re.search(content, pos)
-        if not header:
-            break
-
-        kind, name, opener = header.groups()
+        kind, name, dist, args, brace = call.groups()
         where = f'{kind} "{name}"'
-        line = content.count('\n', 0, header.start()) + 1
-        generated, distribution, end = "", None, header.end()
-        if opener == "=":
-            generated, distribution, end = _expand_call(kind, content, end, where, file_path, line)
-            brace = _body_brace_re.match(content, end)
-            body_start = brace.end() if brace else None
-        else:
-            body_start = header.end()
-
-        body = ""
-        if body_start is not None:
-            end = _matching_brace(content, body_start - 1, "parameter block")
-            body = content[body_start: end - 1]
-
-        body_line = content.count('\n', 0, body_start or end) + 1
-        if kind != "ScenarioParameter":
-            body = _expand_overrides(body, kind, distribution, where, file_path, body_line)
-
-        pieces.append(content[pos: header.start()])
-        if opener == "{":
-            pieces.append(f"{content[header.start(): body_start]}{body}}}")
-        else:
+        line = content.count('\n', 0, call.start()) + 1
+        body, end = "", call.end()
+        if brace:
+            end = _matching_brace(content, call.end() - 1, "parameter block")
+            body = content[call.end(): end - 1]
             base = _base_content(body)
-            for match in _key_re.finditer(base):
-                if match.group(1) in _CALL_KEYS:
-                    key_line = body_line + base.count('\n', 0, match.start(1))
-                    raise _error(file_path, key_line, f"{where}: '{match.group(1)}' cannot be set next to the "
-                                                      "call; remove it, or write the block in the long form.")
+            body_line = content.count('\n', 0, call.end()) + 1
+            for key in _key_re.finditer(base):
+                if key.group(1) in _CALL_KEYS:
+                    raise _error(file_path, body_line + base.count('\n', 0, key.start(1)),
+                                 f"{where}: '{key.group(1)}' cannot be set next to the call; remove it, "
+                                 "or write the block in the long form.")
 
-            call_lines = content.count('\n', header.end(), body_start or end)
-            pad = '\n' * max(0, call_lines - generated.count('\n'))
-            pieces.append(f'{kind} "{name}" {{ {generated},{pad}{body}}}')
+        pad = '\n' * content.count('\n', call.start(), call.end())
+        pieces += [content[pos: call.start()],
+                   f'{kind} "{name}" {{ {_call_attrs(kind, dist, args, where, file_path, line)},{pad}{body}}}']
         pos = end
 
-    pieces.append(content[pos:])
-    return ''.join(pieces)
+    return ''.join(pieces + [content[pos:]])
 
 
 def parse_hor_file(file_path):
@@ -501,7 +396,7 @@ def parse_hor_file(file_path):
     with open(file_path, 'r', encoding='utf-8') as file:
         content = ''.join(_strip_comment(line) for line in file)
 
-    content = _expand_short_forms(content, file_path)
+    content = _expand_calls(content, file_path)
 
     # Extract and process the Horizon block
     horizon_match = re.search(r'Horizon\s*{([\s\S]*?)}', content)
