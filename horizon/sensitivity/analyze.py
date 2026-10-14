@@ -24,7 +24,7 @@ Usage from the CLI::
     horizon --sensitivity-analysis --samples-csv samples.csv \\
             --report-csv report.csv /path/to/ensemble
     horizon --sensitivity-analysis --samples-csv samples.csv \\
-            --metric "TotalEquivalentWTW@2050" /path/to/ensemble /path/to/output
+            --metric "TotalEquivalentWtw@2050" /path/to/ensemble /path/to/output
 """
 
 import concurrent.futures
@@ -63,7 +63,7 @@ _AGGREGATIONS = {"point", "difference", "cumulative"}
 
 # Metrics available on the Global sheet (same as calibration/analyze.py)
 _KNOWN_METRICS = {
-    "TotalEquivalentWTW",
+    "TotalEquivalentWtw",
     "Expenses",
     "ConsumedEnergy",
     "InstalledPower",
@@ -72,9 +72,9 @@ _KNOWN_METRICS = {
 # Default metrics when the user provides none.
 # Each entry is (metric_key, aggregation).
 _DEFAULT_METRICS = [
-    ("TotalEquivalentWTW", "difference"),
+    ("TotalEquivalentWtw", "difference"),
     ("Expenses", "difference"),
-    ("TotalEquivalentWTW", "cumulative"),
+    ("TotalEquivalentWtw", "cumulative"),
 ]
 
 # Known CSV filenames for the parameter samples file
@@ -101,7 +101,7 @@ def prcc_analysis(ensemble_dir, metrics=None, output_dir=None,
         Directory containing per-realization sub-folders with NavigaTE
         Excel reports.
     metrics : list[str] or None
-        Metric specifications such as ``"TotalEquivalentWTW@2050"``.
+        Metric specifications such as ``"TotalEquivalentWtw@2050"``.
         If *None*, analyses all default metrics at the final available year.
     output_dir : str or None
         Where to write results.  Defaults to ``{ensemble_dir}/prcc_analysis``.
@@ -438,7 +438,7 @@ def _resolve_metric_specs(raw_specs, probe_year_fn):
     Parameters
     ----------
     raw_specs : list[str] | list[tuple] | list[MetricSpec] | None
-        Metric specification strings (e.g. ``"TotalEquivalentWTW@2050"``),
+        Metric specification strings (e.g. ``"TotalEquivalentWtw@2050"``),
         ``(key, aggregation)`` tuples (from defaults), or pre-built
         :class:`MetricSpec` objects (from a config file parser).
     probe_year_fn : callable
@@ -473,7 +473,7 @@ def _resolve_metric_specs(raw_specs, probe_year_fn):
             raise SensitivityAnalysisError(
                 "Cannot determine final year from reports.  "
                 "Please specify years explicitly "
-                "(e.g. --metric 'TotalEquivalentWTW@2050')."
+                "(e.g. --metric 'TotalEquivalentWtw@2050')."
             )
         specs = [
             MetricSpec(
@@ -625,7 +625,7 @@ def _load_metrics_from_collected_report(collected_df, folder_names, metric_specs
     The collected report format (``horizon -c`` output):
     - Row 0: scenario labels (e.g. ``s1_sample001_mtc_metrics``)
     - Row 1: ``Date``, ``Time (days)``, sheet name (``global``), ...
-    - Row 2: metric names (e.g. ``TotalEquivalentWTW``)
+    - Row 2: metric names (e.g. ``TotalEquivalentWtw``)
     - Row 3: sub-metric / fuel type (may be empty)
     - Row 4: blank spacer
     - Row 5+: data rows (col 0 = date string, col 1 = time_days, col 2+ = values)

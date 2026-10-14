@@ -12,6 +12,21 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 ## [Unreleased]
 
 ### Changed
+- Shorter `.hor` format. `token` and `name` are optional and default to the
+  block name. A `ContinuousParameter` without `default` uses `mid_val` (also
+  inside `if` overrides); without either, parsing fails. Every defined block
+  takes part in the study, so the `ScenarioParameters` / `Parameters` lists in
+  the `Horizon` block are no longer needed. A file with either list is read
+  the old way (only listed blocks of both kinds) and logs a deprecation
+  warning. Two blocks with the same name now raise an error. A
+  `DiscreteParameter` without `default` now raises an error instead of writing
+  an empty value.
+- `distribution` is a keyword (`LOG-TRIANGULAR`, `TRIANGULAR`, `LOG-UNIFORM`,
+  `UNIFORM`) and defaults to `LOG-TRIANGULAR` when omitted (was `uniform`).
+  Quoted lowercase names still work; unknown names raise an error.
+- `decimals` is optional. Without it the rounding step is at most 1/10,000 of
+  the range, and log distributions keep 4 significant digits at `low_val`.
+  `if` blocks that change bounds or distribution recompute it.
 - Rewritten includes whose content depends only on the scenario (all replaced
   tokens are scenario tokens) are written once per scenario combination under
   `shared_includes/<combination>/` and referenced from there, instead of
@@ -29,6 +44,10 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   `min(8, CPU)` to `min(64, 4×CPU)` there, where generation is bound by
   file-creation round trips and blocked threads are free. `--gen-workers`
   still overrides.
+- **Breaking**: the default emissions metric key is `TotalEquivalentWtw`
+  (formerly `TotalEquivalentWTW`), following navigate-zcs renaming its
+  report properties — the key must match the report column navigate writes.
+  Configs and `--metric` arguments using the old spelling find no column.
 - File generation is substantially faster: `.unc` templates and `.inc`
   include files are tokenized once and rendered per realization instead of
   being regex-scanned line by line for every realization. Generated files
@@ -99,6 +118,21 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   template's own indentation.
 - Include-line detection is word-boundary aware, so an attribute such as
   `IncludeRate = 5` is no longer mistaken for an include directive.
+- `.hor` parsing strips trailing `#` comments (a `#` inside a quoted string is
+  kept). Before, only full-line comments were removed, so a trailing comment
+  containing the word `if` (e.g. `default = 0.5  # if needed`) was parsed as
+  an override header and broke the parameter.
+- Base parameter fields (`low_val`, `mid_val`, `default`, `distribution`,
+  `decimals`, `values`, ...) are read only outside `if ... { ... }` override
+  blocks. Before, a field missing from the base but set in an override was
+  silently taken as the base value; a missing required field now raises the
+  missing-field error. Attribute patterns also match whole keys only
+  (`xname =` no longer matches `name`).
+
+## [1.0.1] - 2026-10-13
+
+### Fixed
+- Generated `.nav` files now always emit the `Include` keyword in Title case, as required by navigate-zcs; 1.0.0 emitted `INCLUDE`, which navigate rejects.
 
 ## [1.0.0] - 2026-08-17
 
