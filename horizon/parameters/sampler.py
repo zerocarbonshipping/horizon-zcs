@@ -26,27 +26,16 @@ logger = logging.getLogger(__name__)
 
 def _override_matches(ov_conditions, scenario_map):
     """
-    Determine whether a list of parsed override conditions matches a scenario mapping.
-
-    Parameters
-    ----------
-    ov_conditions : list
-        List of condition dicts as returned by parse_overrides()
-    scenario_map : dict
-        Mapping of scenario_token -> scenario_value
-
-    Returns
-    -------
-    bool
-        True if all conditions are satisfied by scenario_map.
+    Return True if all parsed override conditions (see parse_overrides()) are satisfied by
+    scenario_map (scenario_token -> scenario_value).
     """
     for c in ov_conditions:
-        token = c["token"]
+        value = str(scenario_map.get(c["token"]))
         if c["op"] == "eq":
-            if str(scenario_map.get(token)) != str(c["value"]):
+            if value != str(c["value"]):
                 return False
         elif c["op"] == "in":
-            if str(scenario_map.get(token)) not in [str(v) for v in c["values"]]:
+            if value not in [str(v) for v in c["values"]]:
                 return False
         else:
             return False
@@ -55,31 +44,16 @@ def _override_matches(ov_conditions, scenario_map):
 
 def resolve_parameters_for_scenario(parameters, scenario_map):
     """
-    Return a list of parameters with the best-matching override applied
-    for each parameter (if any).
+    Return shallow copies of parameters with the best-matching override applied (if any).
 
-    Uses shallow copy + selective attribute override instead of deep copy
-    for significantly better performance on large scenario matrices.
-
-    Matching policy:
-      - Overrides that match all their conditions are considered.
-      - The 'most specific' (largest number of conditions) wins.
-      - Ties broken by last-declared override (higher index).
+    Among overrides whose conditions all match, the most specific (most conditions) wins and ties
+    go to the last declared.
     """
     resolved = []
     for p in parameters:
-        overrides = getattr(p, "overrides", []) or []
-        matches = []
-        for idx, ov in enumerate(overrides):
-            if _override_matches(ov["conditions"], scenario_map):
-                matches.append((len(ov["conditions"]), idx, ov))
-        if matches:
-            # pick the most specific, tie-break by later declaration
-            matches.sort(key=lambda t: (t[0], t[1]))
-            chosen = matches[-1][2]
-            resolved.append(p.shallow_copy_with_overrides(chosen["attrs"]))
-        else:
-            resolved.append(p.shallow_copy_with_overrides({}))
+        matches = [ov for ov in p.overrides if _override_matches(ov["conditions"], scenario_map)]
+        best = max(reversed(matches), key=lambda ov: len(ov["conditions"]), default=None)
+        resolved.append(p.shallow_copy_with_overrides(best["attrs"] if best else {}))
     return resolved
 
 

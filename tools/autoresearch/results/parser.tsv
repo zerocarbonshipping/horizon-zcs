@@ -2,3 +2,4 @@ de362b0	ok	6643	1.50	5.67	kept	baseline
 39541f8	ok	6620	2.54	8.47	kept	share MC/LHS sampling loop via _sample
 416d382	ok	6598	2.47	7.41	kept	delete unused _sample_continuous_mc/_sample_discrete_mc (tests moved to _continuous_ppf)
 09c12c1	ok	6576	2.22	5.80	kept	condense ensure_mid_val and sensitivity base mid computation
+2141b93	ok	6550	1.87	5.36	kept	_emissions_sample: replace nested directive helpers with opposite-directive lookup
