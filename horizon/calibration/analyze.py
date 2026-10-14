@@ -556,47 +556,33 @@ def _build_recommendations(runs, data_by_folder, param_defaults):
         by_param[run.param_token].append(run)
 
     recommendations = []
+    for param_token, param_runs in sorted(by_param.items()):
+        regulations = sorted({r.regulation for r in param_runs})
+        param_values = sorted({r.param_value for r in param_runs}, key=_safe_float)
 
-    for param_token in sorted(by_param.keys()):
-        param_runs = by_param[param_token]
-        regulations = sorted(set(r.regulation for r in param_runs))
-        param_values = sorted(set(r.param_value for r in param_runs), key=_safe_float)
+        data_by_value_per_reg = {
+            reg: {r.param_value: data_by_folder.get(r.folder_name) for r in param_runs if r.regulation == reg}
+            for reg in regulations
+        }
 
-        # Build data_by_value per regulation
-        data_by_value_per_reg = {}
-        for reg in regulations:
-            dbv = {}
-            for run in param_runs:
-                if run.regulation == reg:
-                    dbv[run.param_value] = data_by_folder.get(run.folder_name)
-            data_by_value_per_reg[reg] = dbv
+        # all but fuel-share realism are independent of the candidate value
+        shared_scores = {
+            "sensitivity": np.mean([_score_sensitivity(dbv) for dbv in data_by_value_per_reg.values()]),
+            "monotonicity": np.mean([_score_monotonicity(dbv) for dbv in data_by_value_per_reg.values()]),
+            "cross_scenario": _score_cross_scenario_consistency(data_by_value_per_reg),
+            "fuel_share_realism": None,
+            "smoothness": np.mean([_score_trajectory_smoothness(dbv) for dbv in data_by_value_per_reg.values()]),
+        }
 
-        # Score each parameter value
         best_score = -1
         best_value = None
         best_breakdown = {}
-
         for val_str in param_values:
-            # Per-regulation scores averaged
-            sens_scores = []
-            mono_scores = []
-            smooth_scores = []
-            realism_scores = []
-            for reg in regulations:
-                dbv = data_by_value_per_reg[reg]
-                sens_scores.append(_score_sensitivity(dbv))
-                mono_scores.append(_score_monotonicity(dbv))
-                smooth_scores.append(_score_trajectory_smoothness(dbv))
-                single_val_dbv = {val_str: dbv.get(val_str)}
-                realism_scores.append(_score_fuel_share_realism(single_val_dbv, reg))
-
-            scores = {
-                "sensitivity": np.mean(sens_scores),
-                "monotonicity": np.mean(mono_scores),
-                "cross_scenario": _score_cross_scenario_consistency(data_by_value_per_reg),
-                "fuel_share_realism": np.mean(realism_scores),
-                "smoothness": np.mean(smooth_scores),
-            }
+            realism = np.mean([
+                _score_fuel_share_realism({val_str: dbv.get(val_str)}, reg)
+                for reg, dbv in data_by_value_per_reg.items()
+            ])
+            scores = {**shared_scores, "fuel_share_realism": realism}
 
             agg = _aggregate_scores(scores)
             if agg > best_score:
@@ -604,12 +590,10 @@ def _build_recommendations(runs, data_by_folder, param_defaults):
                 best_value = val_str
                 best_breakdown = {**scores, "aggregate": agg}
 
-        confidence = _compute_confidence(best_score, best_breakdown.get("sensitivity", 0))
-
         recommendations.append(Recommendation(
             param_token=param_token,
             recommended_value=best_value,
-            confidence=confidence,
+            confidence=_compute_confidence(best_score, best_breakdown.get("sensitivity", 0)),
             scores_breakdown=best_breakdown,
             current_default=param_defaults.get(param_token),
         ))
