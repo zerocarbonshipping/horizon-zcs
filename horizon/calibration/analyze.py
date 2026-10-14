@@ -405,16 +405,11 @@ def _get_final_year_values(data_by_value, metric_key="TotalEquivalentWTW"):
     list[tuple[float, float]]
         Sorted (param_value, final_metric_value) pairs.
     """
-    pairs = []
-    for val_str, report in data_by_value.items():
-        if report is None or metric_key not in report:
-            continue
-        df = report[metric_key]
-        if metric_key in SINGLE_METRICS:
-            final = df.iloc[-1, 0]
-        else:
-            final = df.iloc[-1].sum()
-        pairs.append((_safe_float(val_str), float(final)))
+    pairs = [
+        (_safe_float(val_str), float(report[metric_key].iloc[-1].sum()))
+        for val_str, report in data_by_value.items()
+        if report is not None and metric_key in report
+    ]
     return sorted(pairs, key=lambda p: p[0])
 
 
@@ -427,11 +422,10 @@ def _score_sensitivity(data_by_value, metric_key="TotalEquivalentWTW"):
     if len(pairs) < 2:
         return 0.0
     values = [v for _, v in pairs]
-    spread = max(values) - min(values)
     mean_val = np.mean(values)
     if mean_val == 0:
         return 0.0
-    spread_pct = abs(spread / mean_val) * 100
+    spread_pct = abs((max(values) - min(values)) / mean_val) * 100
     return min(spread_pct / 30.0, 1.0)
 
 
@@ -443,11 +437,9 @@ def _score_monotonicity(data_by_value, metric_key="TotalEquivalentWTW"):
     pairs = _get_final_year_values(data_by_value, metric_key)
     if len(pairs) < 3:
         return 0.5  # not enough data to judge
-    param_vals = [p for p, _ in pairs]
-    metric_vals = [v for _, v in pairs]
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", category=RuntimeWarning)
-        corr, _ = spearmanr(param_vals, metric_vals)
+        corr, _ = spearmanr(*zip(*pairs))
     if np.isnan(corr):
         return 0.5
     return abs(corr)
@@ -464,19 +456,12 @@ def _score_cross_scenario_consistency(data_by_value_per_reg, metric_key="TotalEq
     if not data_by_value_per_reg:
         return 0.5
 
-    best_per_reg = []
-    for _reg, data_by_value in data_by_value_per_reg.items():
-        pairs = _get_final_year_values(data_by_value, metric_key)
-        if not pairs:
-            continue
-        best_val = min(pairs, key=lambda p: p[1])[0]
-        best_per_reg.append(best_val)
-
+    pairs_per_reg = [_get_final_year_values(dbv, metric_key) for dbv in data_by_value_per_reg.values()]
+    best_per_reg = [min(pairs, key=lambda p: p[1])[0] for pairs in pairs_per_reg if pairs]
     if len(best_per_reg) < 2:
         return 0.5
 
-    unique_bests = set(best_per_reg)
-    return 1.0 / len(unique_bests)
+    return 1.0 / len(set(best_per_reg))
 
 
 def _score_fuel_share_realism(data_by_value, regulation):
@@ -488,7 +473,7 @@ def _score_fuel_share_realism(data_by_value, regulation):
         return 0.5
 
     scores = []
-    for _val_str, report in data_by_value.items():
+    for report in data_by_value.values():
         if report is None or "InstalledPower" not in report:
             continue
         df = report["InstalledPower"]
@@ -520,14 +505,11 @@ def _score_fuel_share_realism(data_by_value, regulation):
 def _score_trajectory_smoothness(data_by_value, metric_key="TotalEquivalentWTW"):
     """Score trajectory smoothness (0-1). Penalizes jagged time series."""
     smoothness_scores = []
-    for _val_str, report in data_by_value.items():
+    for report in data_by_value.values():
         if report is None or metric_key not in report:
             continue
-        df = report[metric_key]
-        if metric_key in SINGLE_METRICS:
-            series = df.iloc[:, 0].values.astype(float)
-        else:
-            series = df.sum(axis=1).values.astype(float)
+
+        series = report[metric_key].sum(axis=1).values.astype(float)
 
         if len(series) < 3:
             continue
@@ -550,17 +532,14 @@ def _score_trajectory_smoothness(data_by_value, metric_key="TotalEquivalentWTW")
 
 def _aggregate_scores(scores_dict):
     """Weighted average of scoring criteria."""
-    total = 0.0
-    for key, weight in _SCORE_WEIGHTS.items():
-        total += scores_dict.get(key, 0.5) * weight
-    return total
+    return sum(scores_dict.get(key, 0.5) * weight for key, weight in _SCORE_WEIGHTS.items())
 
 
 def _compute_confidence(aggregate_score, sensitivity_score):
     """Determine confidence level from scores."""
     if aggregate_score >= 0.7 and sensitivity_score >= 0.3:
         return "HIGH"
-    elif aggregate_score >= 0.5:
+    if aggregate_score >= 0.5:
         return "MEDIUM"
     return "LOW"
 
