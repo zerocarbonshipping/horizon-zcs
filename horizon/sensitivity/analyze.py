@@ -79,10 +79,6 @@ _COLLECTED_REPORT_NAMES = [
 ]
 
 
-# ---------------------------------------------------------------------------
-# Public entry point
-# ---------------------------------------------------------------------------
-
 def prcc_analysis(ensemble_dir, metrics=None, output_dir=None,
                   samples_csv=None, report_csv=None):
     """Run PRCC sensitivity analysis on a completed simulation ensemble.
@@ -106,18 +102,11 @@ def prcc_analysis(ensemble_dir, metrics=None, output_dir=None,
         instead of reading individual Excel reports.
     """
     ensemble_dir = os.path.abspath(ensemble_dir)
-    if output_dir is None:
-        output_dir = os.path.join(ensemble_dir, "prcc_analysis")
-    else:
-        output_dir = os.path.abspath(output_dir)
-
+    output_dir = os.path.abspath(output_dir or os.path.join(ensemble_dir, "prcc_analysis"))
     t_start = time.monotonic()
     logger.info("Starting PRCC analysis for %s", ensemble_dir)
 
-    # ------------------------------------------------------------------
-    # 0. EARLY VALIDATION — verify all inputs before expensive I/O
-    # ------------------------------------------------------------------
-    # 0a. Resolve samples CSV path
+    # verify all inputs before expensive I/O
     if samples_csv is None:
         raise FileOperationError(
             "A samples CSV path is required (--samples-csv)."
@@ -129,23 +118,12 @@ def prcc_analysis(ensemble_dir, metrics=None, output_dir=None,
         )
     logger.info("Using samples CSV: %s", samples_csv)
 
-    # 0b. Resolve collected report
     collected_report_path = _resolve_collected_report(report_csv, ensemble_dir)
-    use_collected = collected_report_path is not None
-
-    # 0c. If no collected report, verify at least one individual report exists
-    if not use_collected:
+    if collected_report_path is None:
         _check_any_report_exists(ensemble_dir)
 
     os.makedirs(output_dir, exist_ok=True)
-    logger.info(
-        "Validation complete (%.1fs). Loading parameter matrix...",
-        time.monotonic() - t_start,
-    )
 
-    # ------------------------------------------------------------------
-    # 1. Load parameter matrix
-    # ------------------------------------------------------------------
     X_df, scenario_df = _load_parameter_matrix_from_csv(samples_csv)
     param_names = list(X_df.columns)
     folder_names = list(X_df.index)
@@ -154,39 +132,24 @@ def prcc_analysis(ensemble_dir, metrics=None, output_dir=None,
         len(X_df), len(param_names),
     )
 
-    # ------------------------------------------------------------------
-    # 2. Parse metric specifications
-    # ------------------------------------------------------------------
-    if use_collected:
+    if collected_report_path is not None:
         collected_df = _read_collected_report(collected_report_path)
         metric_specs = _resolve_metric_specs(
             metrics, lambda: _final_year_from_collected(collected_df),
+        )
+        report_data = _load_metrics_from_collected_report(
+            collected_df, folder_names, metric_specs
         )
     else:
         metric_specs = _resolve_metric_specs(
             metrics, lambda: _probe_final_year(ensemble_dir, folder_names),
         )
-    logger.info("Metrics to analyse: %s", [m.display_name for m in metric_specs])
-
-    # ------------------------------------------------------------------
-    # 3. Load all metric values
-    # ------------------------------------------------------------------
-    t_load = time.monotonic()
-    logger.info("Loading metric values from %d folders...", len(folder_names))
-    if use_collected:
-        report_data = _load_metrics_from_collected_report(
-            collected_df, folder_names, metric_specs
-        )
-    else:
         report_data = _load_all_metrics(ensemble_dir, folder_names, metric_specs)
-    logger.info(
-        "Read reports for %d folders (%.1fs).",
-        len(report_data), time.monotonic() - t_load,
-    )
+    logger.info("Metrics to analyse: %s", [m.display_name for m in metric_specs])
+    logger.info("Read reports for %d folders.", len(report_data))
 
-    # 4. For each metric, compute PRCC and collect plot tasks
     all_results = []
-    plot_tasks = []  # (callable, args) tuples for deferred parallel rendering
+    plot_tasks = []
 
     for spec in metric_specs:
         logger.info("Processing metric: %s", spec.display_name)
@@ -194,15 +157,15 @@ def prcc_analysis(ensemble_dir, metrics=None, output_dir=None,
         y_series = pd.Series(
             {fn: d.get(spec, np.nan) for fn, d in report_data.items()},
             dtype=float,
-        )
-        if y_series.dropna().empty:
+        ).dropna()
+        if y_series.empty:
             logger.warning(
                 "No data found for metric '%s' — skipping.", spec.display_name
             )
             continue
 
-        # Align X and Y (inner join — drop samples missing either)
-        common = X_df.index.intersection(y_series.dropna().index)
+        # inner join: drop samples missing either X or y
+        common = X_df.index.intersection(y_series.index)
         if len(common) < 4:
             logger.warning(
                 "Only %d usable samples for '%s' — skipping.",
@@ -210,24 +173,20 @@ def prcc_analysis(ensemble_dir, metrics=None, output_dir=None,
             )
             continue
 
-        X_aligned = X_df.loc[common]
-        y_aligned = y_series.loc[common].values
+        # year for point metrics, aggregation name otherwise
+        tag = str(spec.year) if spec.aggregation == "point" else spec.aggregation
 
-        # Determine scenario groups
-        groups = _scenario_groups(scenario_df, common)
-
-        for scenario_label, idx in groups.items():
-            Xg = X_aligned.loc[idx].values
-            yg = y_aligned[np.isin(common, idx)]
-
-            if len(Xg) < 4:
+        for scenario_label, idx in _scenario_groups(scenario_df, common).items():
+            if len(idx) < 4:
                 logger.info(
                     "Scenario '%s': only %d samples — skipping.",
-                    scenario_label, len(Xg),
+                    scenario_label, len(idx),
                 )
                 continue
 
-            prcc_df = compute_prcc(Xg, yg, param_names)
+            X_group = X_df.loc[idx]
+            y_group = y_series.loc[idx].values
+            prcc_df = compute_prcc(X_group.values, y_group, param_names)
             prcc_df.insert(0, "scenario", scenario_label)
             prcc_df.insert(1, "metric", spec.metric_key)
             prcc_df.insert(2, "year", spec.year)
@@ -237,86 +196,45 @@ def prcc_analysis(ensemble_dir, metrics=None, output_dir=None,
 
             _log_top(prcc_df, scenario_label, spec.display_name)
 
-            # Tag for filenames: year for point, aggregation name otherwise
-            year_tag = (
-                str(spec.year) if spec.aggregation == "point"
-                else spec.aggregation
-            )
+            stem = f"{spec.metric_key}_{tag}_{scenario_label}"
+            plot_tasks.append((plot_tornado, (
+                prcc_df, f"{spec.display_name} [{scenario_label}]",
+                os.path.join(output_dir, f"prcc_tornado_{stem}.png"),
+            )))
+            for pname in prcc_df.dropna(subset=["prcc"]).head(_TOP_N)["parameter"]:
+                plot_tasks.append((plot_scatter_diagnostics, (
+                    X_group[pname].values, y_group, pname, spec.display_name,
+                    os.path.join(output_dir, f"prcc_scatter_{stem}_{pname}.png"),
+                )))
 
-            # Queue tornado plot
-            tornado_name = (
-                f"prcc_tornado_{spec.metric_key}"
-                f"_{year_tag}_{scenario_label}.png"
-            )
-            plot_tasks.append((
-                plot_tornado,
-                (prcc_df.copy(),
-                 f"{spec.display_name} [{scenario_label}]",
-                 os.path.join(output_dir, tornado_name)),
-            ))
+    _render_plots(plot_tasks)
 
-            # Queue scatter diagnostics for top parameters
-            top_params = prcc_df.dropna(subset=["prcc"]).head(_TOP_N)
-            for _, row in top_params.iterrows():
-                pname = row["parameter"]
-                if pname not in X_aligned.columns:
-                    continue
-                scatter_name = (
-                    f"prcc_scatter_{spec.metric_key}"
-                    f"_{year_tag}_{scenario_label}_{pname}.png"
-                )
-                x_vals = X_aligned.loc[idx, pname].values.copy()
-                y_vals = yg.copy()
-                plot_tasks.append((
-                    plot_scatter_diagnostics,
-                    (x_vals, y_vals, pname,
-                     spec.display_name,
-                     os.path.join(output_dir, scatter_name)),
-                ))
-
-    # Generate all plots in parallel
-    if plot_tasks:
-        t_plot = time.monotonic()
-        logger.info("Generating %d plots...", len(plot_tasks))
-        done_plots = 0
-        with concurrent.futures.ThreadPoolExecutor() as pool:
-            futures = [pool.submit(fn, *args) for fn, args in plot_tasks]
-            for fut in concurrent.futures.as_completed(futures):
-                try:
-                    fut.result()
-                except Exception:
-                    logger.warning("Plot generation failed.", exc_info=True)
-                done_plots += 1
-                if done_plots % 50 == 0:
-                    logger.info(
-                        "Plots: %d / %d (%.1fs)...",
-                        done_plots, len(plot_tasks),
-                        time.monotonic() - t_plot,
-                    )
-        logger.info(
-            "All %d plots generated (%.1fs).",
-            len(plot_tasks), time.monotonic() - t_plot,
-        )
-
-    # 5. Write combined CSV
     if all_results:
-        results_df = pd.concat(all_results, ignore_index=True)
         csv_path = os.path.join(output_dir, "prcc_results.csv")
-        results_df.to_csv(csv_path, index=False)
+        pd.concat(all_results, ignore_index=True).to_csv(csv_path, index=False)
         logger.info("PRCC results written to %s", csv_path)
     else:
         logger.warning("No PRCC results were produced.")
 
-    elapsed = time.monotonic() - t_start
     logger.info(
         "PRCC analysis complete (%.1fs).  Output directory: %s",
-        elapsed, output_dir,
+        time.monotonic() - t_start, output_dir,
     )
 
 
-# ---------------------------------------------------------------------------
-# Early validation helpers
-# ---------------------------------------------------------------------------
+def _render_plots(plot_tasks):
+    """Run ``(function, args)`` plot tasks in a thread pool, logging failures."""
+    def _run(task):
+        function, args = task
+        try:
+            function(*args)
+        except Exception:
+            logger.warning("Plot generation failed.", exc_info=True)
+
+    logger.info("Generating %d plots...", len(plot_tasks))
+    with concurrent.futures.ThreadPoolExecutor() as pool:
+        list(pool.map(_run, plot_tasks))
+
 
 def _resolve_collected_report(report_csv, ensemble_dir):
     """Return path to a collected report, or *None* if unavailable.
@@ -359,10 +277,6 @@ def _check_any_report_exists(ensemble_dir):
         ensemble_dir,
     )
 
-
-# ---------------------------------------------------------------------------
-# Metric specification parsing
-# ---------------------------------------------------------------------------
 
 def _parse_metric_spec(spec_str):
     """Parse a metric specification string.
@@ -496,10 +410,6 @@ def _probe_final_year(ensemble_dir, folder_names):
                 return y
     return None
 
-
-# ---------------------------------------------------------------------------
-# Collected report parsing
-# ---------------------------------------------------------------------------
 
 def _final_year_from_collected(collected_df):
     """Extract the final year from the last data row of a collected report DataFrame."""
@@ -717,75 +627,32 @@ def _aggregate(spec, entries):
     return sum(v for _, v in ordered)
 
 
-# ---------------------------------------------------------------------------
-# CSV discovery
-# ---------------------------------------------------------------------------
-
 def _find_csv(ensemble_dir):
     """Locate the parameter samples CSV in or near *ensemble_dir*.
 
-    Search order (short-circuits on first hit):
-    1. ``OutputPath`` from any ``.hor`` file in the directory.
-    2. Known filenames in *ensemble_dir*.
-    3. Known filenames in parent directory.
-    4. Recursive search under *ensemble_dir*.
-    5. Recursive search under parent directory.
+    Search order (short-circuits on first hit): ``OutputPath`` of any ``.hor``
+    file in the directory, known filenames in *ensemble_dir* then its parent,
+    then recursive searches under *ensemble_dir* and its parent.
     """
-    def _check(*paths):
-        for p in paths:
-            if os.path.isfile(p):
-                logger.info("Found parameter samples CSV: %s", p)
-                return p
-        return None
-
-    logger.info("Searching for parameter samples CSV near %s...", ensemble_dir)
-
-    # 1. Try reading OutputPath from .hor file if present (most reliable)
-    for hor_file in glob.glob(os.path.join(ensemble_dir, "*.hor")):
-        output_path = _extract_output_path_from_hor(hor_file)
-        if output_path:
-            hit = _check(output_path)
-            if hit:
-                return hit
-
-    # 2. Known names in ensemble_dir
-    hit = _check(*(os.path.join(ensemble_dir, n) for n in _CSV_NAMES))
-    if hit:
-        return hit
-
-    # 3. Known names in parent directory
     parent = os.path.dirname(ensemble_dir)
-    hit = _check(*(os.path.join(parent, n) for n in _CSV_NAMES))
-    if hit:
-        return hit
 
-    # 4. Recursive search under ensemble_dir (expensive — only if above failed)
-    logger.info(
-        "CSV not found in standard locations; scanning %s recursively "
-        "(this may be slow on large directories — use --samples-csv to skip)...",
-        ensemble_dir,
-    )
-    t0 = time.monotonic()
-    for name in _CSV_NAMES:
-        matches = glob.glob(
-            os.path.join(ensemble_dir, "**", name), recursive=True,
-        )
-        hit = _check(*matches)
-        if hit:
-            return hit
+    def _candidates():
+        for hor_file in glob.glob(os.path.join(ensemble_dir, "*.hor")):
+            output_path = _extract_output_path_from_hor(hor_file)
+            if output_path:
+                yield output_path
+        for folder in (ensemble_dir, parent):
+            for name in _CSV_NAMES:
+                yield os.path.join(folder, name)
+        logger.info("CSV not found in standard locations; scanning recursively...")
+        for folder in (ensemble_dir, parent):
+            for name in _CSV_NAMES:
+                yield from glob.glob(os.path.join(folder, "**", name), recursive=True)
 
-    # 5. Recursive search under parent (last resort)
-    logger.info(
-        "Scanning parent directory %s recursively (%.1fs so far)...",
-        parent, time.monotonic() - t0,
-    )
-    for name in _CSV_NAMES:
-        matches = glob.glob(
-            os.path.join(parent, "**", name), recursive=True,
-        )
-        hit = _check(*matches)
-        if hit:
-            return hit
+    for path in _candidates():
+        if os.path.isfile(path):
+            logger.info("Found parameter samples CSV: %s", path)
+            return path
 
     raise FileOperationError(
         f"Cannot find parameter samples CSV in or near {ensemble_dir}. "
@@ -809,10 +676,6 @@ def _extract_output_path_from_hor(hor_path):
         return path
     return None
 
-
-# ---------------------------------------------------------------------------
-# Data loading
-# ---------------------------------------------------------------------------
 
 def _load_parameter_matrix(ensemble_dir, samples_csv=None):
     """Read the parameter samples CSV and return the parameter matrix.
@@ -896,41 +759,28 @@ def _load_parameter_matrix_from_csv(csv_path):
         if c not in skip and c not in scenario_cols and c
     ]
 
-    # Build a unique index that mirrors the realization folder names on disk.
-    # The file handler logic (file_handler.py):
-    #   - If a SCENARIO column exists, use its value as the prefix
-    #   - Otherwise, join all scenario token values with "_"
-    # Then append the zero-padded sample suffix (sample001, sample002, …).
+    # index mirrors the realization folder names: scenario values joined
+    # with "_" (the SCENARIO column wins when present), then sampleNNN
     raw_samples = df[sample_col].astype(str)
-    if "SCENARIO" in df.columns and "SCENARIO" not in skip:
+    if "SCENARIO" in df.columns:
         scenario_prefix = df["SCENARIO"].astype(str)
-        suffixes = raw_samples.apply(_sample_suffix)
-        df.index = scenario_prefix + "_" + suffixes
     elif scenario_cols:
         scenario_prefix = df[scenario_cols].astype(str).apply("_".join, axis=1)
-        suffixes = raw_samples.apply(_sample_suffix)
-        df.index = scenario_prefix + "_" + suffixes
     else:
+        scenario_prefix = None
+    if scenario_prefix is None:
         df.index = raw_samples
+    else:
+        df.index = scenario_prefix + "_" + raw_samples.apply(_sample_suffix)
     df.index.name = "folder"
 
-    # Build scenario DataFrame
     scenario_df = df[scenario_cols].copy() if scenario_cols else pd.DataFrame(index=df.index)
 
-    # Build X with sample parameters as floats
-    X_df = df[sample_cols].copy()
-    for col in X_df.columns:
-        X_df[col] = pd.to_numeric(X_df[col], errors="coerce")
+    X_df = df[sample_cols].apply(pd.to_numeric, errors="coerce")
 
-    # Drop columns that are entirely NaN (non-numeric discrete tokens etc.)
-    X_df.dropna(axis=1, how="all", inplace=True)
+    # drop non-numeric discrete tokens
+    return X_df.dropna(axis=1, how="all"), scenario_df
 
-    return X_df, scenario_df
-
-
-# ---------------------------------------------------------------------------
-# Single-pass report reading
-# ---------------------------------------------------------------------------
 
 def _load_all_metrics(ensemble_dir, folder_names, metric_specs):
     """Read every realization's report once and extract all requested metrics.
@@ -1049,10 +899,6 @@ def _safe_float(v):
         return np.nan
 
 
-# ---------------------------------------------------------------------------
-# Scenario grouping
-# ---------------------------------------------------------------------------
-
 def _scenario_groups(scenario_df, common_index):
     """Build scenario groups from the scenario DataFrame.
 
@@ -1085,10 +931,6 @@ def _scenario_groups(scenario_df, common_index):
 
     return groups
 
-
-# ---------------------------------------------------------------------------
-# Logging helpers
-# ---------------------------------------------------------------------------
 
 def _log_top(prcc_df, scenario, metric_label, n=5):
     """Log the top-N parameters by |PRCC|."""
