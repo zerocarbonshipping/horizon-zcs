@@ -26,3 +26,9 @@ path = "examples/**"
 SPDX-FileCopyrightText = "2026 Fonden Mærsk Mc-Kinney Møller Center for Zero Carbon Shipping"
 SPDX-License-Identifier = "CC-BY-4.0"
 
+
+# Study files parsed by the tests; header-free so they stay verbatim copies of real studies.
+[[annotations]]
+path = "tests/fixtures/**"
+SPDX-FileCopyrightText = "2026 Fonden Mærsk Mc-Kinney Møller Center for Zero Carbon Shipping"
+SPDX-License-Identifier = "Apache-2.0"

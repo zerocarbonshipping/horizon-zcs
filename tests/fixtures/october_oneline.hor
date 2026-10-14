@@ -1,0 +1,105 @@
+Horizon {
+	UncFilePath = "./run.unc"
+	OutputPath = "./samples/samples.csv"
+	NumberOfSamples = 300 	# per scenario combination: 10 policies x 300 = 3000 runs
+	RandomSeed = 69
+	# SampleOnly = TRUE		# if true, horizon terminates before file creation
+}
+
+# ------------------------- Scenario parameters ------------------------- #
+ScenarioParameter "policy" = [
+	nzf_as_is_disallow, nzf_bracketed_disallow, nzf_tuvalu, liberia, liberia_s2, bau,
+	japan_s1_disallow, japan_s2_disallow, landing_zone_optimistic, landing_zone_pessimistic
+] { default = "nzf_as_is_disallow" }
+
+# ------------------------- Uncertainties impacted by policy axis ------------------------- #
+
+ContinuousParameter "operational_ee" = TRIANGULAR(0.10, 0.15, 0.20) {
+	emissions_low = MAXIMUM
+	# No or minimal regulatory pressure. Liberia S2: market-defined architecture.
+	if policy in (bau, liberia, liberia_s2) = (0.00, 0.05, 0.10)
+	if policy = nzf_tuvalu                  = (0.15, 0.20, 0.25)
+	# Real GFS-style compliance pressure: these use the base values above.
+	if policy in (nzf_as_is_disallow, nzf_bracketed_disallow, japan_s1_disallow,
+	              japan_s2_disallow, landing_zone_optimistic, landing_zone_pessimistic) = base
+}
+
+# ------------------------- Global alignment parameters ------------------------- #
+
+# Vessel WACC multiplier on base WACC (8.89%).
+# Low alignment = higher financing costs (risk premium); high alignment = favorable green finance.
+# Log-triangular: symmetric treatment of halving vs doubling the base WACC.
+ContinuousParameter "vessel_wacc_multiplier" = LOG-TRIANGULAR(0.6, 1.0, 1.8)
+
+# ------------------------- Sampled parameters for biomass availability ------------------------- #
+
+# Biogas feedstock share allocated to shipping.
+# Log-triangular with mode from biofuel assumptions research (25% base case).
+ContinuousParameter "feedstock_biogas_share_shipping" = LOG-TRIANGULAR(0.10, 0.25, 0.65) { emissions_low = MAXIMUM }
+
+# Bioethanol fermentation feedstock share allocated to shipping.
+# Research base case: 1-4% (mode ~2-3%).
+ContinuousParameter "feedstock_bioethanol_fermentation_share_shipping" = LOG-TRIANGULAR(0.001, 0.03, 0.12) {
+	default = 0.02
+	emissions_low = MAXIMUM
+}
+
+# Biomethanol gasification feedstock share allocated to shipping.
+# Research base case: 5-10% (mode ~7%). Log-triangular with mode at 0.08.
+ContinuousParameter "feedstock_biomethanol_gasification_share_shipping" = LOG-TRIANGULAR(0.02, 0.08, 0.20) {
+	default = 0.07
+	emissions_low = MAXIMUM
+}
+
+# Used cooking oil share allocated to shipping.
+# Research base case: 2-5% (mode ~3%).
+ContinuousParameter "used_cooking_oil_shipping_share" = LOG-TRIANGULAR(0.001, 0.03, 0.12) { emissions_low = MAXIMUM }
+
+# Biogenic CO2 share allocated to shipping.
+ContinuousParameter "carbon_dioxide_biogenic_shipping_share" = LOG-TRIANGULAR(0.001, 0.10, 0.20) { emissions_low = MAXIMUM }
+
+# ------------------------- Sampled parameters for infrastructure economy development ---------- #
+
+# Plant capacity multiplier on base design capacity.
+# Log-triangular range spans full low->high across all former MTC scenarios.
+ContinuousParameter "plant_capacity_multiplier" = LOG-TRIANGULAR(0.4, 1.0, 2.5) { emissions_low = MAXIMUM }
+
+# Plant lead time in years. Electro plants get +1 year offset on top of this.
+DiscreteParameter "plant_lead_time" = DISCRETE([3, 4, 5, 6], [0.15, 0.35, 0.35, 0.15]) { default = 4 }
+
+# Electro & blue plant WACC multiplier on base WACC (~10% declining to ~6%).
+# Log-triangular: right-skewed - financing for unproven tech more likely worse than expected.
+ContinuousParameter "h2_wacc_multiplier" = LOG-TRIANGULAR(0.5, 1.0, 1.8)
+
+# ------------------------- Biomass cost parameters (scenario-independent) -------------------- #
+# Costs and availability are sampled independently. Cost uncertainty exists regardless of
+# availability level. All use log-triangular - right-skewed cost distributions are empirically
+# well-established for commodity and process costs.
+
+# Biogas feedstock cost (USD/dry ton): blended pool of waste streams (~$50/dry ton base case).
+# 4x range (25-100) appropriate for heterogeneous waste stream.
+ContinuousParameter "feedstock_biogas_cost" = LOG-TRIANGULAR(25, 50, 100)
+
+# Fermentation feedstock cost (USD/dry tonne): crop residues (corn stover, wheat straw).
+ContinuousParameter "feedstock_bioethanol_fermentation_cost" = LOG-TRIANGULAR(38, 60, 140)
+
+# Gasification feedstock cost (USD/dry tonne): woody residues from forestry/pulp operations.
+ContinuousParameter "feedstock_biomethanol_gasification_cost" = LOG-TRIANGULAR(35, 65, 120)
+
+# Used cooking oil cost Europe (USD/ton): volatile waste commodity with documented
+# $800-2000/ton swings in 2020-2024.
+ContinuousParameter "used_cooking_oil_cost_europe" = LOG-TRIANGULAR(565, 1130, 2260)
+
+# Biogenic CO2 cost (USD/ton).
+ContinuousParameter "carbon_dioxide_biogenic_cost" = LOG-TRIANGULAR(30, 70, 180)
+
+# ------------------------- Other parameters -------------------------------------------------- #
+
+# Electricity cost multiplier applied to all regions.
+# Log-triangular: cost multiplier - symmetric treatment of cost increases vs decreases.
+ContinuousParameter "electricity_cost_interpolator" = LOG-TRIANGULAR(0.01, 0.50, 1.00)
+
+# EPC scaling speed: interpolates between two capacity ramp curves defined in epc_electro_blue.inc.
+# interpolator=0.0 -> slow ramp (unlimited by 2050).
+# interpolator=1.0 -> fast ramp (unlimited by 2040).
+ContinuousParameter "epc_interpolator" = UNIFORM(0.0, 1.0) { default = 0.5, emissions_low = MAXIMUM }
