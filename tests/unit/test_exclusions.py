@@ -8,7 +8,6 @@ Covers:
 - parse_exclude_directive: key=value parsing with quoted/unquoted values
 - parse_all_exclusions: extracting Exclude() directives from Horizon block content
 - parse_all_inclusions: extracting Include() directives from Horizon block content
-- is_combination_excluded: partial matching logic
 - should_skip_combination: unified inclusion/exclusion filter logic
 """
 
@@ -17,7 +16,6 @@ import pytest
 from horizon.exceptions import ParseError
 from horizon.parser.exclusions import (
     get_scenario_label,
-    is_combination_excluded,
     parse_all_exclusions,
     parse_all_inclusions,
     parse_exclude_directive,
@@ -146,45 +144,49 @@ class TestParseAllExclusions:
 
 
 # ---------------------------------------------------------------------------
-# is_combination_excluded
+# Exclude-only matching through should_skip_combination
 # ---------------------------------------------------------------------------
-class TestIsCombinationExcluded:
-    """Tests for is_combination_excluded()."""
+def _is_excluded(scenario, rules):
+    return should_skip_combination(scenario, rules, None)
+
+
+class TestExcludeMatching:
+    """Partial matching of Exclude rules, as production applies it."""
 
     def test_no_rules_returns_false(self):
         scenario = {"BIO": "high", "ELEC": "low"}
-        assert is_combination_excluded(scenario, []) is False
+        assert _is_excluded(scenario, []) is False
 
     def test_none_rules_returns_false(self):
         scenario = {"BIO": "high", "ELEC": "low"}
-        assert is_combination_excluded(scenario, None) is False
+        assert _is_excluded(scenario, None) is False
 
     def test_exact_match(self):
         scenario = {"BIO": "high", "ELEC": "high"}
         rules = [{"BIO": "high", "ELEC": "high"}]
-        assert is_combination_excluded(scenario, rules) is True
+        assert _is_excluded(scenario, rules) is True
 
     def test_partial_match_single_token(self):
         """A rule with one token should match any combo containing that token=value."""
         scenario = {"BIO": "high", "ELEC": "low", "POLICY": "strict"}
         rules = [{"BIO": "high"}]
-        assert is_combination_excluded(scenario, rules) is True
+        assert _is_excluded(scenario, rules) is True
 
     def test_partial_match_two_tokens(self):
         scenario = {"BIO": "high", "ELEC": "high", "POLICY": "relaxed"}
         rules = [{"BIO": "high", "ELEC": "high"}]
-        assert is_combination_excluded(scenario, rules) is True
+        assert _is_excluded(scenario, rules) is True
 
     def test_no_match(self):
         scenario = {"BIO": "low", "ELEC": "low"}
         rules = [{"BIO": "high", "ELEC": "high"}]
-        assert is_combination_excluded(scenario, rules) is False
+        assert _is_excluded(scenario, rules) is False
 
     def test_partial_no_match(self):
         """Rule requires both BIO=high AND ELEC=high, but ELEC=low."""
         scenario = {"BIO": "high", "ELEC": "low"}
         rules = [{"BIO": "high", "ELEC": "high"}]
-        assert is_combination_excluded(scenario, rules) is False
+        assert _is_excluded(scenario, rules) is False
 
     def test_multiple_rules_first_matches(self):
         scenario = {"BIO": "high", "ELEC": "high"}
@@ -192,7 +194,7 @@ class TestIsCombinationExcluded:
             {"BIO": "high", "ELEC": "high"},
             {"BIO": "low", "POLICY": "strict"},
         ]
-        assert is_combination_excluded(scenario, rules) is True
+        assert _is_excluded(scenario, rules) is True
 
     def test_multiple_rules_second_matches(self):
         scenario = {"BIO": "low", "ELEC": "medium", "POLICY": "strict"}
@@ -200,7 +202,7 @@ class TestIsCombinationExcluded:
             {"BIO": "high", "ELEC": "high"},
             {"BIO": "low", "POLICY": "strict"},
         ]
-        assert is_combination_excluded(scenario, rules) is True
+        assert _is_excluded(scenario, rules) is True
 
     def test_multiple_rules_none_match(self):
         scenario = {"BIO": "medium", "ELEC": "medium"}
@@ -208,21 +210,21 @@ class TestIsCombinationExcluded:
             {"BIO": "high", "ELEC": "high"},
             {"BIO": "low", "POLICY": "strict"},
         ]
-        assert is_combination_excluded(scenario, rules) is False
+        assert _is_excluded(scenario, rules) is False
 
     def test_rule_token_not_in_scenario(self):
         """If rule references a token not in scenario_map, it should not match."""
         scenario = {"BIO": "high", "ELEC": "low"}
         rules = [{"POLICY": "strict"}]
-        assert is_combination_excluded(scenario, rules) is False
+        assert _is_excluded(scenario, rules) is False
 
     def test_empty_scenario_map(self):
         rules = [{"BIO": "high"}]
-        assert is_combination_excluded({}, rules) is False
+        assert _is_excluded({}, rules) is False
 
     def test_empty_both(self):
-        assert is_combination_excluded({}, []) is False
-        assert is_combination_excluded({}, None) is False
+        assert _is_excluded({}, []) is False
+        assert _is_excluded({}, None) is False
 
 
 # ---------------------------------------------------------------------------
