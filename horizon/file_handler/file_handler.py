@@ -113,28 +113,24 @@ def extract_template_tokens(unc_path):
     set[str]
         Set of unique token names found in the template and its includes.
     """
-    tokens = set()
     try:
         with open(unc_path, 'r') as fh:
-            for line in fh:
-                tokens.update(m.group(1) for m in _TOKEN_RE.finditer(line))
-                # Follow Include directives to scan .inc files
-                if _is_include_line(line):
-                    try:
-                        include_path_relative = line.split('"')[1]
-                        # Only follow includes that don't themselves contain tokens
-                        if '%' not in include_path_relative:
-                            full_path = os.path.normpath(
-                                os.path.join(os.path.dirname(unc_path), include_path_relative)
-                            )
-                            if os.path.isfile(full_path):
-                                with open(full_path, 'r') as inc_fh:
-                                    for inc_line in inc_fh:
-                                        tokens.update(m.group(1) for m in _TOKEN_RE.finditer(inc_line))
-                    except (IndexError, OSError):
-                        pass
+            lines = fh.readlines()
     except FileNotFoundError:
         raise FileOperationError(f"UNC template file not found: {unc_path}")
+
+    tokens = set(_TOKEN_RE.findall(''.join(lines)))
+    for line in lines:
+        # follow includes that don't themselves contain tokens
+        if not _is_include_line(line) or '"' not in line or '%' in line.split('"')[1]:
+            continue
+
+        include_path = os.path.normpath(os.path.join(os.path.dirname(unc_path), line.split('"')[1]))
+        try:
+            with open(include_path, 'r') as fh:
+                tokens.update(_TOKEN_RE.findall(fh.read()))
+        except OSError:
+            pass
     return tokens
 
 

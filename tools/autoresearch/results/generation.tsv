@@ -44,3 +44,7 @@ bfc9158	ok	6477	1.82	6.65	kept	create_files/file_handler: share scenario default
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01VkXGKVSafWLgrVfrcYHJTL
+c2bc93a	ok	6472	1.77	5.88	kept	file_handler: flatten extract_template_tokens
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01VkXGKVSafWLgrVfrcYHJTL
