@@ -233,8 +233,9 @@ def create_files(hor_file_path, max_files=None, priority="normal", solver=None,
         (unc_file_path, output_path, number_of_samples, scenario_parameters, parameters,
          sampling_method, plot, max_parallel_workers, random_seed, sample_only,
          exclusion_rules, inclusion_rules) = parse_hor_file(str(hor_file_path))
-    except Exception as e:
-        logger.exception("Failed to parse .hor file '%s': %s", hor_file_path, e)
+    except Exception:
+        # the CLI prints the one-line message; the traceback stays in output.log
+        logger.debug("Failed to parse .hor file '%s'", hor_file_path, exc_info=True)
         raise
 
     logger.info("Read %d scenario parameters and %d sample parameters", len(scenario_parameters), len(parameters))

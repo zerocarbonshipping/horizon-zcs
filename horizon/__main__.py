@@ -8,6 +8,7 @@ import logging
 import os
 import sys
 
+from horizon.exceptions import HorizonError
 from horizon.logging.logging import setup_logging
 from horizon.test_manager.create_files import create_files
 
@@ -184,11 +185,21 @@ def main():
             sys.exit(1)
 
         file_name = args.arguments[0]
-        create_files(file_name, priority=args.priority, solver=args.solver,
-                     navigate_flags=args.navigate_flags, output_dir=args.output_dir,
-                     dry_run=args.dry_run, full_task_env=args.full_task_env,
-                     pueue_cli=args.pueue_cli, gen_workers=args.gen_workers,
-                     shared_includes=not args.no_shared_includes)
+        try:
+            create_files(file_name, priority=args.priority, solver=args.solver,
+                         navigate_flags=args.navigate_flags, output_dir=args.output_dir,
+                         dry_run=args.dry_run, full_task_env=args.full_task_env,
+                         pueue_cli=args.pueue_cli, gen_workers=args.gen_workers,
+                         shared_includes=not args.no_shared_includes)
+        except (HorizonError, ValueError) as error:
+            _exit_with_error(file_name, error)
+
+
+def _exit_with_error(hor_file, error):
+    """Print one clean `file:line: error: message` line, keep the traceback in output.log, and exit 1."""
+    logger.debug("Run failed", exc_info=error)
+    sys.stderr.write(f"{error}\n" if getattr(error, "location", None) else f"{hor_file}: error: {error}\n")
+    sys.exit(1)
 
 
 def _replot_batch(args):
