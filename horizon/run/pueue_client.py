@@ -23,6 +23,7 @@ import getpass
 import logging
 import os
 import socket
+import stat
 import struct
 import sys
 
@@ -91,12 +92,12 @@ def _read_config_settings():
         return _read_shared_settings(explicit)
 
     home = os.path.expanduser("~")
-    config_candidates = []
-    xdg_config = os.environ.get("XDG_CONFIG_HOME")
-    if xdg_config:
-        config_candidates.append(os.path.join(xdg_config, "pueue", "pueue.yml"))
-    config_candidates.append(os.path.join(home, ".config", "pueue", "pueue.yml"))
-    config_candidates.append(os.path.join(home, "Library", "Application Support", "pueue", "pueue.yml"))
+    config_candidates = [
+        os.path.join(home, ".config", "pueue", "pueue.yml"),
+        os.path.join(home, "Library", "Application Support", "pueue", "pueue.yml"),
+    ]
+    if os.environ.get("XDG_CONFIG_HOME"):
+        config_candidates.insert(0, os.path.join(os.environ["XDG_CONFIG_HOME"], "pueue", "pueue.yml"))
 
     for candidate in config_candidates:
         if os.path.isfile(candidate):
@@ -183,7 +184,6 @@ def discover_socket_and_secret():
 
 def _is_socket(path):
     try:
-        import stat
         return stat.S_ISSOCK(os.stat(path).st_mode)
     except OSError:
         return False
@@ -230,15 +230,13 @@ class PueueDirectConnection:
         return self._recv_exact(length)
 
     def _recv_exact(self, n):
-        chunks = []
-        remaining = n
-        while remaining > 0:
-            chunk = self._sock.recv(min(65536, remaining))
+        data = bytearray()
+        while len(data) < n:
+            chunk = self._sock.recv(min(65536, n - len(data)))
             if not chunk:
                 raise PueueDirectError("daemon closed the connection")
-            chunks.append(chunk)
-            remaining -= len(chunk)
-        return b"".join(chunks)
+            data += chunk
+        return bytes(data)
 
     def request(self, message):
         """Send one Request and return the decoded Response."""

@@ -133,7 +133,7 @@ def _queue_single_command(command: str, pueue_priority: int, env_vars: str, task
 
         result = subprocess.run(pueue_cmd, capture_output=True, text=True, env=task_env)
 
-        return (result.returncode == 0, "" if result.returncode == 0 else result.stderr)
+        return (result.returncode == 0, result.stderr if result.returncode else "")
     except Exception as e:
         return (False, str(e))
 
@@ -519,10 +519,8 @@ def _get_pueue_tasks():
         )
         if result.returncode != 0:
             return None
-        data = json.loads(result.stdout)
         # pueue status --json returns {"tasks": {id: task, ...}}
-        tasks_dict = data.get("tasks", {})
-        return list(tasks_dict.values())
+        return list(json.loads(result.stdout).get("tasks", {}).values())
     except Exception:
         return None
 
