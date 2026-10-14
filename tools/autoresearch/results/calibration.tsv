@@ -8,3 +8,4 @@ be8e166	ok	6607	-	-	kept	share one line-figure builder between metric and fuel-s
 07fbfed	ok	6502	-	-	kept	simplify _write_dashboard: drop optional-arg branches, share plot grid helper (-20 loc)
 7b37cf9	ok	6487	-	-	kept	simplify HTML renderers, extract heat colour helper (-15 loc); note: stray literal '# noqa: E122' is rendered in every card (kept)
 c22341e	ok	6477	-	-	kept	simplify calibration_plot report loading (-12 loc)
+a0ca885	ok	6463	1.89	6.45	kept	drop unused fuel colour table, tidy regulation discovery and round-2 grids (-14 loc); timings noisy (other agents running), calibration is not imported by generation
