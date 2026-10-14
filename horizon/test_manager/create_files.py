@@ -3,28 +3,14 @@
 
 # File: horizon/test_manager/create_files.py
 """
-File creation entrypoint for Horizon.
+File creation entrypoint for Horizon: parse the .hor file, sample parameters,
+write the samples CSV, then generate .nav files and queue them via FileHandler.
 
-Responsibilities:
- - parse .hor file via parse_hor_file()
- - sample parameters (either once globally or per-active-scenario combination)
- - write sampled parameters CSV
- - optionally run sampling diagnostics/plotting
- - generate .nav files and commands via FileHandler
- - enqueue and run commands
-
-Behavior summary (plain):
- - When any sample parameter defines conditional overrides and there is at least one
-   active scenario parameter, sampling is performed per combination of active scenario
-   parameter values. Inactive scenario parameters are used with their default values
-   and do not expand the combinations.
- - The sampler uses the same underlying draw matrix (LHS/MC) for each scenario combo,
-   so that sample indexes (sample_1..sample_N) line up across scenarios. For each
-   scenario we resolve scenario-dependent parameter definitions first, then map the
-   shared draw to values for that scenario.
- - If no sample parameter defines overrides (or there are no active scenario params),
-   the code uses legacy behavior: sample once across all parameters and let the
-   file generator expand scenario combinations if required.
+When any sample parameter has conditional overrides and a scenario parameter is
+active, sampling runs once per combination of active scenario values (inactive
+ones stay at their default), reusing one draw matrix so sample_i lines up across
+scenarios. Otherwise all parameters are sampled once and the file generator
+expands the scenario combinations.
 """
 
 from __future__ import annotations
@@ -173,11 +159,8 @@ def _sample_for_active_combos(scenario_parameters, parameters, number_of_samples
                                               random_seed, sampler=shared_sampler)
 
         # Annotate samples with full scenario_map and sample numbers 1..N
-        for i, row in enumerate(sampled_for_combo):
-            s = dict(row)  # copy to avoid mutation sharing
-            s.update(scenario_map)
-            s["sample"] = "sample_%d" % (i + 1)
-            sampled_parameters.append(s)
+        sampled_parameters.extend({**row, **scenario_map, "sample": f"sample_{i}"}
+                                  for i, row in enumerate(sampled_for_combo, 1))
 
         if max_files is not None and len(sampled_parameters) >= max_files:
             sampled_parameters = sampled_parameters[:max_files]

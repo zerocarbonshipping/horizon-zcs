@@ -60,3 +60,8 @@ Claude-Session: https://claude.ai/code/session_01VkXGKVSafWLgrVfrcYHJTL
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01VkXGKVSafWLgrVfrcYHJTL
+-	ok	6402	1.71	5.87	discarded	lru_cache relative include line (no measurable gain, +5 LOC)
+0937c84	ok	6381	1.58	5.78	kept	create_files: shorter module docstring, build sample rows with one extend
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01VkXGKVSafWLgrVfrcYHJTL
