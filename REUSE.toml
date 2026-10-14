@@ -13,6 +13,12 @@ path = "syntax/*.xml"
 SPDX-FileCopyrightText = "2026 Fonden Mærsk Mc-Kinney Møller Center for Zero Carbon Shipping"
 SPDX-License-Identifier = "Apache-2.0"
 
+# Packaged VS Code extension (zip archive); binary, so no inline header.
+[[annotations]]
+path = "syntax/*.vsix"
+SPDX-FileCopyrightText = "2026 Fonden Mærsk Mc-Kinney Møller Center for Zero Carbon Shipping"
+SPDX-License-Identifier = "Apache-2.0"
+
 # Example configuration and template files; kept header-free so they can be
 # copied verbatim as starting points.
 [[annotations]]

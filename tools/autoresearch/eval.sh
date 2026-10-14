@@ -10,10 +10,10 @@
 #   tools/autoresearch/eval.sh            evaluate this checkout
 #   tools/autoresearch/eval.sh --golden   (re)write the golden snapshot from this checkout
 #
-# Needs: fixtures in $AR_FIXTURES (default /home/user/ar/fixtures, see program.md).
+# Needs: fixtures in $AR_FIXTURES (default /home/user/ar/fixtures2, see program.md).
 set -uo pipefail
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
-FIX=${AR_FIXTURES:-/home/user/ar/fixtures}
+FIX=${AR_FIXTURES:-/home/user/ar/fixtures2}
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/ar_eval.XXXX")
 LOG=$WORK/eval.log
 trap 'rm -rf "$WORK"' EXIT
