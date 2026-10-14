@@ -403,34 +403,6 @@ class ParameterSampler:
     # Continuous sampling
     # ------------------------------------------------------------------
 
-    def _sample_continuous_mc(self, p):
-        dist = (p.distribution or "uniform").lower()
-
-        if dist == "uniform":
-            raw = np.random.uniform(p.low_val, p.high_val)
-
-        elif dist == "triangular":
-            # ensure mid_val exists (default to average if missing)
-            ensure_mid_val(p)
-            raw = np.random.triangular(p.low_val, p.mid_val, p.high_val)
-
-        elif dist == "log-uniform":
-            self._validate_positive_bounds(p)
-            lo, hi = np.log(p.low_val), np.log(p.high_val)
-            raw = float(np.exp(np.random.uniform(lo, hi)))
-
-        elif dist == "log-triangular":
-            # ensure mid_val exists (default to average if missing), then validate positivity
-            ensure_mid_val(p)
-            self._validate_positive_bounds(p, require_mid=True)
-            lo, mid, hi = np.log(p.low_val), np.log(p.mid_val), np.log(p.high_val)
-            raw = float(np.exp(np.random.triangular(lo, mid, hi)))
-
-        else:
-            raise ValueError(f"Unsupported distribution: {p.distribution}")
-
-        return round(raw, p.decimals)
-
     def _continuous_ppf(self, p, u):
         dist = (p.distribution or "uniform").lower()
         u = float(np.clip(u, 0.0, 1.0))
@@ -472,10 +444,6 @@ class ParameterSampler:
     # ------------------------------------------------------------------
     # Discrete sampling
     # ------------------------------------------------------------------
-
-    def _sample_discrete_mc(self, p):
-        self._validate_discrete(p)
-        return np.random.choice(p.values, p=p.probabilities)
 
     def _discrete_ppf(self, p, u):
         self._validate_discrete(p)
