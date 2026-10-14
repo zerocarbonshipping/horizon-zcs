@@ -5,3 +5,4 @@ be8e166	ok	6607	-	-	kept	share one line-figure builder between metric and fuel-s
 921507e	ok	6541	-	-	kept	tighten scoring helpers (-21 loc)
 882eeb2	ok	6530	-	-	kept	hoist value-independent scores out of recommendation loop (-11 loc)
 32d263b	ok	6522	-	-	kept	simplify _build_summary_tables (-8 loc)
+07fbfed	ok	6502	-	-	kept	simplify _write_dashboard: drop optional-arg branches, share plot grid helper (-20 loc)
