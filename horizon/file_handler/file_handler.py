@@ -173,7 +173,6 @@ class FileHandler:
 
     def __init__(self):
         self.nav_filepaths = []
-        self.commands = []
         self.skipped_count = 0
         self._include_cache = {}
         self._shared_written = set()
@@ -229,7 +228,7 @@ class FileHandler:
         solver, navigate_flags : extra options for each navigate command.
         command_sink : optional streaming submitter (see run_commands.StreamingQueuer):
             ``start(expected_total)`` once before generation, ``submit(command)`` as
-            each .nav completes. ``self.commands`` is populated either way.
+            each .nav completes.
         max_workers : generation thread-pool size. Default: ``min(8, cpu_count)``.
         """
         # Realization folders are created under output_folder; absolutize once
@@ -330,8 +329,6 @@ class FileHandler:
                     logger.info("File creation progress: %d NAV files generated...", len(nav_filepaths))
 
         self.nav_filepaths = nav_filepaths
-        # After nav files created, prepare command list
-        self.generate_commands_list(solver=solver, navigate_flags=navigate_flags)
 
     @staticmethod
     def _compile_template(unc_content, unc_dir):
@@ -475,10 +472,6 @@ class FileHandler:
         solver_flag = f' --solver {solver}' if solver else ''
         extra_flags = f' {navigate_flags}' if navigate_flags else ''
         return f'navigate "{path.replace(os.sep, "/")}"{solver_flag}{extra_flags}'
-
-    def generate_commands_list(self, solver=None, navigate_flags=None):
-        """Generate list of commands to run NavigaTE on all generated .nav files."""
-        self.commands = [self._build_command(path, solver, navigate_flags) for path in self.nav_filepaths]
 
     def _process_and_update_include_file(self, include_file_path, replacements, sample_number,
                                          realization_folder, indent, name_stem, combo_name,

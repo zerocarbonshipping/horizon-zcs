@@ -387,7 +387,7 @@ def create_files(hor_file_path, max_files=None, priority="normal", solver=None,
     skip_note = " (%d combination(s) skipped by filters)" % file_handler.skipped_count if file_handler.skipped_count > 0 else ""
     logger.info("Generated %d NAV file(s) in %s%s", len(file_handler.nav_filepaths), output_folder, skip_note)
 
-    logger.info("Queued %d navigate command(s)", len(file_handler.commands))
+    logger.info("Queued %d navigate command(s)", len(file_handler.nav_filepaths))
 
     # Timing
     end_time = time.time()

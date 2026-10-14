@@ -96,6 +96,13 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 - Network-filesystem latency probe and adaptive generation pool size: the
   default is `min(8, CPU count)`; `--gen-workers N` sets it explicitly.
 - `--no-shared-includes`: the shared include store is the only behaviour.
+- The study-specific "Suggested Round 2 Discretization" table in the calibration
+  dashboard.
+- Calibration analysis of legacy output without a `regulation` column (folders
+  named `{regulation}_sampleNNN`): `sampled_parameters.csv` must now have a
+  `regulation` column, otherwise a clear error is raised.
+- Unused internals: `plot_sampled_parameters_histograms`,
+  `FileHandler.generate_commands_list` and `FileHandler.commands`.
 
 ### Fixed
 - Two different `.inc` files replacing the same token set were rewritten to

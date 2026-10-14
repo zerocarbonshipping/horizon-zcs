@@ -280,13 +280,9 @@ class TestCommandSink:
         )
 
         assert sink.started == [2]
-        # the streamed commands are exactly the batch command list
-        assert sorted(sink.commands) == sorted(handler.commands)
+        assert sorted(sink.commands) == sorted(
+            FileHandler._build_command(path, "highs") for path in handler.nav_filepaths)
         assert all(cmd.endswith("--solver highs") for cmd in sink.commands)
-
-    def test_without_sink_commands_are_still_built(self, template_project, tmp_path):
-        handler = _generate(template_project, tmp_path / "out", [{"sample": 1, "LEN": 250.0}])
-        assert len(handler.commands) == 1
 
 
 class TestGenerationWorkers:
@@ -302,7 +298,6 @@ class TestGenerationWorkers:
             max_workers=1,
         )
         assert len(handler.nav_filepaths) == 5
-        assert len(handler.commands) == 5
 
     def test_zero_or_negative_workers_clamped(self, template_project, tmp_path):
         handler = FileHandler()

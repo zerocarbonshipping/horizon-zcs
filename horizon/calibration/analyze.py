@@ -13,7 +13,6 @@ import csv
 import glob
 import logging
 import os
-import re
 import warnings
 from collections import Counter, defaultdict, namedtuple
 
@@ -21,6 +20,8 @@ import numpy as np
 import openpyxl
 import pandas as pd
 from scipy.stats import spearmanr
+
+from horizon.exceptions import FileOperationError
 
 logger = logging.getLogger(__name__)
 
@@ -112,7 +113,10 @@ def _load_index(calibration_dir):
 
     col_map = {name: idx for idx, name in enumerate(header)}
     sample_col = col_map.get("sample", col_map.get("sample_number", 0))
-    regulation_col = col_map.get("regulation")
+    if "regulation" not in col_map:
+        raise FileOperationError(f"{csv_path} has no 'regulation' column; calibration needs one scenario column")
+
+    regulation_col = col_map["regulation"]
     param_tokens = [h for h in header if h not in {"sample_number", "sample", "regulation"} and h]
 
     # Calibration sample names are "{param_token}_{value}", so a parameter is at
@@ -124,11 +128,6 @@ def _load_index(calibration_dir):
         if defaults_seen:
             param_defaults[pt] = max(defaults_seen, key=value_counts.get)
 
-    # Without a regulation column, FileHandler expanded scenarios x samples into
-    # {regulation}_sample{NNN} folders, so the regulations come from folder names.
-    if regulation_col is None:
-        legacy_regulations = _discover_regulations(calibration_dir) or ["default"]
-
     runs = []
     for row in rows:
         sample_name = row[sample_col]
@@ -137,32 +136,13 @@ def _load_index(calibration_dir):
             logger.warning("Could not identify varied parameter for sample '%s'", sample_name)
             continue
 
-        if regulation_col is not None:
-            folders = [(row[regulation_col], f"{row[regulation_col]}_{sample_name}")]
-        else:
-            sample_number = int(row[col_map.get("sample_number", 0)])
-            folders = [(reg, f"{reg}_sample{sample_number:03d}") for reg in legacy_regulations]
-
-        runs.extend(
-            RunInfo(folder_name, regulation, varied_param, row[col_map[varied_param]])
-            for regulation, folder_name in folders
-        )
+        regulation = row[regulation_col]
+        runs.append(RunInfo(f"{regulation}_{sample_name}", regulation, varied_param, row[col_map[varied_param]]))
 
     logger.info("Loaded %d calibration runs across %d parameters",
                 len(runs), len({r.param_token for r in runs}))
 
     return runs, param_defaults
-
-
-def _discover_regulations(calibration_dir):
-    """Discover regulation scenario names from folder names in the directory.
-
-    Looks for entries matching ``{prefix}_sample{NNN}`` and extracts the prefix
-    as the regulation name. Skips the ``os.path.isdir`` check to avoid issues
-    on network mounts (SMB/CIFS) where it can return False for directories.
-    """
-    matches = (re.match(r"^(.+)_sample\d{3}$", entry) for entry in os.listdir(calibration_dir))
-    return sorted({m.group(1) for m in matches if m})
 
 
 # ---------------------------------------------------------------------------
@@ -589,37 +569,6 @@ def _build_recommendations(runs, data_by_folder, param_defaults):
 
 
 # ---------------------------------------------------------------------------
-# 3e. Round 2 discretization suggestions
-# ---------------------------------------------------------------------------
-
-_ROUND2_GRIDS = {
-    "fleet_inertia": [0.0, 0.25, 0.5, 0.6, 0.7, 0.75, 0.8, 0.9],
-    "bunkering_inertia": [0.0, 0.25, 0.5, 0.6, 0.7, 0.8, 0.9],
-    "fleet_beta": [0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0],
-    "producer_inertia": [0.0, 0.5, 0.7, 0.8, 0.9],
-    "producer_inter_beta": [1, 3, 5],
-    "producer_intra_beta": [1, 3, 5],
-}
-
-
-def _suggest_next_discretization(recommendations):
-    """Suggest Round 2 parameter grids based on Round 1 findings.
-
-    Returns
-    -------
-    dict[str, list[float]]
-        Suggested parameter values for Round 2.
-    """
-    result = {}
-    for rec in recommendations:
-        v = _safe_float(rec.recommended_value)
-        result[rec.param_token] = _ROUND2_GRIDS.get(
-            rec.param_token, sorted({v * 0.5, v * 0.75, v, v * 1.25, v * 1.5})
-        )
-    return result
-
-
-# ---------------------------------------------------------------------------
 # 4. Build summary table
 # ---------------------------------------------------------------------------
 
@@ -657,7 +606,7 @@ def _build_summary_tables(runs, data_by_folder, param_defaults):
 # 5. Write HTML dashboard
 # ---------------------------------------------------------------------------
 
-def _write_dashboard(figures, summaries, output_path, fuel_share_figures, recommendations, round2_grids):
+def _write_dashboard(figures, summaries, output_path, fuel_share_figures, recommendations):
     """Assemble a single interactive HTML dashboard.
 
     Parameters
@@ -671,7 +620,6 @@ def _write_dashboard(figures, summaries, output_path, fuel_share_figures, recomm
     fuel_share_figures : dict
         {(regulation, param_token): list[go.Figure]}
     recommendations : list[Recommendation]
-    round2_grids : dict[str, list[float]]
     """
     import plotly.io as pio
 
@@ -698,7 +646,7 @@ def _write_dashboard(figures, summaries, output_path, fuel_share_figures, recomm
 
     parts.append('<div class="tab-content" id="tab-recommendations" style="display:block">')
     parts.append("<h2>Parameter Recommendations</h2>")
-    parts.append(_render_recommendations_html(recommendations, round2_grids))
+    parts.append(_render_recommendations_html(recommendations))
     parts.append("</div>")
 
     for reg in regulations:
@@ -741,15 +689,6 @@ _CONFIDENCE_STYLES = {
     "LOW": "background:#ffeeea;border:2px solid #804040;color:#804040",
 }
 
-_ROUND2_RATIONALES = {
-    "fleet_inertia": "Coarse below 0.5, fine grid 0.5\u20130.9 where behavior changes",
-    "bunkering_inertia": "Coarse low end, dense 0.5\u20130.9",
-    "fleet_beta": "Full range; 0.5 kept as outlier reference",
-    "producer_inertia": "Coarse low end, denser toward 1",
-    "producer_inter_beta": "Coarse grid confirms insensitivity",
-    "producer_intra_beta": "Coarse grid confirms insensitivity",
-}
-
 _SCORE_BAR_STYLES = {
     "sensitivity": ("Sensitivity", "#2c4068"),
     "monotonicity": ("Monotonicity", "#3c5e86"),
@@ -759,7 +698,7 @@ _SCORE_BAR_STYLES = {
 }
 
 
-def _render_recommendations_html(recommendations, round2_grids):
+def _render_recommendations_html(recommendations):
     """Render the Recommendations tab content as HTML."""
     parts = [
         '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(380px,1fr));gap:16px;margin-bottom:24px;">'
@@ -790,35 +729,6 @@ def _render_recommendations_html(recommendations, round2_grids):
 </div>''')
 
     parts.append("</div>")  # grid
-
-    parts.append('<div class="param-section">')
-    parts.append("<h3>Suggested Round 2 Discretization</h3>")
-    parts.append('<table style="border-collapse:collapse;width:100%;font-size:14px;">')
-    parts.append('<tr style="background:#2c4068;color:white;">'
-                 '<th style="padding:8px 12px;text-align:left;">Parameter</th>'
-                 '<th style="padding:8px 12px;text-align:left;">Values</th>'
-                 '<th style="padding:8px 12px;text-align:center;">Count</th>'
-                 '<th style="padding:8px 12px;text-align:left;">Rationale</th></tr>')
-
-    total_sims = 0
-    for pt, vals in sorted(round2_grids.items()):
-        vals_str = ", ".join(str(v) for v in vals)
-        total_sims += len(vals)
-        parts.append(f'<tr style="border-bottom:1px solid #dcdcdc;">'
-                     f'<td style="padding:8px 12px;font-weight:500;">{pt}</td>'
-                     f'<td style="padding:8px 12px;">{vals_str}</td>'
-                     f'<td style="padding:8px 12px;text-align:center;">{len(vals)}</td>'
-                     f'<td style="padding:8px 12px;color:#585858;">{_ROUND2_RATIONALES.get(pt, "")}</td></tr>')
-
-    n_scenarios = 3
-    parts.append(f'<tr style="background:#f2f2f2;font-weight:600;">'
-                 f'<td style="padding:8px 12px;" colspan="2">Total simulations '
-                 f'({total_sims} values \u00d7 {n_scenarios} scenarios)</td>'
-                 f'<td style="padding:8px 12px;text-align:center;">{total_sims * n_scenarios}</td>'
-                 f'<td></td></tr>')
-
-    parts.append("</table>")
-    parts.append("</div>")
 
     return "\n".join(parts)
 
@@ -1016,11 +926,10 @@ def calibration_plot(calibration_dir, output_path=None):
     fuel_share_figures = _build_fuel_share_figures(runs, data_by_folder, param_defaults)
     summaries = _build_summary_tables(runs, data_by_folder, param_defaults)
     recommendations = _build_recommendations(runs, data_by_folder, param_defaults)
-    round2_grids = _suggest_next_discretization(recommendations)
 
     for rec in recommendations:
         logger.info("Recommendation: %s = %s (confidence: %s, aggregate: %.2f)",
                     rec.param_token, rec.recommended_value, rec.confidence,
                     rec.scores_breakdown.get("aggregate", 0))
 
-    _write_dashboard(figures, summaries, output_path, fuel_share_figures, recommendations, round2_grids)
+    _write_dashboard(figures, summaries, output_path, fuel_share_figures, recommendations)

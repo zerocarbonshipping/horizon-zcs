@@ -134,7 +134,7 @@ unconditionally plus one inside every `_write_to_file`); skip creating
 every realization gets one, often empty — note: visible layout change,
 flag it in the changelog); precompute the include-file relative paths once
 per run instead of `os.path.relpath` per include per realization (16 k
-calls); drop `os.path.abspath` in `generate_commands_list` (paths are
+calls); drop `os.path.abspath` in the command builder (paths are
 already absolute — 34 k calls); write the `.nav` with a single
 `fh.write("".join(...))`. Expected: removes most of the remaining
 non-write syscall time; on network filesystems and Windows this is the

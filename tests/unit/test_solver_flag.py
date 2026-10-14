@@ -55,65 +55,24 @@ class TestSolverCLIParsing:
 
 
 class TestSolverCommandGeneration:
-    """Test that generate_commands_list appends --solver correctly."""
+    """Test that the command builder production uses appends --solver correctly."""
 
-    def test_no_solver_no_flag(self, tmp_path):
-        fh = FileHandler()
-        nav_file = tmp_path / "test.nav"
-        nav_file.touch()
-        fh.nav_filepaths = [str(nav_file)]
+    def test_no_solver_no_flag(self):
+        command = FileHandler._build_command("/out/test.nav")
 
-        fh.generate_commands_list(solver=None)
+        assert command == 'navigate "/out/test.nav"'
+        assert "--solver" not in command
 
-        assert len(fh.commands) == 1
-        assert "--solver" not in fh.commands[0]
+    @pytest.mark.parametrize("solver", ["highs", "gurobi", "auto"])
+    def test_solver_appended(self, solver):
+        command = FileHandler._build_command("/out/test.nav", solver)
 
-    def test_solver_highs_appended(self, tmp_path):
-        fh = FileHandler()
-        nav_file = tmp_path / "test.nav"
-        nav_file.touch()
-        fh.nav_filepaths = [str(nav_file)]
+        assert command == f'navigate "/out/test.nav" --solver {solver}'
 
-        fh.generate_commands_list(solver="highs")
+    def test_solver_precedes_extra_flags(self):
+        command = FileHandler._build_command("/out/test.nav", "highs", "--no-plots")
 
-        assert len(fh.commands) == 1
-        assert fh.commands[0].endswith("--solver highs")
-
-    def test_solver_gurobi_appended(self, tmp_path):
-        fh = FileHandler()
-        nav_file = tmp_path / "test.nav"
-        nav_file.touch()
-        fh.nav_filepaths = [str(nav_file)]
-
-        fh.generate_commands_list(solver="gurobi")
-
-        assert fh.commands[0].endswith("--solver gurobi")
-
-    def test_solver_auto_appended(self, tmp_path):
-        fh = FileHandler()
-        nav_file = tmp_path / "test.nav"
-        nav_file.touch()
-        fh.nav_filepaths = [str(nav_file)]
-
-        fh.generate_commands_list(solver="auto")
-
-        assert fh.commands[0].endswith("--solver auto")
-
-    def test_solver_with_multiple_nav_files(self, tmp_path):
-        fh = FileHandler()
-        nav_files = []
-        for i in range(3):
-            f = tmp_path / f"test_{i}.nav"
-            f.touch()
-            nav_files.append(str(f))
-        fh.nav_filepaths = nav_files
-
-        fh.generate_commands_list(solver="highs")
-
-        assert len(fh.commands) == 3
-        for cmd in fh.commands:
-            assert cmd.endswith("--solver highs")
-            assert 'navigate "' in cmd
+        assert command.endswith("--solver highs --no-plots")
 
 
 # ---------------------------------------------------------------------------
@@ -150,7 +109,6 @@ class TestSolverIntegration:
         # Set up FileHandler mock
         mock_fh = MagicMock()
         mock_fh.nav_filepaths = ["/tmp/output/test.nav"]
-        mock_fh.commands = ['navigate "/tmp/output/test.nav" --solver highs']
         mock_fh.skipped_count = 0
         mock_fh_cls.return_value = mock_fh
 
@@ -179,7 +137,6 @@ class TestSolverIntegration:
 
         mock_fh = MagicMock()
         mock_fh.nav_filepaths = ["/tmp/output/test.nav"]
-        mock_fh.commands = ['navigate "/tmp/output/test.nav"']
         mock_fh.skipped_count = 0
         mock_fh_cls.return_value = mock_fh
 

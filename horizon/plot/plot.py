@@ -4,7 +4,6 @@
 """Sampling diagnostics and plotting helpers.
 
 Exports:
- - plot_sampled_parameters_histograms(sampled_parameters, output_csv_path)
  - analyze_sampled_parameters(sampled_parameters, parameters, output_csv_path)
 
 Diagnostics are grouped by the scenario tokens that actually affect each
@@ -110,33 +109,6 @@ def _histogram_bins(values: np.ndarray) -> int:
         return max(1, int(math.ceil((values.max() - values.min()) / (2 * iqr * n ** (-1 / 3)))))
 
     return min(50, max(1, n // 2))
-
-
-def plot_sampled_parameters_histograms(sampled_parameters: List[Dict[str, Any]], output_csv_path: str):
-    """Save a histogram for every numeric sampled parameter."""
-    _, plots_path = _ensure_plot_dir(output_csv_path)
-
-    columns: Dict[str, List[Any]] = defaultdict(list)
-    for sample in sampled_parameters:
-        for key, value in sample.items():
-            if key.lower() not in ("sample", "sample_number"):
-                columns[key].append(value)
-
-    for param, raw_values in columns.items():
-        values = np.array(_to_floats(raw_values))
-        if len(values) == 0:
-            continue
-
-        plt.figure(figsize=(10, 4))
-        plt.hist(values, bins=_histogram_bins(values), alpha=0.75)
-        plt.title(f"Histogram of {param}")
-        plt.xlabel(param)
-        plt.ylabel("Frequency")
-        plt.tight_layout()
-        plt.savefig(os.path.join(plots_path, f"histogram_{param}.png"))
-        plt.close()
-
-    logger.info("Histogram plots saved to %s", plots_path)
 
 
 def analyze_sampled_parameters(sampled_parameters: List[Dict[str, Any]],
