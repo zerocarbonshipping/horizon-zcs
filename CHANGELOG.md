@@ -11,6 +11,12 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+### Added
+- VS Code extension `syntax/horizon-language-1.1.0.vsix` with syntax
+  highlighting for `.hor` and `.sen` files. It and the Notepad++ UDL now
+  highlight the distribution keywords `LOG-TRIANGULAR`, `TRIANGULAR`,
+  `LOG-UNIFORM` and `UNIFORM` (and the `LOG_` spellings).
+
 ### Changed
 - Shorter `.hor` format. `token` and `name` are optional and default to the
   block name. A `ContinuousParameter` without `default` uses `mid_val` (also
