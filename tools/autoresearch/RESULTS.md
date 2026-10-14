@@ -83,3 +83,19 @@ None of these changes generated files or queued commands.
 Rebuild the golden snapshot (`eval.sh --golden`) from the merged head, then
 run the loop again on the items above that the maintainers approve, plus
 `.hor` format work from [`docs/proposals/hor-format-next.md`](../../docs/proposals/hor-format-next.md).
+
+## Round 2 (maintainer-approved removals, strict parser, tooling)
+
+Removed `--no-shared-includes`, the network-filesystem worker probe, legacy
+`Parameters = [...]` lists (now a parse error) and any include spelling other
+than `Include` (now an error), plus about 150 lines of dead code; fixed the
+calibration `# noqa` text and the labelled `.sen` metric lookup. Added the
+strict parser (unknown keys, ranges, `if` conditions, uniform discrete default),
+one-line CLI errors, `--check`, `--explain` and `--samples N`.
+
+Final eval: `ok 5663 0.14 4.45 12.11` (loc, import, synthetic, IMO full).
+Further timing rounds are not planned: about 70 % of IMO generation time is the
+kernel creating 54 000 files (one .nav plus 17 sample-specific includes per
+realization). The only large lever left is writing fewer files, e.g. inlining
+sample-specific include content into the .nav, which changes the output layout
+and needs a maintainer decision.
