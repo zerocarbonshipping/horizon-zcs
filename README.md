@@ -84,6 +84,12 @@ horizon --status path/to/output_dir
 horizon -c path/to/output_dir results.xlsx
 ```
 
+Before a long run, `horizon my_study.hor --check` catches typos and
+mismatches between the `.hor`, `.unc` and `.inc` files in seconds, and
+`--explain` shows what each parameter resolves to. A broken `.hor` file
+prints one line (`my_study.hor:41: error: ...`) and exits 1; the traceback is
+in `output.log`.
+
 The `.hor` file defines the study: which parameters vary, over what ranges
 and distributions, across which scenario combinations. The `.unc` file it
 points at is an ordinary Navigate simulation file with `%TOKEN%`
@@ -114,6 +120,9 @@ See `horizon --help` for the full list. The most used flags:
 | `--gen-workers N` | Thread-pool size for `.nav` generation (default: `min(8, CPU count)`). |
 | `--output-dir DIR` | Directory for generated scenario folders (default: next to the `.unc` file). |
 | `--dry-run` | Validate the configuration and preview what would be generated. |
+| `--check` | Parse the `.hor` file with all validation and cross-check the `.unc` template and the `.inc` files it includes: every `%TOKEN%` has a parameter, unused parameters are warned about, and every scenario value in an include path such as `policy_%policy%.inc` resolves to a file with exactly that spelling. Prints a short summary, exits 0 (ok or warnings) or 1 (errors); writes and queues nothing. |
+| `--explain` | Print each parameter as it resolves per scenario value (distribution, low, mode, high, default, decimals) and where each came from: base, an `if` override, or an inferred value. Use it with `--check` or alone. |
+| `--samples N` | Use `N` samples instead of `NumberOfSamples` for this run, without editing the file (e.g. `horizon run.hor --samples 1` for a smoke test). The override is logged. |
 | `--status DIR` | Check pueue task status and report failures for an output directory. |
 | `--replot DIR ...` | Queue Navigate replot jobs for directories containing `plot_data.pkl`. |
 | `--sensitivity-analysis [FILE]` | Run PRCC sensitivity analysis, optionally from a `.sen` config. |

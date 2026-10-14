@@ -12,19 +12,38 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 ## [Unreleased]
 
 ### Added
+- `horizon run.hor --check`: parses with all validation and cross-checks the
+  `.unc` and the `.inc` files it includes (tokens without a parameter,
+  unused parameters, scenario values in include paths that resolve to no
+  file or one with different case). Prints a summary, exits 0 or 1, writes
+  nothing. `--explain` prints the resolved parameters per scenario value and
+  where each value came from. `--samples N` overrides `NumberOfSamples` for
+  one run without editing the file.
 - VS Code extension `syntax/horizon-language-1.1.0.vsix` with syntax
   highlighting for `.hor` and `.sen` files. It and the Notepad++ UDL now
   highlight the distribution keywords `LOG-TRIANGULAR`, `TRIANGULAR`,
   `LOG-UNIFORM` and `UNIFORM` (and the `LOG_` spellings).
 
 ### Changed
+- Stricter `.hor` parser. Unknown keys in parameter blocks, `if` bodies and
+  the `Horizon` block are errors with a "Did you mean" suggestion. `if` is
+  only recognised at the start of a line, so `name = "Cost if any"` works.
+  After applying every override, `low_val <= high_val`, the triangular mode
+  and the default must lie within the bounds, and `if` conditions must name
+  a `ScenarioParameter` and one of its values. A `DiscreteParameter` without
+  `probabilities` is uniform (it crashed before) and needs one probability
+  per value. `.hor` files are read as UTF-8. Errors carry file and line, and
+  the command line prints one `file:line: error: ...` line and exits 1; the
+  traceback goes to `output.log`.
+- The legacy `ScenarioParameters` / `Parameters` lists in the `Horizon` block
+  (and bare `ContinuousParameter("X")` lines) are an error instead of a
+  deprecation warning. Delete the list; use `active = FALSE` to pin a
+  parameter; set `distribution = UNIFORM` where the old default was relied on.
 - Shorter `.hor` format. `token` and `name` are optional and default to the
   block name. A `ContinuousParameter` without `default` uses `mid_val` (also
   inside `if` overrides); without either, parsing fails. Every defined block
   takes part in the study, so the `ScenarioParameters` / `Parameters` lists in
-  the `Horizon` block are no longer needed. A file with either list is read
-  the old way (only listed blocks of both kinds) and logs a deprecation
-  warning. Two blocks with the same name now raise an error. A
+  the `Horizon` block are no longer needed (and now an error, see below). Two blocks with the same name now raise an error. A
   `DiscreteParameter` without `default` now raises an error instead of writing
   an empty value.
 - `distribution` is a keyword (`LOG-TRIANGULAR`, `TRIANGULAR`, `LOG-UNIFORM`,
