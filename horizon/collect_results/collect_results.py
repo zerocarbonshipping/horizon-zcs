@@ -7,7 +7,8 @@ Each Navigate run writes '<realization>.parquet' next to its .nav. The merged fi
 rows and layout and adds two columns: sample, the file's path below the folder, and run, the
 ensemble it belongs to. A realization named '<scenario>_sampleNNN' joins the ensemble
 '<scenario>'; any other file is a run of its own. The layout matches Lantern's
-scripts/compile_results.py. Files are streamed one at a time, so memory stays at one run.
+scripts/compile_results.py. Files are streamed in order, the next read while one is written, so
+memory stays at two runs.
 """
 
 from __future__ import annotations
@@ -16,16 +17,19 @@ import json
 import logging
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 from pathlib import Path
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+from tqdm import tqdm
 
 from horizon.exceptions import ResultsCollectionError
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 METADATA_KEY = b"navigate"
 
 _SAMPLE_SUFFIX = re.compile(r"_sample\d+$")
@@ -141,14 +145,90 @@ def _write(output: Path, schema: pa.Schema, labels: dict) -> None:
     temporary = output.with_name(f".{output.name}.{os.getpid()}.tmp")
     output.parent.mkdir(parents=True, exist_ok=True)
 
+    # encoded as Navigate writes a run: the labels, dates, run and sample repeat a few values;
+    # the floats are stored byte plane by byte plane, which zstd packs far tighter
+    repeated = [name for name in schema.names if name != "value"]
+    columns = schema.names[:-2]
+
+    # the string columns pass through as dictionaries, so they are neither decoded on reading
+    # nor hashed again on writing; without the stored Arrow schema they read back as strings
+    strings = [field.name for field in schema if pa.types.is_string(field.type)]
+    dictionary_schema = pa.schema([field.with_type(pa.dictionary(pa.int32(), field.type))
+                                   if field.name in strings else field for field in schema])
+
     try:
-        with pq.ParquetWriter(temporary, schema, compression="zstd") as writer:
-            for file, (run, sample) in labels.items():
-                table = pq.read_table(file).select(schema.names[:-2])
-                table = table.append_column("run", pa.repeat(run, table.num_rows))
-                writer.write_table(table.append_column("sample", pa.repeat(sample, table.num_rows)))
+        # statistics only where a reader filtering by run or sample skips the other row groups with
+        # them; on the other columns they cost the writer a comparison of every value
+        with pq.ParquetWriter(temporary, dictionary_schema, compression="zstd", use_dictionary=repeated,
+                              column_encoding={"value": "BYTE_STREAM_SPLIT"}, store_schema=False,
+                              write_statistics=["run", "sample"]) as writer:
+            tables = _read_ahead(partial(_read, columns=columns, strings=strings), labels.items())
+            # shown only on a terminal, so the log of a queued collector stays clean
+            for table in tqdm(tables, total=len(labels), desc="Collecting results", unit="file",
+                              colour="green", dynamic_ncols=True, disable=None):
+                writer.write_table(table)
+
+            # not stored with the schema, so added to the file's metadata by hand
+            writer.add_key_value_metadata(schema.metadata)
     except BaseException:
         temporary.unlink(missing_ok=True)
         raise
 
     os.replace(temporary, output)
+
+
+def _read_ahead(read, items):
+    """Yield ``read(*item)`` for each item in order, reading the next while the caller uses this one.
+
+    Reading and writing both release the GIL, so they overlap; one read is in flight at a time,
+    so memory stays at two results.
+
+    Parameters
+    ----------
+    read : callable
+        Function to read one item.
+    items : iterable of tuple
+        Arguments of each read.
+    """
+    with ThreadPoolExecutor(max_workers=1) as reader:
+        pending = None
+        for item in items:
+            upcoming = reader.submit(read, *item)
+            if pending is not None:
+                yield pending.result()
+            pending = upcoming
+        if pending is not None:
+            yield pending.result()
+
+
+def _read(file: Path, label: tuple, columns: list, strings: list) -> pa.Table:
+    """Read a results file as written to the merged file, with its run and sample columns.
+
+    Parameters
+    ----------
+    file : Path
+        Results file to read.
+    label : tuple
+        Run and sample name of the file.
+    columns : list
+        Columns to read.
+    strings : list
+        Columns to read as dictionaries.
+    """
+    run, sample = label
+    table = pq.read_table(file, columns=columns, read_dictionary=[name for name in columns if name in strings])
+    table = table.append_column("run", _constant(run, table.num_rows))
+    return table.append_column("sample", _constant(sample, table.num_rows))
+
+
+def _constant(value: str, length: int) -> pa.DictionaryArray:
+    """Return a column of ``length`` times ``value``, as a dictionary of that one value.
+
+    Parameters
+    ----------
+    value : str
+        Value of every row.
+    length : int
+        Number of rows.
+    """
+    return pa.DictionaryArray.from_arrays(pa.repeat(pa.scalar(0, pa.int32()), length), [value])
