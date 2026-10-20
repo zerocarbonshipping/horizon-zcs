@@ -21,8 +21,9 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   `<output_dir>.parquet` next to the output directory, which Lantern shows
   as ensembles: a realization `<scenario>_sampleNNN` joins the ensemble
   `<scenario>`. It succeeds without writing anything when the runs wrote no
-  results files. `horizon --collect-results DIR` runs it by hand. Adds
-  `pyarrow` as a dependency.
+  results files. `horizon --collect-results DIR` runs it by hand, with a
+  progress bar. Reads Navigate results schema 3 and merges 1000 basecase
+  runs in about 20 s. Adds `pyarrow` and `tqdm` as dependencies.
 
 ### Changed
 - Shorter `.hor` format. `token` and `name` are optional and default to the

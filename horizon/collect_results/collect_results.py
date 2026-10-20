@@ -17,6 +17,7 @@ import json
 import logging
 import os
 import re
+from collections.abc import Callable, Iterable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from pathlib import Path
@@ -145,30 +146,29 @@ def _write(output: Path, schema: pa.Schema, labels: dict) -> None:
     temporary = output.with_name(f".{output.name}.{os.getpid()}.tmp")
     output.parent.mkdir(parents=True, exist_ok=True)
 
-    # encoded as Navigate writes a run: the labels, dates, run and sample repeat a few values;
-    # the floats are stored byte plane by byte plane, which zstd packs far tighter
-    repeated = [name for name in schema.names if name != "value"]
-    columns = schema.names[:-2]
-
     # the string columns pass through as dictionaries, so they are neither decoded on reading
-    # nor hashed again on writing; without the stored Arrow schema they read back as strings
+    # nor hashed again on writing
     strings = [field.name for field in schema if pa.types.is_string(field.type)]
     dictionary_schema = pa.schema([field.with_type(pa.dictionary(pa.int32(), field.type))
                                    if field.name in strings else field for field in schema])
+    columns = schema.names[:-2]
+    read = partial(_read, columns=columns, dictionaries=[name for name in columns if name in strings])
 
+    # Encoded as Navigate writes a run: the labels, dates, run and sample repeat a few values;
+    # the floats are stored byte plane by byte plane, which zstd packs far tighter. Statistics
+    # only where a reader filtering by run or sample skips the other row groups with them; on
+    # the other columns they cost a comparison of every value. Without the stored Arrow schema
+    # the dictionaries read back as strings, and the metadata is added to the file by hand.
     try:
-        # statistics only where a reader filtering by run or sample skips the other row groups with
-        # them; on the other columns they cost the writer a comparison of every value
-        with pq.ParquetWriter(temporary, dictionary_schema, compression="zstd", use_dictionary=repeated,
-                              column_encoding={"value": "BYTE_STREAM_SPLIT"}, store_schema=False,
-                              write_statistics=["run", "sample"]) as writer:
-            tables = _read_ahead(partial(_read, columns=columns, strings=strings), labels.items())
+        with pq.ParquetWriter(temporary, dictionary_schema, compression="zstd",
+                              use_dictionary=[name for name in schema.names if name != "value"],
+                              column_encoding={"value": "BYTE_STREAM_SPLIT"},
+                              write_statistics=["run", "sample"], store_schema=False) as writer:
             # shown only on a terminal, so the log of a queued collector stays clean
-            for table in tqdm(tables, total=len(labels), desc="Collecting results", unit="file",
-                              colour="green", dynamic_ncols=True, disable=None):
+            for table in tqdm(_read_ahead(read, labels.items()), total=len(labels), desc="Collecting results",
+                              unit="file", colour="green", dynamic_ncols=True, disable=None):
                 writer.write_table(table)
 
-            # not stored with the schema, so added to the file's metadata by hand
             writer.add_key_value_metadata(schema.metadata)
     except BaseException:
         temporary.unlink(missing_ok=True)
@@ -177,7 +177,7 @@ def _write(output: Path, schema: pa.Schema, labels: dict) -> None:
     os.replace(temporary, output)
 
 
-def _read_ahead(read, items):
+def _read_ahead(read: Callable[..., pa.Table], items: Iterable[tuple]) -> Iterator[pa.Table]:
     """Yield ``read(*item)`` for each item in order, reading the next while the caller uses this one.
 
     Reading and writing both release the GIL, so they overlap; one read is in flight at a time,
@@ -201,7 +201,7 @@ def _read_ahead(read, items):
             yield pending.result()
 
 
-def _read(file: Path, label: tuple, columns: list, strings: list) -> pa.Table:
+def _read(file: Path, label: tuple, columns: list, dictionaries: list) -> pa.Table:
     """Read a results file as written to the merged file, with its run and sample columns.
 
     Parameters
@@ -212,11 +212,11 @@ def _read(file: Path, label: tuple, columns: list, strings: list) -> pa.Table:
         Run and sample name of the file.
     columns : list
         Columns to read.
-    strings : list
+    dictionaries : list
         Columns to read as dictionaries.
     """
     run, sample = label
-    table = pq.read_table(file, columns=columns, read_dictionary=[name for name in columns if name in strings])
+    table = pq.read_table(file, columns=columns, read_dictionary=dictionaries)
     table = table.append_column("run", _constant(run, table.num_rows))
     return table.append_column("sample", _constant(sample, table.num_rows))
 
