@@ -115,7 +115,7 @@ See `horizon --help` for the full list. The most used flags:
 | `-c`, `--collect` | Collect reports from completed runs into a single Excel file. |
 | `--report-name PATTERN` | Only collect reports matching a filename pattern (supports `*`). |
 | `--priority {low,normal,high}` | Pueue scheduling priority for queued runs. |
-| `--threads N` | Pin `OMP_NUM_THREADS`, `MKL_NUM_THREADS` and `NUMEXPR_NUM_THREADS` to exactly N for every queued task, instead of splitting the CPUs by study size. Use it when several runs share one pueue daemon. |
+| `--threads N` | Pin `OMP_NUM_THREADS`, `MKL_NUM_THREADS` and `NUMEXPR_NUM_THREADS` to exactly N for every queued task, instead of splitting the CPUs by study size. Use it when several runs share one pueue daemon. It does not limit the LP solver's own threads (Navigate's `Threads` define; 0 = solver default). |
 | `--solver {auto,gurobi,highs}` | Solver backend passed through to Navigate. |
 | `--navigate-flags "..."` | Extra flags appended to each `navigate` command (e.g. `"-d ./assumptions -s"`). |
 | `--full-task-env` | Forward your entire environment to each queued task. By default only the variables a Navigate run needs are forwarded (plus any named in `HORIZON_TASK_ENV`, comma-separated), which keeps pueue's state small and submission fast. |

@@ -28,6 +28,7 @@ class TestThreadsArgparse:
             captured.update(kwargs)
 
         monkeypatch.setattr(cli, "create_files", fake_create_files)
+        monkeypatch.setattr(cli, "setup_logging", lambda *a, **k: None)  # no output.log, no root handlers
         cli.main()
         return captured
 
