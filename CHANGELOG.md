@@ -12,6 +12,19 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 ## [Unreleased]
 
 ### Added
+- One-line distribution call in `.hor` files, an alternative to the block form
+  (both can be mixed in one file): `ContinuousParameter "x" = LOG-TRIANGULAR(0.6, 1.0, 1.8)`,
+  `... = UNIFORM(0, 1) { emissions_low = MAXIMUM }`,
+  `DiscreteParameter "y" = DISCRETE([3, 4, 5], [0.2, 0.5, 0.3]) { default = 4 }`.
+  Wrong argument counts and mixing the call with `low_val`/`distribution`/`values`
+  are errors with a line number. Overrides keep the `if ... { }` block form.
+- `horizon run.hor --check`: parses with all validation and cross-checks the
+  `.unc` and the `.inc` files it includes (tokens without a parameter,
+  unused parameters, scenario values in include paths that resolve to no
+  file or one with different case). Prints a summary, exits 0 or 1, writes
+  nothing. `--explain` prints the resolved parameters per scenario value and
+  where each value came from. `--samples N` overrides `NumberOfSamples` for
+  one run without editing the file.
 - VS Code extension `syntax/horizon-language-1.1.0.vsix` with syntax
   highlighting for `.hor` and `.sen` files. It and the Notepad++ UDL now
   highlight the distribution keywords `LOG-TRIANGULAR`, `TRIANGULAR`,
@@ -25,13 +38,25 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   `pyarrow` as a dependency.
 
 ### Changed
+- Stricter `.hor` parser. Unknown keys in parameter blocks, `if` bodies and
+  the `Horizon` block are errors with a "Did you mean" suggestion. `if` is
+  only recognised at the start of a line, so `name = "Cost if any"` works.
+  After applying every override, `low_val <= high_val`, the triangular mode
+  and the default must lie within the bounds, and `if` conditions must name
+  a `ScenarioParameter` and one of its values. A `DiscreteParameter` without
+  `probabilities` is uniform (it crashed before) and needs one probability
+  per value. `.hor` files are read as UTF-8. Errors carry file and line, and
+  the command line prints one `file:line: error: ...` line and exits 1; the
+  traceback goes to `output.log`.
+- The legacy `ScenarioParameters` / `Parameters` lists in the `Horizon` block
+  (and bare `ContinuousParameter("X")` lines) are an error instead of a
+  deprecation warning. Delete the list; use `active = FALSE` to pin a
+  parameter; set `distribution = UNIFORM` where the old default was relied on.
 - Shorter `.hor` format. `token` and `name` are optional and default to the
   block name. A `ContinuousParameter` without `default` uses `mid_val` (also
   inside `if` overrides); without either, parsing fails. Every defined block
   takes part in the study, so the `ScenarioParameters` / `Parameters` lists in
-  the `Horizon` block are no longer needed. A file with either list is read
-  the old way (only listed blocks of both kinds) and logs a deprecation
-  warning. Two blocks with the same name now raise an error. A
+  the `Horizon` block are no longer needed (and now an error, see below). Two blocks with the same name now raise an error. A
   `DiscreteParameter` without `default` now raises an error instead of writing
   an empty value.
 - `distribution` is a keyword (`LOG-TRIANGULAR`, `TRIANGULAR`, `LOG-UNIFORM`,
@@ -46,17 +71,11 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   being copied into every realization folder. Include-heavy studies save one
   file creation per such include per realization — the dominant generation
   cost on network filesystems. Sample-dependent rewrites stay per-realization
-  in `simulation_includes/`; `--no-shared-includes` restores full
-  per-realization copies.
+  in `simulation_includes/`.
 - Rewritten include filenames now carry the source file's stem (e.g.
   `policy_POLICY_sample_1.inc` instead of `POLICY_sample_1.inc`), with a
   short hash suffix when two sources share a stem or the include path is
   tokenized.
-- The generation thread pool sizes itself to the output filesystem: a
-  startup latency probe detects network storage and raises the pool from
-  `min(8, CPU)` to `min(64, 4×CPU)` there, where generation is bound by
-  file-creation round trips and blocked threads are free. `--gen-workers`
-  still overrides.
 - **Breaking**: the default emissions metric key is `TotalEquivalentWtw`
   (formerly `TotalEquivalentWTW`), following navigate-zcs renaming its
   report properties — the key must match the report column navigate writes.
@@ -102,7 +121,25 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   falls back to the pueue CLI automatically without losing tasks;
   `horizon --pueue-cli` forces the CLI path outright.
 
+### Removed
+- Include directives not spelled `Include` (`INCLUDE`, `include`, ...) in `.unc` templates are no longer normalized;
+  generation and token extraction now fail with an error naming the file and
+  line. Write `Include`.
+- Network-filesystem latency probe and adaptive generation pool size: the
+  default is `min(8, CPU count)`; `--gen-workers N` sets it explicitly.
+- `--no-shared-includes`: the shared include store is the only behaviour.
+- The study-specific "Suggested Round 2 Discretization" table in the calibration
+  dashboard.
+- Calibration analysis of legacy output without a `regulation` column (folders
+  named `{regulation}_sampleNNN`): `sampled_parameters.csv` must now have a
+  `regulation` column, otherwise a clear error is raised.
+- Unused internals: `plot_sampled_parameters_histograms`,
+  `FileHandler.generate_commands_list` and `FileHandler.commands`.
+
 ### Fixed
+- Sensitivity analysis from a collected report (`--report-csv`) skipped a `.sen` point
+  metric that has a custom label and an explicit year with "No data found".
+- Calibration recommendation cards no longer show the literal text `# noqa: E122`.
 - Two different `.inc` files replacing the same token set were rewritten to
   the same `simulation_includes/` filename, silently overwriting each other:
   both nav `Include` lines then pointed at whichever copy was written last,
@@ -126,9 +163,7 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   current `Include` spelling instead of the legacy all-caps `INCLUDE`, which
   Navigate's grammar rejects. Every include line in a generated `.nav` was
   affected, so any template with includes failed to run.
-- Templates still using `INCLUDE` (or lowercase `include`) are normalized to
-  `Include` on generation, and the generated include lines now keep the
-  template's own indentation.
+- Generated include lines now keep the template's own indentation.
 - Include-line detection is word-boundary aware, so an attribute such as
   `IncludeRate = 5` is no longer mistaken for an include directive.
 - `.hor` parsing strips trailing `#` comments (a `#` inside a quoted string is

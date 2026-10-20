@@ -90,10 +90,6 @@ Horizon {
     NumberOfSamples = 2
     SamplingMethod = LHS
     RandomSeed = 7
-
-    ScenarioParameter("MARKET")
-    ContinuousParameter("TRADE_GROWTH")
-    ContinuousParameter("TRANSPORT_COST")
 }
 '''
 

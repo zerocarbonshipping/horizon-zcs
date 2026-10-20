@@ -169,6 +169,18 @@ def _pueue_add_cli(command: str, pueue_priority: int, label: str, task_env=None,
         return (False, str(e), None)
 
 
+def _log_failure(command, error_msg):
+    logger.error("Failed to queue command: %s", command)
+    if error_msg:
+        logger.error("Pueue error: %s", error_msg)
+
+
+def _log_progress(done, total):
+    """Heartbeat for large batches."""
+    if total > _PROGRESS_HEARTBEAT_INTERVAL and done % _PROGRESS_HEARTBEAT_INTERVAL == 0 and done < total:
+        logger.info("Queuing progress: %d/%d tasks submitted...", done, total)
+
+
 class _DirectSubmitter:
     """Streams Add requests over one direct daemon connection.
 
@@ -248,10 +260,7 @@ class _DirectSubmitter:
                 self._ok += 1
                 if task_id is not None:
                     self.task_ids.append(task_id)
-                if (self._expected > _PROGRESS_HEARTBEAT_INTERVAL
-                        and self._ok % _PROGRESS_HEARTBEAT_INTERVAL == 0
-                        and self._ok < self._expected):
-                    logger.info("Queuing progress: %d/%d tasks submitted...", self._ok, self._expected)
+                _log_progress(self._ok, self._expected)
             else:
                 self._failures.append((item, error_msg))
 
@@ -287,7 +296,6 @@ class StreamingQueuer:
         self._executor = None
         self._future_to_cmd = {}
         self._env_vars = ""
-        self._expected = 0
         self._full_task_env = full_task_env
         self._task_env = _build_task_env(full_task_env)
         self._force_cli = pueue_cli
@@ -306,7 +314,6 @@ class StreamingQueuer:
             f"MKL_NUM_THREADS={threads_per_task} "
             f"NUMEXPR_NUM_THREADS={threads_per_task}"
         )
-        self._expected = expected_total
         logger.info(
             "Queuing %d tasks with %d threads each (%d CPUs available)",
             expected_total, threads_per_task, cpu_count,
@@ -370,9 +377,7 @@ class StreamingQueuer:
             self._direct = None
             queued_ok += direct_ok
             for command, error_msg in failures:
-                logger.error("Failed to queue command: %s", command)
-                if error_msg:
-                    logger.error("Pueue error: %s", error_msg)
+                _log_failure(command, error_msg)
                 queued_fail += 1
             if error is not None:
                 if leftover or unknown:
@@ -432,17 +437,11 @@ class StreamingQueuer:
                 if task_id is not None:
                     self.task_ids.append(task_id)
             else:
-                logger.error("Failed to queue command: %s", command)
-                if error_msg:
-                    logger.error("Pueue error: %s", error_msg)
+                _log_failure(command, error_msg)
                 queued_fail += 1
 
             completed += 1
-            # Progress heartbeat for large batches
-            if (num_tasks > _PROGRESS_HEARTBEAT_INTERVAL
-                    and completed % _PROGRESS_HEARTBEAT_INTERVAL == 0
-                    and completed < num_tasks):
-                logger.info("Queuing progress: %d/%d tasks submitted...", completed, num_tasks)
+            _log_progress(completed, num_tasks)
 
         self._executor.shutdown(wait=True)
         self._executor = None
@@ -599,10 +598,8 @@ def _get_pueue_tasks():
         )
         if result.returncode != 0:
             return None
-        data = json.loads(result.stdout)
         # pueue status --json returns {"tasks": {id: task, ...}}
-        tasks_dict = data.get("tasks", {})
-        return list(tasks_dict.values())
+        return list(json.loads(result.stdout).get("tasks", {}).values())
     except Exception:
         return None
 
@@ -615,23 +612,11 @@ def _status_is(task, state):
     (``"status": {"Running": {"enqueued_at": ...}}``).
     """
     status = task.get("status")
-    if status == state:
-        return True
-    return isinstance(status, dict) and state in status
+    return status == state or (isinstance(status, dict) and state in status)
 
 
-def _task_is_queued(task):
-    """Check if a pueue task is in the Queued state."""
-    return _status_is(task, "Queued")
-
-
-def _task_is_running(task):
-    """Check if a pueue task is in the Running state."""
-    return _status_is(task, "Running")
-
-
-def _done_result(task):
-    """Return a finished pueue task's result payload, or None if not Done.
+def _done_outcome(task):
+    """Return a finished task's outcome name (``"Success"``, ``"Failed"``, ...), or None if not Done.
 
     pueue 3.x: ``{"Done": "Success"}`` or ``{"Done": {"Failed": 1}}``.
     pueue 4.x: ``{"Done": {..., "result": "Success"}}`` or
@@ -640,30 +625,27 @@ def _done_result(task):
     status = task.get("status")
     if not (isinstance(status, dict) and "Done" in status):
         return None
-    done = status["Done"]
-    if isinstance(done, dict) and "result" in done:
-        return done["result"]
-    return done
+    result = status["Done"]
+    if isinstance(result, dict) and "result" in result:
+        result = result["result"]
+    return next(iter(result), "Unknown") if isinstance(result, dict) else result
+
+
+def _task_is_queued(task):
+    return _status_is(task, "Queued")
+
+
+def _task_is_running(task):
+    return _status_is(task, "Running")
 
 
 def _task_succeeded(task):
-    """Check if a pueue task completed successfully."""
-    result = _done_result(task)
-    if result is None:
-        return False
-    if isinstance(result, dict):
-        return "Success" in result
-    return result == "Success"
+    return _done_outcome(task) == "Success"
 
 
 def _task_failed(task):
-    """Check if a pueue task failed."""
-    result = _done_result(task)
-    if result is None:
-        return False
-    if isinstance(result, dict):
-        return "Success" not in result
-    return result != "Success"
+    outcome = _done_outcome(task)
+    return outcome is not None and outcome != "Success"
 
 
 def _report_failures(failed_tasks, output_folder):

@@ -132,40 +132,16 @@ class TestContinuousSampling:
         # Should be in range
         assert triangular_param.low_val <= result <= triangular_param.high_val
 
-    def test_sample_continuous_mc_uniform_distribution(self, simple_continuous_param):
-        """Monte Carlo sampling should produce values in the correct range."""
+    def test_continuous_ppf_respects_decimals(self, simple_continuous_param):
+        """Values should be rounded to the specified decimals."""
+        result = ParameterSampler()._continuous_ppf(simple_continuous_param, 0.123456789)
+        assert result == round(result, simple_continuous_param.decimals)
+
+    def test_continuous_ppf_degenerate(self, degenerate_param):
+        """Degenerate distribution (low == high) always returns the constant value."""
         sampler = ParameterSampler()
-        np.random.seed(42)
-
-        results = [
-            sampler._sample_continuous_mc(simple_continuous_param)
-            for _ in range(5)
-        ]
-
-        # All results should be in range
-        for result in results:
-            assert simple_continuous_param.low_val <= result <= simple_continuous_param.high_val
-
-    def test_sample_continuous_mc_respects_decimals(self, simple_continuous_param):
-        """Sampled values should be rounded to specified decimals."""
-        sampler = ParameterSampler()
-        np.random.seed(42)
-        result = sampler._sample_continuous_mc(simple_continuous_param)
-
-        # Check that result has at most 'decimals' decimal places
-        decimals = simple_continuous_param.decimals
-        rounded = round(result, decimals)
-        assert result == pytest.approx(rounded)
-
-    def test_sample_continuous_mc_degenerate(self, degenerate_param):
-        """Degenerate distribution should always return the constant value."""
-        sampler = ParameterSampler()
-        np.random.seed(42)
-
-        # Test multiple draws — degenerate (low==high) always returns the constant
-        for _ in range(5):
-            result = sampler._sample_continuous_mc(degenerate_param)
-            assert result == pytest.approx(42.0)
+        for u in (0.0, 0.3, 1.0):
+            assert sampler._continuous_ppf(degenerate_param, u) == pytest.approx(42.0)
 
 
 # ============================================================================
@@ -533,9 +509,8 @@ class TestDrawMatrixReuse:
     per-combination recomputation dominated sampling time)."""
 
     def test_seeded_lhs_computed_once_per_sampler(self, mocker):
-        import horizon.parameters.sampler as sampler_module
-        real_lhs = sampler_module.lhs
-        spy = mocker.patch.object(sampler_module, "lhs", side_effect=real_lhs)
+        import pyDOE3
+        spy = mocker.patch.object(pyDOE3, "lhs", side_effect=pyDOE3.lhs)
 
         sampler = ParameterSampler()
         run1 = sampler.sample_latin_hypercube(_make_params(0.0, 1.0), 12, seed=42)
@@ -546,9 +521,8 @@ class TestDrawMatrixReuse:
         assert run1[3]["A"] != run2[3]["A"]
 
     def test_unseeded_lhs_never_cached(self, mocker):
-        import horizon.parameters.sampler as sampler_module
-        real_lhs = sampler_module.lhs
-        spy = mocker.patch.object(sampler_module, "lhs", side_effect=real_lhs)
+        import pyDOE3
+        spy = mocker.patch.object(pyDOE3, "lhs", side_effect=pyDOE3.lhs)
 
         sampler = ParameterSampler()
         sampler.sample_latin_hypercube(_make_params(), 12, seed=None)

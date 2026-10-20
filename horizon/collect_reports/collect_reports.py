@@ -11,6 +11,7 @@ memory for the combined CSV.
 """
 
 import concurrent.futures
+import contextlib
 import fnmatch
 import logging
 import os
@@ -26,6 +27,12 @@ _PROGRESS_HEARTBEAT_INTERVAL = 50
 
 
 # ----------------------------- IO helpers -----------------------------
+
+def _log_progress(message: str, done: int, total: int) -> None:
+    """Log a heartbeat every few files for large batches."""
+    if total > _PROGRESS_HEARTBEAT_INTERVAL and done % _PROGRESS_HEARTBEAT_INTERVAL == 0 and done < total:
+        logger.info(message, done, total)
+
 
 def process_excel_file(file_path: str, scenario_name: str) -> pd.DataFrame | None:
     """Load a single Excel spreadsheet as raw cell values.
@@ -51,20 +58,10 @@ def process_excel_file(file_path: str, scenario_name: str) -> pd.DataFrame | Non
     """
     try:
         try:
-            df = pd.read_excel(
-                file_path,
-                header=None,
-                dtype=object,
-                engine="calamine",
-            )
+            df = pd.read_excel(file_path, header=None, dtype=object, engine="calamine")
         except ImportError:
             logger.debug("calamine not available, falling back to openpyxl for %s", file_path)
-            df = pd.read_excel(
-                file_path,
-                header=None,
-                dtype=object,
-                engine="openpyxl",
-            )
+            df = pd.read_excel(file_path, header=None, dtype=object, engine="openpyxl")
         logger.debug(f"Processed {file_path}")
         return df
     except Exception as e:
@@ -92,9 +89,7 @@ def _read_and_parse(
         read).
     """
     df = process_excel_file(file_path, scenario_name)
-    if df is not None and not df.empty:
-        return df, _parse_file_dates(df)
-    return df, None
+    return df, _parse_file_dates(df) if df is not None and not df.empty else None
 
 
 def collect_files(
@@ -167,22 +162,11 @@ def _atomic_write_csv(df: pd.DataFrame, target_file: str, **to_csv_kwargs) -> No
             directory,
             f"{os.path.splitext(os.path.basename(target_file))[0]}_{ts}.csv"
         )
-        try:
-            df.to_csv(fallback, **to_csv_kwargs)
-            logger.warning("Target file appears to be in use. Wrote to fallback: %s", fallback)
-        finally:
-            if os.path.exists(tmp):
-                try:
-                    os.remove(tmp)
-                except Exception:
-                    pass
-    except Exception as e:
-        if os.path.exists(tmp):
-            try:
-                os.remove(tmp)
-            except Exception:
-                pass
-        raise e
+        df.to_csv(fallback, **to_csv_kwargs)
+        logger.warning("Target file appears to be in use. Wrote to fallback: %s", fallback)
+    finally:
+        with contextlib.suppress(OSError):
+            os.remove(tmp)
 
 
 # ----------------------- date/timeline utilities -----------------------
@@ -299,14 +283,10 @@ def _extract_timeline_from_cache(
         A unique and sorted ``DatetimeIndex`` covering all timestamps in the
         report.  An empty index is returned if no dates could be extracted.
     """
-    if first_data_row >= df_len:
-        return pd.DatetimeIndex([])
     dates = parsed_dates.iloc[first_data_row:].dropna()
-    if dates.empty:
+    if first_data_row >= df_len or dates.empty:
         return pd.DatetimeIndex([])
-    tl = pd.DatetimeIndex(sorted(dates.unique()))
-    tl = tl[~tl.duplicated(keep="first")]
-    return tl
+    return pd.DatetimeIndex(dates.unique()).sort_values()
 
 
 def _choose_master_index(
@@ -508,10 +488,7 @@ def collect_reports(
             results[idx] = df
             date_cache[idx] = cache
             done_count += 1
-            if (total > _PROGRESS_HEARTBEAT_INTERVAL
-                    and done_count % _PROGRESS_HEARTBEAT_INTERVAL == 0
-                    and done_count < total):
-                logger.info("Reading progress: %d/%d files loaded...", done_count, total)
+            _log_progress("Reading progress: %d/%d files loaded...", done_count, total)
     logger.info("Reading and date parsing complete: %d/%d files loaded.", total, total)
 
     # Infer a master timeline from the most granular input (tie -> longest span)
@@ -560,10 +537,7 @@ def collect_reports(
             all_scenario_labels.append(scenario_name)
 
         aligned_count += 1
-        if (total > _PROGRESS_HEARTBEAT_INTERVAL
-                and aligned_count % _PROGRESS_HEARTBEAT_INTERVAL == 0
-                and aligned_count < total):
-            logger.info("Alignment progress: %d/%d files processed...", aligned_count, total)
+        _log_progress("Alignment progress: %d/%d files processed...", aligned_count, total)
 
     logger.info("Alignment complete: %d files processed.", aligned_count)
 
@@ -601,10 +575,4 @@ def collect_reports(
         # Replace NaNs only in row 3 (fuel/subcategory row) with blanks
         combined_df.iloc[3] = combined_df.iloc[3].where(pd.notna(combined_df.iloc[3]), "")
 
-        _atomic_write_csv(
-            combined_df,
-            target_file,
-            index=False,
-            header=False,
-            na_rep="#N/A",
-        )
+        _atomic_write_csv(combined_df, target_file, index=False, header=False, na_rep="#N/A")

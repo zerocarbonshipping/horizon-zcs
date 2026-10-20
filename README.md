@@ -94,10 +94,18 @@ after the runs. `horizon --collect-results path/to/output_dir` runs it by
 hand. With no results files, for a Navigate that does not write them, it
 does nothing and succeeds.
 
+Before a long run, `horizon my_study.hor --check` catches typos and
+mismatches between the `.hor`, `.unc` and `.inc` files in seconds, and
+`--explain` shows what each parameter resolves to. A broken `.hor` file
+prints one line (`my_study.hor:41: error: ...`) and exits 1; the traceback is
+in `output.log`.
+
 The `.hor` file defines the study: which parameters vary, over what ranges
 and distributions, across which scenario combinations. The `.unc` file it
 points at is an ordinary Navigate simulation file with `%TOKEN%`
-placeholders where sampled values are substituted.
+placeholders where sampled values are substituted. A parameter fits on one
+line, e.g. `ContinuousParameter "WACC" = LOG-TRIANGULAR(0.6, 1.0, 1.8)`; the
+block form is equally valid (see [`docs/configuration.md`](docs/configuration.md)).
 
 ### Sensitivity analysis
 
@@ -124,6 +132,9 @@ See `horizon --help` for the full list. The most used flags:
 | `--gen-workers N` | Thread-pool size for `.nav` generation (default: `min(8, CPU count)`). |
 | `--output-dir DIR` | Directory for generated scenario folders (default: next to the `.unc` file). |
 | `--dry-run` | Validate the configuration and preview what would be generated. |
+| `--check` | Parse the `.hor` file with all validation and cross-check the `.unc` template and the `.inc` files it includes: every `%TOKEN%` has a parameter, unused parameters are warned about, and every scenario value in an include path such as `policy_%policy%.inc` resolves to a file with exactly that spelling. Prints a short summary, exits 0 (ok or warnings) or 1 (errors); writes and queues nothing. |
+| `--explain` | Print each parameter as it resolves per scenario value (distribution, low, mode, high, default, decimals) and where each came from: base, an `if` override, or an inferred value. Use it with `--check` or alone. |
+| `--samples N` | Use `N` samples instead of `NumberOfSamples` for this run, without editing the file (e.g. `horizon run.hor --samples 1` for a smoke test). The override is logged. |
 | `--status DIR` | Check pueue task status and report failures for an output directory. |
 | `--collect-results DIR` | Merge the Navigate results files below `DIR` into `DIR.parquet` for Lantern; queued automatically after a study's runs. |
 | `--replot DIR ...` | Queue Navigate replot jobs for directories containing `plot_data.pkl`. |
@@ -144,16 +155,12 @@ defaults adapt to the machine, and two knobs cover the extremes:
 
 - **Network storage** (an output directory on NFS/SMB) changes the game:
   every file creation is a metadata round trip, so include-heavy decks are
-  bound by files-per-realization, not CPU. Two things address this. First,
-  rewritten includes whose content only varies per scenario are written once
+  bound by files-per-realization, not CPU. Rewritten
+  includes whose content only varies per scenario are therefore written once
   per scenario combination into `shared_includes/` instead of into every
-  realization folder (on by default; `--no-shared-includes` restores full
-  copies). Second, Horizon probes the output filesystem's latency at
-  generation start and automatically sizes the pool at `min(64, 4×CPU)`
-  when it looks network-backed — threads blocked on round trips cost
-  nothing, so more in-flight operations directly raise throughput. The log
-  says when this triggers; `--gen-workers` overrides either way (measure
-  your optimum with [`tools/benchmark/`](tools/benchmark/README.md)).
+  realization folder. Threads blocked on round trips cost nothing, so raising
+  `--gen-workers` above the default `min(8, CPU count)` can raise throughput
+  there (measure your optimum with [`tools/benchmark/`](tools/benchmark/README.md)).
 
 - **Queue submission** uses a direct connection to the pueue daemon when a
   pueue >= 4 unix socket is found, and the pueue CLI otherwise (or with

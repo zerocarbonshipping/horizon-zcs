@@ -134,7 +134,7 @@ unconditionally plus one inside every `_write_to_file`); skip creating
 every realization gets one, often empty — note: visible layout change,
 flag it in the changelog); precompute the include-file relative paths once
 per run instead of `os.path.relpath` per include per realization (16 k
-calls); drop `os.path.abspath` in `generate_commands_list` (paths are
+calls); drop `os.path.abspath` in the command builder (paths are
 already absolute — 34 k calls); write the `.nav` with a single
 `fh.write("".join(...))`. Expected: removes most of the remaining
 non-write syscall time; on network filesystems and Windows this is the
@@ -226,8 +226,7 @@ lands. On Windows the relative gain from 2.3 is larger.
 - **Shared include store** — *landed*: production runs on network storage
   showed generation bound by file creations per realization (~7 files/s for
   an include-heavy deck). Scenario-only rewrites are now written once per
-  combination under `shared_includes/` (default on, `--no-shared-includes`
-  opts out); measured 12x on a prod-shaped study (2 500 realizations, 41
+  combination under `shared_includes/` (the only behaviour); measured 12x on a prod-shaped study (2 500 realizations, 41
   includes/deck) under 3 ms emulated per-op latency. Realization folders
   already referenced unmodified includes outside themselves, so
   portability semantics are unchanged.
