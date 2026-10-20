@@ -89,7 +89,8 @@ Commands are queued through [pueue](https://github.com/Nukesor/pueue). The
 `--priority` flag maps to pueue priorities (low = -5, normal = 0,
 high = 5). Thread-limiting environment variables (`OMP_NUM_THREADS`,
 `MKL_NUM_THREADS`, `NUMEXPR_NUM_THREADS`) are set per task adaptively:
-`max(2, cpu_count // num_tasks)`, capped at `cpu_count`. Each task is
+`max(2, cpu_count // num_tasks)`, capped at `cpu_count`, unless `--threads N`
+pins every task to exactly N. Each task is
 labelled with its realization folder name so `pueue status` stays readable.
 Horizon never imports Navigate as a library — the seam between the two tools
 is the `navigate` CLI.

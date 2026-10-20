@@ -203,7 +203,7 @@ def _validate_tokens(unc_file_path, scenario_parameters, parameters):
 
 def create_files(hor_file_path, max_files=None, priority="normal", solver=None,
                  navigate_flags=None, output_dir=None, dry_run=False, full_task_env=False,
-                 pueue_cli=False, gen_workers=None, samples=None, group="default"):
+                 pueue_cli=False, gen_workers=None, samples=None, group="default", threads=None):
     """
     Main entrypoint to create files based on the .hor configuration.
 
@@ -223,6 +223,7 @@ def create_files(hor_file_path, max_files=None, priority="normal", solver=None,
         gen_workers: generation thread-pool size (default: min(8, cpu_count);
             see FileHandler.generate_scenarios_and_nav_files)
         samples: optional number of samples that replaces NumberOfSamples for this run (the file is not edited)
+        threads: optional fixed OMP/MKL/NUMEXPR thread count per task (default: split by study size)
     Returns:
         sample_only (bool) if we terminated early because SampleOnly=True, otherwise None
     """
@@ -369,7 +370,7 @@ def create_files(hor_file_path, max_files=None, priority="normal", solver=None,
     # simulations start while the rest of the study is still generating, and
     # total wall time becomes max(generation, queuing) instead of their sum.
     queuer = StreamingQueuer(priority=priority, full_task_env=full_task_env, pueue_cli=pueue_cli,
-                             group=group)
+                             group=group, threads=threads)
     queued_ok = 0
 
     try:
