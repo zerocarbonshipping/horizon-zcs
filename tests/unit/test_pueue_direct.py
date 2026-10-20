@@ -276,6 +276,40 @@ class TestDirectSubmission:
         assert run_mock.call_count == 2
         assert daemon.received == []
 
+    def test_group_reaches_daemon(self, fake_daemon_env):
+        daemon = FakeDaemon(str(fake_daemon_env))
+        try:
+            queuer = StreamingQueuer(group="prod")
+            queuer.start(1)
+            queuer.submit('navigate "/d/g_sample001/g_sample001.nav"')
+            ok, fail = queuer.finish()
+        finally:
+            daemon.close()
+
+        assert (ok, fail) == (1, 0)
+        assert daemon.received[0]["Add"]["group"] == "prod"
+
+    def test_group_reaches_pueue_cli(self, mocker):
+        run_mock = mocker.patch.object(
+            run_commands.subprocess, "run",
+            return_value=mocker.Mock(returncode=0, stdout="", stderr=""))
+        ok, *_ = run_commands._queue_single_command(
+            'navigate "/d/h_sample001/h_sample001.nav"', 0, "", group="dev")
+
+        assert ok
+        cmd = run_mock.call_args.args[0]
+        assert cmd[cmd.index("--group") + 1] == "dev"
+
+    def test_collector_goes_to_the_same_group(self, mocker):
+        run_mock = mocker.patch.object(
+            run_commands.subprocess, "run",
+            return_value=mocker.Mock(returncode=0, stdout="42\n", stderr=""))
+        assert run_commands.queue_results_collector("/d/out", [1, 2], group="prod")
+
+        cmd = run_mock.call_args.args[0]
+        assert cmd[cmd.index("--group") + 1] == "prod"
+        assert cmd[cmd.index("--after") + 1:cmd.index("--after") + 3] == ["1", "2"]
+
     def test_undecodable_env_value_is_dropped_not_fatal(self, fake_daemon_env, monkeypatch):
         """A surrogate-containing env value (surrogateescape) cannot ride the
         CBOR protocol; it is dropped instead of breaking the direct path."""

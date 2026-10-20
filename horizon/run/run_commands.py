@@ -114,7 +114,8 @@ def _extract_label(command: str) -> str:
         return ""
 
 
-def _queue_single_command(command: str, pueue_priority: int, env_vars: str, task_env=None) -> tuple:
+def _queue_single_command(command: str, pueue_priority: int, env_vars: str, task_env=None,
+                          group: str = "default") -> tuple:
     """Queue a single command via pueue.
 
     ``task_env`` is the environment for the pueue client subprocess - pueue
@@ -126,10 +127,12 @@ def _queue_single_command(command: str, pueue_priority: int, env_vars: str, task
     tuple[bool, str, int | None]
         (success, error_message, task_id)
     """
-    return _pueue_add_cli(f'{env_vars} {command}', pueue_priority, _extract_label(command), task_env)
+    return _pueue_add_cli(f'{env_vars} {command}', pueue_priority, _extract_label(command), task_env,
+                          group=group)
 
 
-def _pueue_add_cli(command: str, pueue_priority: int, label: str, task_env=None, dependencies=()) -> tuple:
+def _pueue_add_cli(command: str, pueue_priority: int, label: str, task_env=None, dependencies=(),
+                   group: str = "default") -> tuple:
     """Add one task through the pueue CLI.
 
     Parameters
@@ -144,6 +147,8 @@ def _pueue_add_cli(command: str, pueue_priority: int, label: str, task_env=None,
         Environment of the pueue client, stored as the task's environment.
     dependencies : iterable of int
         Task ids that must succeed before this task starts.
+    group : str
+        Pueue group of the task (must exist on the daemon).
 
     Returns
     -------
@@ -151,7 +156,7 @@ def _pueue_add_cli(command: str, pueue_priority: int, label: str, task_env=None,
         (success, error_message, task_id)
     """
     try:
-        pueue_cmd = ['pueue', 'add', '--print-task-id', '--priority', str(pueue_priority)]
+        pueue_cmd = ['pueue', 'add', '--print-task-id', '--priority', str(pueue_priority), '--group', group]
         if label:
             pueue_cmd += ['--label', label]
         if dependencies:
@@ -197,10 +202,11 @@ class _DirectSubmitter:
 
     _SENTINEL = object()
 
-    def __init__(self, pueue_priority, envs, cwd, expected_total):
+    def __init__(self, pueue_priority, envs, cwd, expected_total, group="default"):
         # Raises PueueDirectError when no daemon is reachable.
         self._conn = pueue_client.connect()
         self._pueue_priority = pueue_priority
+        self._group = group
         self._envs = envs
         self._cwd = cwd
         self._expected = expected_total
@@ -240,7 +246,8 @@ class _DirectSubmitter:
                 continue
             try:
                 success, error_msg, task_id = self._conn.add_task(
-                    item, self._cwd, self._envs, self._pueue_priority, _extract_label(item))
+                    item, self._cwd, self._envs, self._pueue_priority, _extract_label(item),
+                    group=self._group)
             except PueueDirectError as exc:
                 # Connection-level failure mid-request: the daemon may have
                 # committed this task before the acknowledgement was lost.
@@ -290,8 +297,9 @@ class StreamingQueuer:
     """
 
     def __init__(self, priority: str = "normal", full_task_env: bool = False,
-                 pueue_cli: bool = False):
+                 pueue_cli: bool = False, group: str = "default"):
         self._priority = priority
+        self._group = group
         self._pueue_priority = PRIORITY_MAP[priority]
         self._executor = None
         self._future_to_cmd = {}
@@ -337,7 +345,8 @@ class StreamingQueuer:
                            if _utf8_encodable(key) and _utf8_encodable(value)}
             try:
                 self._direct = _DirectSubmitter(
-                    self._pueue_priority, direct_envs, os.getcwd(), expected_total)
+                    self._pueue_priority, direct_envs, os.getcwd(), expected_total,
+                    group=self._group)
                 logger.info("Submitting over a direct pueue daemon connection "
                             "(protocol %s).", self._direct._conn.daemon_version)
             except PueueDirectError as exc:
@@ -361,7 +370,8 @@ class StreamingQueuer:
 
     def _submit_cli(self, command: str) -> None:
         future = self._executor.submit(
-            _queue_single_command, command, self._pueue_priority, self._env_vars, self._task_env)
+            _queue_single_command, command, self._pueue_priority, self._env_vars, self._task_env,
+            self._group)
         self._future_to_cmd[future] = command
 
     def finish(self) -> tuple:
@@ -461,7 +471,7 @@ class StreamingQueuer:
 
 
 def run_commands(commands: List[str], priority: str = "normal", full_task_env: bool = False,
-                 pueue_cli: bool = False) -> None:
+                 pueue_cli: bool = False, group: str = "default") -> None:
     """
     Run multiple navigation commands using pueue with adaptive thread allocation.
 
@@ -483,8 +493,11 @@ def run_commands(commands: List[str], priority: str = "normal", full_task_env: b
     pueue_cli : bool
         Force submission through the pueue CLI instead of the direct
         daemon connection.
+    group : str
+        Pueue group the tasks go into (must exist on the daemon).
     """
-    queuer = StreamingQueuer(priority=priority, full_task_env=full_task_env, pueue_cli=pueue_cli)
+    queuer = StreamingQueuer(priority=priority, full_task_env=full_task_env, pueue_cli=pueue_cli,
+                             group=group)
     queuer.start(len(commands))
     for command in commands:
         queuer.submit(command)
@@ -492,7 +505,7 @@ def run_commands(commands: List[str], priority: str = "normal", full_task_env: b
 
 
 def queue_results_collector(output_folder: str, task_ids: List[int], priority: str = "normal",
-                            full_task_env: bool = False) -> bool:
+                            full_task_env: bool = False, group: str = "default") -> bool:
     """Queue ``horizon --collect-results`` to run once the given tasks have succeeded.
 
     Goes through the pueue CLI, the only path that takes dependencies. pueue
@@ -509,6 +522,9 @@ def queue_results_collector(output_folder: str, task_ids: List[int], priority: s
         Pueue scheduling priority ('low', 'normal', or 'high').
     full_task_env : bool
         Forward the entire environment to the task instead of the whitelist.
+    group : str
+        Pueue group of the collector; the same as its simulations, so a group
+        with only a few slots still runs it.
 
     Returns
     -------
@@ -517,7 +533,8 @@ def queue_results_collector(output_folder: str, task_ids: List[int], priority: s
     """
     command = f'horizon --collect-results "{output_folder}"'
     success, error_msg, task_id = _pueue_add_cli(
-        command, PRIORITY_MAP[priority], _COLLECTOR_LABEL, _build_task_env(full_task_env), task_ids)
+        command, PRIORITY_MAP[priority], _COLLECTOR_LABEL, _build_task_env(full_task_env), task_ids,
+        group=group)
 
     if not success:
         logger.error("Failed to queue results collection; run `%s` once the simulations have finished. "

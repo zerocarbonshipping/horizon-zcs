@@ -203,7 +203,7 @@ def _validate_tokens(unc_file_path, scenario_parameters, parameters):
 
 def create_files(hor_file_path, max_files=None, priority="normal", solver=None,
                  navigate_flags=None, output_dir=None, dry_run=False, full_task_env=False,
-                 pueue_cli=False, gen_workers=None, samples=None):
+                 pueue_cli=False, gen_workers=None, samples=None, group="default"):
     """
     Main entrypoint to create files based on the .hor configuration.
 
@@ -211,6 +211,7 @@ def create_files(hor_file_path, max_files=None, priority="normal", solver=None,
         hor_file_path: path to the .hor file
         max_files: optional limit on total nav files to generate
         priority: pueue scheduling priority ('low', 'normal', or 'high')
+        group: pueue group the tasks go into (must exist on the daemon)
         solver: optional solver backend for NavigaTE ('auto', 'gurobi', or 'highs')
         navigate_flags: optional extra flags to pass to each navigate command
         output_dir: optional directory for generated scenario folders (default: next to .unc file)
@@ -367,7 +368,8 @@ def create_files(hor_file_path, max_files=None, priority="normal", solver=None,
     # Queue each realization the moment its .nav is written: the first
     # simulations start while the rest of the study is still generating, and
     # total wall time becomes max(generation, queuing) instead of their sum.
-    queuer = StreamingQueuer(priority=priority, full_task_env=full_task_env, pueue_cli=pueue_cli)
+    queuer = StreamingQueuer(priority=priority, full_task_env=full_task_env, pueue_cli=pueue_cli,
+                             group=group)
     queued_ok = 0
 
     try:
@@ -398,7 +400,8 @@ def create_files(hor_file_path, max_files=None, priority="normal", solver=None,
                        "automatically; run `horizon --collect-results \"%s\"` once the simulations "
                        "have finished.", queued_ok - len(queuer.task_ids), output_folder)
     elif queuer.task_ids:
-        queue_results_collector(output_folder, queuer.task_ids, priority=priority, full_task_env=full_task_env)
+        queue_results_collector(output_folder, queuer.task_ids, priority=priority, full_task_env=full_task_env,
+                                group=group)
 
     skip_note = " (%d combination(s) skipped by filters)" % file_handler.skipped_count if file_handler.skipped_count > 0 else ""
     logger.info("Generated %d NAV file(s) in %s%s", len(file_handler.nav_filepaths), output_folder, skip_note)

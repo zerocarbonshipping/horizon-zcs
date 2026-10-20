@@ -12,6 +12,8 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 ## [Unreleased]
 
 ### Added
+- `--group NAME` puts queued runs into a pueue group (default `default`), on both the
+  direct daemon path and the pueue CLI fallback.
 - One-line distribution call in `.hor` files, an alternative to the block form
   (both can be mixed in one file): `ContinuousParameter "x" = LOG-TRIANGULAR(0.6, 1.0, 1.8)`,
   `... = UNIFORM(0, 1) { emissions_low = MAXIMUM }`,

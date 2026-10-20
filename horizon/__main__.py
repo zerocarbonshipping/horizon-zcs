@@ -30,6 +30,8 @@ def main():
     cli_parser.add_argument("-c", "--collect", action="store_true", help="Collect reports from specified directory.")
     cli_parser.add_argument("--priority", choices=["low", "normal", "high"], default="normal",
                             help="Pueue task scheduling priority (default: normal).")
+    cli_parser.add_argument("--group", default="default",
+                            help="Pueue group for the tasks; it must exist on the daemon (default: default).")
     cli_parser.add_argument("--solver", default=None, choices=["auto", "gurobi", "highs"],
                             help="Solver backend for NavigaTE: 'auto' tries Gurobi then falls back to HiGHS, "
                                  "'gurobi' prefers Gurobi (falls back to HiGHS if unlicensed), "
@@ -217,7 +219,7 @@ def main():
                          navigate_flags=args.navigate_flags, output_dir=args.output_dir,
                          dry_run=args.dry_run, full_task_env=args.full_task_env,
                          pueue_cli=args.pueue_cli, gen_workers=args.gen_workers,
-                         samples=args.samples)
+                         samples=args.samples, group=args.group)
         except (HorizonError, ValueError) as error:
             _exit_with_error(file_name, error)
 
@@ -257,7 +259,7 @@ def _replot_batch(args):
     from horizon.run.run_commands import run_commands
     logger.info("Queuing %d replot command(s).", len(commands))
     run_commands(commands, priority=args.priority, full_task_env=args.full_task_env,
-                 pueue_cli=args.pueue_cli)
+                 pueue_cli=args.pueue_cli, group=args.group)
 
 
 if __name__ == "__main__":

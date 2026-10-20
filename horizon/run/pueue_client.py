@@ -246,7 +246,7 @@ class PueueDirectConnection:
         except (OSError, _cbor.CBORError) as exc:
             raise PueueDirectError(f"pueue daemon request failed: {exc}")
 
-    def add_task(self, command, path, envs, pueue_priority, label, dependencies=()):
+    def add_task(self, command, path, envs, pueue_priority, label, dependencies=(), group="default"):
         """Submit one task; returns (success, error_message, task_id).
 
         ``dependencies`` are task ids that must succeed before this task starts.
@@ -258,7 +258,7 @@ class PueueDirectConnection:
                 "envs": envs,
                 "start_immediately": False,
                 "stashed": False,
-                "group": "default",
+                "group": group,
                 "enqueue_at": None,
                 "dependencies": list(dependencies),
                 "priority": pueue_priority,
