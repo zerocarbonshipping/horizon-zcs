@@ -259,6 +259,32 @@ class TestDirectSubmission:
         # the minimal env applies here too
         assert "PATH" in add["envs"]
 
+    def test_explicit_threads_on_direct_path(self, fake_daemon_env):
+        daemon = FakeDaemon(str(fake_daemon_env))
+        try:
+            queuer = StreamingQueuer(threads=3)
+            queuer.start(10)
+            queuer.submit('navigate "/d/a_sample001/a_sample001.nav"')
+            ok, fail = queuer.finish()
+        finally:
+            daemon.close()
+        assert (ok, fail) == (1, 0)
+        envs = daemon.received[0]["Add"]["envs"]
+        assert [envs[v] for v in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS")] == ["3", "3", "3"]
+
+    def test_default_unchanged_direct_path(self, fake_daemon_env, mocker):
+        mocker.patch.object(os, "cpu_count", return_value=176)
+        daemon = FakeDaemon(str(fake_daemon_env))
+        try:
+            queuer = StreamingQueuer()
+            queuer.start(10)
+            queuer.submit('navigate "/d/a_sample001/a_sample001.nav"')
+            queuer.finish()
+        finally:
+            daemon.close()
+        envs = daemon.received[0]["Add"]["envs"]
+        assert [envs[v] for v in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS")] == ["17", "17", "17"]
+
     def test_pueue_cli_flag_skips_direct(self, fake_daemon_env, mocker):
         daemon = FakeDaemon(str(fake_daemon_env))
         run_mock = mocker.patch.object(

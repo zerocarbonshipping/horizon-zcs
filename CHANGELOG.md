@@ -12,6 +12,9 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 ## [Unreleased]
 
 ### Added
+- `--threads N`: pin `OMP_NUM_THREADS`, `MKL_NUM_THREADS` and `NUMEXPR_NUM_THREADS` to
+  exactly N for every queued task (direct daemon and pueue CLI paths). Without it the
+  automatic `max(2, cpu_count // tasks)` split is unchanged.
 - One-line distribution call in `.hor` files, an alternative to the block form
   (both can be mixed in one file): `ContinuousParameter "x" = LOG-TRIANGULAR(0.6, 1.0, 1.8)`,
   `... = UNIFORM(0, 1) { emissions_low = MAXIMUM }`,

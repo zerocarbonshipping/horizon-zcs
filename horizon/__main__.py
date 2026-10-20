@@ -17,6 +17,17 @@ logger = logging.getLogger(__name__)
 _PKL_FILENAME = "plot_data.pkl"
 
 
+def _positive_int(value):
+    """argparse type: an integer >= 1."""
+    try:
+        number = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"invalid int value: {value!r}") from None
+    if number < 1:
+        raise argparse.ArgumentTypeError(f"must be a positive integer, got {number}")
+    return number
+
+
 def main():
     """
     Entry point for the command-line interface of the Horizon application.
@@ -30,6 +41,9 @@ def main():
     cli_parser.add_argument("-c", "--collect", action="store_true", help="Collect reports from specified directory.")
     cli_parser.add_argument("--priority", choices=["low", "normal", "high"], default="normal",
                             help="Pueue task scheduling priority (default: normal).")
+    cli_parser.add_argument("--threads", type=_positive_int, default=None, metavar="N",
+                            help="Pin OMP/MKL/NUMEXPR_NUM_THREADS to exactly N for every queued task "
+                                 "(default: split the CPUs by study size, max(2, cpu_count // tasks)).")
     cli_parser.add_argument("--solver", default=None, choices=["auto", "gurobi", "highs"],
                             help="Solver backend for NavigaTE: 'auto' tries Gurobi then falls back to HiGHS, "
                                  "'gurobi' prefers Gurobi (falls back to HiGHS if unlicensed), "
@@ -201,7 +215,7 @@ def main():
                          navigate_flags=args.navigate_flags, output_dir=args.output_dir,
                          dry_run=args.dry_run, full_task_env=args.full_task_env,
                          pueue_cli=args.pueue_cli, gen_workers=args.gen_workers,
-                         samples=args.samples)
+                         samples=args.samples, threads=args.threads)
         except (HorizonError, ValueError) as error:
             _exit_with_error(file_name, error)
 
@@ -241,7 +255,7 @@ def _replot_batch(args):
     from horizon.run.run_commands import run_commands
     logger.info("Queuing %d replot command(s).", len(commands))
     run_commands(commands, priority=args.priority, full_task_env=args.full_task_env,
-                 pueue_cli=args.pueue_cli)
+                 pueue_cli=args.pueue_cli, threads=args.threads)
 
 
 if __name__ == "__main__":

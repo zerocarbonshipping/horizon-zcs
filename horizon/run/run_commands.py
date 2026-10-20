@@ -11,7 +11,7 @@ import queue
 import subprocess
 import threading
 from collections import Counter
-from typing import List
+from typing import List, Optional
 
 from horizon.run import pueue_client
 from horizon.run.pueue_client import PueueDirectError
@@ -251,11 +251,16 @@ class StreamingQueuer:
 
     Thread count per task is computed as ``max(2, cpu_count // num_tasks)``,
     capped at ``cpu_count``. This gives small runs more threads per task
-    while preventing over-subscription on large runs.
+    while preventing over-subscription on large runs. ``threads`` pins the
+    count to exactly that value for every task instead (use it when several
+    runs share one pueue daemon and the auto split would oversubscribe).
     """
 
     def __init__(self, priority: str = "normal", full_task_env: bool = False,
-                 pueue_cli: bool = False):
+                 pueue_cli: bool = False, threads: Optional[int] = None):
+        if threads is not None and threads < 1:
+            raise ValueError(f"threads must be a positive integer, got {threads}")
+        self._threads = threads
         self._priority = priority
         self._pueue_priority = PRIORITY_MAP[priority]
         self._executor = None
@@ -270,8 +275,11 @@ class StreamingQueuer:
         """Size the per-task thread env for ``expected_total`` tasks and
         start accepting submissions."""
         cpu_count = os.cpu_count() or 4
-        threads_per_task = max(2, cpu_count // max(expected_total, 1))
-        threads_per_task = min(threads_per_task, cpu_count)
+        if self._threads is not None:
+            threads_per_task = self._threads
+        else:
+            threads_per_task = max(2, cpu_count // max(expected_total, 1))
+            threads_per_task = min(threads_per_task, cpu_count)
 
         self._env_vars = (
             f"OMP_NUM_THREADS={threads_per_task} "
@@ -279,8 +287,9 @@ class StreamingQueuer:
             f"NUMEXPR_NUM_THREADS={threads_per_task}"
         )
         logger.info(
-            "Queuing %d tasks with %d threads each (%d CPUs available)",
-            expected_total, threads_per_task, cpu_count,
+            "Queuing %d tasks with %d threads each (%s, %d CPUs available)",
+            expected_total, threads_per_task,
+            "set by --threads" if self._threads is not None else "auto split", cpu_count,
         )
 
         if not self._force_cli:
@@ -420,7 +429,7 @@ class StreamingQueuer:
 
 
 def run_commands(commands: List[str], priority: str = "normal", full_task_env: bool = False,
-                 pueue_cli: bool = False) -> None:
+                 pueue_cli: bool = False, threads: Optional[int] = None) -> None:
     """
     Run multiple navigation commands using pueue with adaptive thread allocation.
 
@@ -442,8 +451,12 @@ def run_commands(commands: List[str], priority: str = "normal", full_task_env: b
     pueue_cli : bool
         Force submission through the pueue CLI instead of the direct
         daemon connection.
+    threads : int, optional
+        Fixed OMP/MKL/NUMEXPR thread count per task (default: split the
+        CPUs by the number of tasks).
     """
-    queuer = StreamingQueuer(priority=priority, full_task_env=full_task_env, pueue_cli=pueue_cli)
+    queuer = StreamingQueuer(priority=priority, full_task_env=full_task_env, pueue_cli=pueue_cli,
+                             threads=threads)
     queuer.start(len(commands))
     for command in commands:
         queuer.submit(command)
