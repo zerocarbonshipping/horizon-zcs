@@ -19,8 +19,6 @@ Horizon {
     UncFilePath = "test.unc"
     OutputPath = "output"
     NumberOfSamples = 10
-    ScenarioParameter("policy")
-    ContinuousParameter("OP_EE")
 }
 """
 
@@ -82,7 +80,7 @@ ContinuousParameter "OP_EE" {
     default = 0.15  # if needed
     if policy in (bau, liberia) {
         low_val = 0.00  # if bau
-        high_val = 0.10
+        high_val = 0.20
     }
 }
 """ + HORIZON_BLOCK
@@ -93,7 +91,7 @@ ContinuousParameter "OP_EE" {
         assert len(param.overrides) == 1
         override = param.overrides[0]
         assert override["conditions"] == [{"token": "policy", "op": "in", "values": ["bau", "liberia"]}]
-        assert override["attrs"] == {"low_val": 0.0, "high_val": 0.1}
+        assert override["attrs"] == {"low_val": 0.0, "high_val": 0.2}
 
     def test_hash_inside_quoted_string_is_kept(self, tmp_path):
         """A '#' inside a quoted string is not treated as a comment."""
@@ -111,7 +109,6 @@ Horizon {
     UncFilePath = "runs#1/test.unc"
     OutputPath = "output"
     NumberOfSamples = 10
-    ContinuousParameter("OP_EE")
 }
 """
         result = _parse(tmp_path, content)
@@ -137,7 +134,6 @@ Horizon {
     NumberOfSamples = 25  # samples per scenario
     SamplingMethod = MC  # select between LHS and MC
     RandomSeed = 7  # if unset, defaults to 69
-    ContinuousParameter("OP_EE")
 }
 """
         result = _parse(tmp_path, content)

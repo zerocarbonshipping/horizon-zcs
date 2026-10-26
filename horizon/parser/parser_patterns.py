@@ -26,7 +26,7 @@ probabilities_pattern = re.compile(r'\bprobabilities\s*=\s*\[([^]]+)]')
 low_val_pattern = re.compile(r'\blow_val\s*=\s*([^\s,]+)')
 mid_val_pattern = re.compile(r'\bmid_val\s*=\s*([^\s,]+)')
 high_val_pattern = re.compile(r'\bhigh_val\s*=\s*([^\s,]+)')
-distribution_pattern = re.compile(r'\bdistribution\s*=\s*(".*?"|\'.*?\'|[^\n,]+)')
+distribution_pattern = re.compile(r'\bdistribution\s*=\s*(".*?"|\'.*?\'|[^\n,}]+)')
 decimals_pattern = re.compile(r'\bdecimals\s*=\s*(-?\d+)')
 
 # Horizon block patterns:

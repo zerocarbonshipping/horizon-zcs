@@ -15,3 +15,7 @@ htmlcov/
 tmp/
 examples/**/output/
 examples/**/output.log
+
+# autoresearch fixtures, golden snapshots and experiment logs (local only)
+tools/autoresearch/fixtures/
+tools/autoresearch/results/

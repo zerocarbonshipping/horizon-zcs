@@ -1,43 +1,13 @@
 # SPDX-FileCopyrightText: 2026 Fonden Mærsk Mc-Kinney Møller Center for Zero Carbon Shipping
 # SPDX-License-Identifier: Apache-2.0
 
-"""Miscellaneous helpers: significant-digit rounding for display and CSV export of sampled parameters."""
+"""Miscellaneous helpers: CSV export of sampled parameters."""
 
 import csv
 import logging
 import os
-from math import floor, log10
 
-TOLERANCE = 1e-9
 logger = logging.getLogger(__name__)
-
-
-def calculate_significant_digits(x):
-    """
-    Rounds off a value to the appropriate decimals for visual display.
-
-    Parameters
-    ----------
-    x : float
-        Value to be rounded for display.
-
-    Returns
-    -------
-    float | int
-        Rounded value.
-    """
-
-    abs_x = abs(x)
-
-    if abs_x <= TOLERANCE:
-        return 0
-
-    significant = -int(floor(log10(abs_x)))
-
-    if significant <= 0:
-        return int(round(x, 0))
-
-    return significant
 
 
 def output_sampled_parameters_to_csv(sampled_parameters, parameter_types, filename="sampled_parameters.csv"):

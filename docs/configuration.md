@@ -39,9 +39,40 @@ block to leave it out completely. Two blocks with the same name are an error,
 also across parameter types.
 
 Older files list parameters in the `Horizon` block
-(`Parameters = [ContinuousParameter("FUEL_PRICE")]`). If a file has such a
-list, it is read the old way: only listed blocks take part, for scenario and
-sample parameters alike. This is deprecated and logs a warning.
+(`Parameters = [ContinuousParameter("FUEL_PRICE")]`, `ScenarioParameters = [...]`
+or bare `ContinuousParameter("X")` lines). These lists are no longer
+supported and raise an error: delete the list, set `active = FALSE` to pin a
+parameter at its default, or remove its block. The old default distribution
+was `UNIFORM`; where a block relied on it, set `distribution = UNIFORM`
+explicitly (the default is now `LOG-TRIANGULAR`).
+
+### Strict keys and checks
+
+The parser rejects what it does not understand instead of ignoring it. Every
+error names the file and line (`run.hor:41: error: ...`); the command line
+prints that one line and exits 1.
+
+- **Unknown keys** in a parameter block, in an `if` body and in the `Horizon`
+  block are errors, with a suggestion when one is close:
+  `unknown key 'hgh_val' in ContinuousParameter "a". Did you mean 'high_val'?`
+  Keys by block: all parameters take `token`, `name`, `active`, `default`;
+  `ScenarioParameter` adds `values`; `ContinuousParameter` adds `low_val`,
+  `mid_val`, `high_val`, `distribution`, `decimals`, `emissions_low`,
+  `emissions_high`; `DiscreteParameter` adds `values`, `probabilities`,
+  `emissions_low`, `emissions_high`. An `if` body takes the same keys except
+  `token`; the `Horizon` block takes the keys in the table below.
+- **`if` blocks** are recognised only at the start of a line and never inside
+  quoted text, so `name = "Cost if any"` is a plain name.
+- **Ranges** are checked for the base values and for every `if` override
+  after it is applied: `low_val <= high_val` (an override may set both equal
+  to fix a value; the base needs `low_val < high_val`), `low_val <= mid_val
+  <= high_val` for triangular distributions, and `default` within
+  `[low_val, high_val]`. The message names the parameter and the scenario
+  condition. If the base `default` falls outside an override's bounds, set
+  `default` inside that `if` block.
+- **Conditions**: the token in an `if` must be a defined `ScenarioParameter`
+  (or `SCENARIO`, the label from Include rules) and every listed value one
+  of its values; the error lists the valid values.
 
 ### Shared parameter fields
 
@@ -102,7 +133,8 @@ decimals are recomputed for that scenario. Set `decimals` only to force a
 fixed number.
 
 **`DiscreteParameter`** — parameters drawn from a fixed set of values, with
-optional probabilities (uniform if omitted):
+optional probabilities (uniform if omitted). `probabilities` must have one
+entry per value; they are scaled to sum to 1:
 
 ```
 DiscreteParameter "RENEWAL" {
@@ -163,6 +195,67 @@ active scenario parameters exist, sampling runs separately per scenario
 combination; the same underlying draw matrix is reused so `sample_i` indices
 align across scenarios.
 
+### One-line distribution call
+
+A parameter's distribution can also be written as a call on the header line.
+This is an alternative spelling: the block form above stays valid, and both
+forms can be mixed in one file, block by block.
+
+```
+ContinuousParameter "WACC" = LOG-TRIANGULAR(0.6, 1.0, 1.8)
+ContinuousParameter "EPC" = UNIFORM(0.0, 1.0) { default = 0.5, emissions_low = MAXIMUM }
+ContinuousParameter "FUEL_PRICE" = TRIANGULAR(0.8, 1.0, 1.5) {
+    emissions_low = MAXIMUM
+    if POLICY = carbon_levy {
+        low_val = 1.0
+        mid_val = 1.4
+        high_val = 2.0
+    }
+}
+DiscreteParameter "LEAD_TIME" = DISCRETE([3, 4, 5, 6], [0.15, 0.35, 0.35, 0.15]) { default = 4 }
+DiscreteParameter "LANES" = DISCRETE([3, 4, 5]) { default = 4 }
+```
+
+- `UNIFORM(low, high)` and `LOG-UNIFORM(low, high)` take two numbers,
+  `TRIANGULAR(low, mode, high)` and `LOG-TRIANGULAR(low, mode, high)` take
+  three, `DISCRETE([values], [probabilities])` takes a list of values and an
+  optional list of probabilities (uniform when omitted). The wrong number of
+  arguments is an error.
+- The call sets `low_val`, `mid_val`, `high_val` and `distribution` (or
+  `values` and `probabilities`); writing the call and any of those keys in the
+  same block is an error naming the line.
+- Everything else (`default`, `decimals`, `active`, `emissions_low`,
+  `emissions_high`, `if` overrides) goes in an optional `{ }` after the call,
+  exactly as in the block form. Attributes may be separated by commas, so a
+  short block fits on one line. Defaults and validation are unchanged.
+
+### Checking a study before running it
+
+```bash
+horizon run.hor --check             # validation + cross-file checks, exit 0 or 1
+horizon run.hor --check --explain   # also print the resolved parameters
+horizon run.hor --samples 1         # run with one sample, file unchanged
+```
+
+`--check` runs all the validation above and then reads the `.unc` template
+and the `.inc` files it includes (commented-out `Include` lines are skipped):
+
+- a `%TOKEN%` without a parameter is an error (`SCENARIO` is built in); a
+  parameter that no template or include uses is a warning;
+- an include path with a scenario token, such as `policy_%policy%.inc`, is
+  resolved for every value of that scenario parameter; a missing file or one
+  whose name differs in case is an error;
+- the summary line ends with the number of errors and warnings, and the exit
+  code is 1 if there are errors.
+
+Nothing is sampled, written or queued. `--explain` prints one row per
+parameter and scenario value (scenario parameters that appear in an `if` of
+that parameter) with `dist`, `low`, `mode`, `high`, `default`, `decimals`
+and `from`: `base`, or the `if` condition with the keys it changes, plus
+notes for inferred values (`mode inferred`, `default from mid_val`,
+`decimals auto`). `--samples N` replaces `NumberOfSamples` for one run and
+logs that it did.
+
 ### Include / Exclude filters
 
 `Include(...)` and `Exclude(...)` directives in the `Horizon` block filter
@@ -195,7 +288,8 @@ A `.unc` file is an ordinary Navigate simulation file in which uncertain
 values are replaced with `%TOKEN%` placeholders. Horizon writes one `.nav`
 file per sample/scenario combination, substituting each token with the
 sampled value. `Include` directives referencing `.inc` files are processed
-the same way, so tokens work across included files too. Refer to the
+the same way, so tokens work across included files too. Write the directive as `Include`;
+any other spelling (`INCLUDE`, `include`, ...) is rejected with an error naming the file and line. Refer to the
 [Navigate documentation](https://zerocarbonshipping.github.io/navigate-zcs/)
 for the simulation file format itself.
 

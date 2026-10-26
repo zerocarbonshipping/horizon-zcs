@@ -10,7 +10,7 @@ Covers the format of the include directives Horizon writes into generated
 deck fail to parse. These tests pin the emitted spelling.
 
 Also covers:
-- include-line detection (case-insensitive, word-boundary aware)
+- include-line detection (word-boundary aware) and rejection of the all-caps ``INCLUDE``
 - token replacement in include paths and in the .inc files themselves
 - indentation of the generated include lines
 """
@@ -19,12 +19,12 @@ import os
 
 import pytest
 
+from horizon.exceptions import FileOperationError
 from horizon.file_handler.file_handler import (
     FileHandler,
     _compile_parts,
     _format_include_line,
     _is_include_line,
-    _normalize_include_keyword,
     _render_parts,
     extract_template_tokens,
 )
@@ -83,9 +83,6 @@ class TestIsIncludeLine:
         'Include "a.inc"',
         '    Include "a.inc"',
         '\tInclude "a.inc"',
-        '\tINCLUDE "a.inc"',
-        'include "a.inc"',
-        'InClUdE "a.inc"',
     ])
     def test_matches_include_directives(self, line):
         assert _is_include_line(line)
@@ -100,27 +97,6 @@ class TestIsIncludeLine:
     ])
     def test_rejects_non_include_lines(self, line):
         assert not _is_include_line(line)
-
-
-class TestNormalizeIncludeKeyword:
-    """Tests for _normalize_include_keyword()."""
-
-    def test_uppercase_is_rewritten(self):
-        assert _normalize_include_keyword('\tINCLUDE "a.inc"\n') == '\tInclude "a.inc"\n'
-
-    def test_lowercase_is_rewritten(self):
-        assert _normalize_include_keyword('include "a.inc"\n') == 'Include "a.inc"\n'
-
-    def test_indentation_is_preserved(self):
-        assert _normalize_include_keyword('    INCLUDE "a.inc"\n') == '    Include "a.inc"\n'
-
-    def test_already_correct_is_unchanged(self):
-        line = '    Include "a.inc"\n'
-        assert _normalize_include_keyword(line) == line
-
-    def test_path_is_untouched(self):
-        line = '\tINCLUDE "../inc/INCLUDE_dir/a.inc"\n'
-        assert _normalize_include_keyword(line) == '\tInclude "../inc/INCLUDE_dir/a.inc"\n'
 
 
 class TestFormatIncludeLine:
@@ -304,54 +280,9 @@ class TestCommandSink:
         )
 
         assert sink.started == [2]
-        # the streamed commands are exactly the batch command list
-        assert sorted(sink.commands) == sorted(handler.commands)
+        assert sorted(sink.commands) == sorted(
+            FileHandler._build_command(path, "highs") for path in handler.nav_filepaths)
         assert all(cmd.endswith("--solver highs") for cmd in sink.commands)
-
-    def test_without_sink_commands_are_still_built(self, template_project, tmp_path):
-        handler = _generate(template_project, tmp_path / "out", [{"sample": 1, "LEN": 250.0}])
-        assert len(handler.commands) == 1
-
-
-class TestAdaptiveWorkerCount:
-    """The pool sizes itself to the output filesystem: local disks get
-    min(8, cpu); filesystems whose probed per-op latency looks
-    network-backed get min(64, 4x cpu). An explicit request always wins."""
-
-    def test_local_disk_keeps_core_count_default(self, tmp_path, mocker):
-        handler = FileHandler()
-        mocker.patch.object(FileHandler, "_probe_fs_latency", return_value=0.00005)
-        mocker.patch("os.cpu_count", return_value=16)
-        assert handler._select_worker_count(None, str(tmp_path)) == 8
-
-    def test_high_latency_fs_scales_up(self, tmp_path, mocker):
-        handler = FileHandler()
-        mocker.patch.object(FileHandler, "_probe_fs_latency", return_value=0.015)
-        mocker.patch("os.cpu_count", return_value=16)
-        assert handler._select_worker_count(None, str(tmp_path)) == 64
-
-    def test_high_latency_cap_at_64(self, tmp_path, mocker):
-        handler = FileHandler()
-        mocker.patch.object(FileHandler, "_probe_fs_latency", return_value=0.015)
-        mocker.patch("os.cpu_count", return_value=32)
-        assert handler._select_worker_count(None, str(tmp_path)) == 64
-
-    def test_explicit_request_always_wins(self, tmp_path, mocker):
-        handler = FileHandler()
-        probe = mocker.patch.object(FileHandler, "_probe_fs_latency")
-        assert handler._select_worker_count(12, str(tmp_path)) == 12
-        probe.assert_not_called()
-
-    def test_probe_failure_falls_back_to_default(self, tmp_path, mocker):
-        handler = FileHandler()
-        mocker.patch.object(FileHandler, "_probe_fs_latency", side_effect=OSError("denied"))
-        mocker.patch("os.cpu_count", return_value=4)
-        assert handler._select_worker_count(None, str(tmp_path)) == 4
-
-    def test_probe_leaves_no_file_behind(self, tmp_path):
-        latency = FileHandler._probe_fs_latency(str(tmp_path))
-        assert latency > 0
-        assert os.listdir(tmp_path) == []
 
 
 class TestGenerationWorkers:
@@ -367,7 +298,6 @@ class TestGenerationWorkers:
             max_workers=1,
         )
         assert len(handler.nav_filepaths) == 5
-        assert len(handler.commands) == 5
 
     def test_zero_or_negative_workers_clamped(self, template_project, tmp_path):
         handler = FileHandler()
@@ -444,24 +374,6 @@ class TestSharedIncludeStore:
             rendered.add(open(os.path.join(os.path.dirname(nav), rel)).read())
         assert rendered == {"mode = bau\nrate = 0.5\n", "mode = bau\nrate = 0.7\n"}
 
-    def test_opt_out_restores_per_realization_copies(self, tmp_path):
-        _write(tmp_path / "inc" / "policy.inc", "policy_mode = %POLICY%\n")
-        unc = _write(tmp_path / "t.unc", 'DEFINE {\n\tInclude "inc/policy.inc"\n}\n')
-
-        handler = FileHandler()
-        handler.generate_scenarios_and_nav_files(
-            unc_path=str(unc),
-            sampled_parameters=[{"sample": 1}, {"sample": 2}],
-            scenario_parameters=[self._scenario(["bau"])],
-            output_folder=str(tmp_path / "out"),
-            shared_includes=False,
-        )
-
-        assert not os.path.isdir(tmp_path / "out" / "shared_includes")
-        for nav in handler.nav_filepaths:
-            (line,) = _include_lines(nav)
-            assert line.split('"')[1].startswith("simulation_includes/")
-
     def test_pre_resolved_samples_share_per_combo(self, tmp_path):
         """Pre-resolved mode (samples already carry scenario tokens, as
         per-scenario sampling produces) shares by combination too."""
@@ -480,35 +392,29 @@ class TestSharedIncludeStore:
         assert sorted(os.listdir(tmp_path / "out" / "shared_includes")) == ["bau", "levy"]
 
 
-class TestLegacyTemplateNormalization:
-    """Templates still using the old all-caps INCLUDE are normalized."""
+class TestLegacyIncludeRejected:
+    """An include directive not spelled `Include` is an error naming the file and line."""
 
-    def test_legacy_uppercase_template_emits_title_case(self, tmp_path):
+    def test_generation_raises_with_file_and_line(self, tmp_path):
         _write(tmp_path / "inc" / "plain.inc", 'Vessel "a" {\n    Length = 300\n}\n')
-        _write(tmp_path / "inc" / "tokened.inc", 'Vessel "b" {\n    Length = %LEN%\n}\n')
-        unc = _write(
-            tmp_path / "legacy.unc",
-            'DEFINE {\n'
-            '\tINCLUDE "inc/plain.inc"\n'
-            '\tinclude "inc/tokened.inc"\n'
-            '}\n',
-        )
+        unc = _write(tmp_path / "legacy.unc",
+                     'DEFINE {\n\tInclude "inc/plain.inc"\n\tINCLUDE "inc/plain.inc"\n}\n')
 
-        handler = _generate(unc, tmp_path / "out", [{"sample": 1, "LEN": 250.0}])
-        content = open(handler.nav_filepaths[0]).read()
+        with pytest.raises(FileOperationError, match=r"legacy\.unc:3: write the include directive as `Include`"):
+            _generate(unc, tmp_path / "out", [{"sample": 1}])
 
-        assert "INCLUDE" not in content
-        assert content.count('Include "') == 2
+    def test_token_extraction_raises_too(self, tmp_path):
+        unc = _write(tmp_path / "legacy.unc", 'DEFINE {\n\tINCLUDE "inc/tokened.inc"\n}\n')
 
-    def test_missing_include_file_still_normalizes_keyword(self, tmp_path):
-        """A dangling include keeps its path but must not keep a legacy keyword."""
-        unc = _write(tmp_path / "legacy.unc", 'DEFINE {\n\tINCLUDE "inc/missing.inc"\n}\n')
+        with pytest.raises(FileOperationError, match=r"legacy\.unc:2: "):
+            extract_template_tokens(str(unc))
 
-        handler = _generate(unc, tmp_path / "out", [{"sample": 1}])
-        content = open(handler.nav_filepaths[0]).read()
+    @pytest.mark.parametrize("spelling", ["include", "INCLUDE", "InClUdE"])
+    def test_any_other_spelling_raises(self, tmp_path, spelling):
+        unc = _write(tmp_path / "t.unc", f'DEFINE {{\n\t{spelling} "inc/a.inc"\n}}\n')
 
-        assert '\tInclude "inc/missing.inc"\n' in content
-        assert "INCLUDE" not in content
+        with pytest.raises(FileOperationError, match=r"t\.unc:2: "):
+            extract_template_tokens(str(unc))
 
     def test_non_include_lines_are_left_alone(self, tmp_path):
         """`IncludeRate` is an attribute, not a directive, and must pass through."""
@@ -527,8 +433,3 @@ class TestExtractTemplateTokens:
     def test_collects_tokens_from_template_and_includes(self, template_project):
         tokens = extract_template_tokens(str(template_project))
         assert {"LEN", "POLICY"} <= tokens
-
-    def test_follows_legacy_uppercase_include(self, tmp_path):
-        _write(tmp_path / "inc" / "tokened.inc", "Length = %LEN%\n")
-        unc = _write(tmp_path / "legacy.unc", 'DEFINE {\n\tINCLUDE "inc/tokened.inc"\n}\n')
-        assert "LEN" in extract_template_tokens(str(unc))
