@@ -16,8 +16,8 @@ doubt, match the conventions of the file you are editing.
 - Local consistency wins. If a file already follows a different convention,
   match the file rather than imposing a global rule.
 - Never use `print()`. Use the logging module (`logger.info()`,
-  `logger.error()`, ...) so output ends up in `output.log` alongside the
-  `.hor` file.
+  `logger.error()`, ...) so output ends up in the study's `logs/horizon.log`.
+  Reports meant for the terminal (`check`) are written to stdout.
 - Use lazy `%s` formatting in logging calls (`logger.info("wrote %s", path)`),
   not f-strings or `.format()`.
 
@@ -67,7 +67,7 @@ Verbose docstrings are explicitly discouraged.
   every reader to chase its definition; spell it out instead.
 - Prefer clear domain names over abbreviations: `scenario_combination`, not
   `sc_comb`. Abbreviations are acceptable only when they are the established
-  term (`lhs`, `mc`, `prcc`).
+  term (`lhs`, `mc`).
 - Prefer names that reveal intent (`pending_commands`) over names that
   describe shape (`command_list`).
 - Avoid generic suffixes like `_data`, `_obj`, `_thing`.
@@ -78,7 +78,7 @@ Verbose docstrings are explicitly discouraged.
 ## Errors and exceptions
 
 - Raise the structured exceptions from `horizon/exceptions.py`
-  (`ParseError`, `ValidationError`, ...) rather than bare `ValueError` /
+  (`ParseError`, `StudyError`) rather than bare `ValueError` /
   `RuntimeError`, and include the offending value and its context in the
   message.
 - Never use a bare `except:`. When catching broadly, log the failure

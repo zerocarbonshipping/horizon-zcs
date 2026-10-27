@@ -1,11 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Fonden Mærsk Mc-Kinney Møller Center for Zero Carbon Shipping
 # SPDX-License-Identifier: Apache-2.0
 
-"""Custom exception hierarchy for Horizon.
-
-This module defines all custom exceptions used throughout the Horizon codebase
-to provide structured error handling and clear error messages.
-"""
+"""The errors Horizon reports as one line and exit code 1."""
 
 
 def error_line(hor_file, error):
@@ -14,30 +10,18 @@ def error_line(hor_file, error):
 
 
 class HorizonError(Exception):
-    """Base exception for all Horizon-specific errors.
-
-    All custom exceptions in Horizon should inherit from this class.
-    This allows catching all Horizon-related errors with a single except clause.
-    """
-    pass
+    """Base of the errors the command line reports."""
 
 
 class ParseError(HorizonError):
-    """Raised when parsing .hor configuration files fails.
-
-    This includes:
-    - Syntax errors in .hor files
-    - Missing required fields
-    - Invalid parameter block structure
-    - Malformed override blocks
+    """A .hor file that cannot be read or does not validate.
 
     Parameters
     ----------
     message : str
         What is wrong.
     location : str, optional
-        ``file:line`` of the offending text. When given, ``str(error)`` is the clean
-        one-line form ``file:line: error: message``.
+        ``file:line`` of the offending text; ``str(error)`` is then ``file:line: error: message``.
     """
 
     def __init__(self, message, location=None):
@@ -49,59 +33,5 @@ class ParseError(HorizonError):
         return f"{self.location}: error: {self.message}" if self.location else self.message
 
 
-class ValidationError(HorizonError):
-    """Raised when configuration or parameter constraints are violated.
-
-    This includes:
-    - Parameter bounds violations (low_val >= high_val)
-    - Invalid numerical ranges
-    - Constraint violations
-    - Invalid configuration values
-    """
-    pass
-
-
-class FileOperationError(HorizonError):
-    """Raised when file I/O operations fail.
-
-    This includes:
-    - Missing input files (.hor, .unc, .inc)
-    - Permission errors
-    - File read/write failures
-    - Directory creation failures
-    """
-    pass
-
-
-class ParameterError(HorizonError):
-    """Raised when parameter definitions are invalid.
-
-    This includes:
-    - Empty parameter value lists
-    - Invalid parameter types
-    - Missing required parameter fields
-    - Incompatible parameter configurations
-    """
-    pass
-
-
-class SamplingError(HorizonError):
-    """Raised during sampling operations.
-
-    This includes:
-    - Invalid sampling method
-    - Numerical errors during sampling
-    - Empty parameter sets
-    - Distribution calculation failures
-    """
-    pass
-
-
-class SensitivityAnalysisError(HorizonError):
-    """Raised when PRCC sensitivity analysis encounters errors."""
-    pass
-
-
-class ResultsCollectionError(HorizonError):
-    """Raised when Navigate results files cannot be collected into one file."""
-    pass
+class StudyError(HorizonError):
+    """A study folder, or the results of its runs, not in a state the command can work with."""

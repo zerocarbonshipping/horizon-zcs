@@ -18,10 +18,30 @@ covers the uncertainty analysis layer on top of it.
 ## Getting started
 
 1. Fork the repository and clone your fork.
-2. Set up a development environment. Feel free to use `make conda-setup`
-   (conda) or `make pip-setup` (venv + pip).
+2. Install it into Navigate's environment with the lint tools:
+   `pip install -e ".[dev]"`.
 3. Create a branch from `dev` for your change.
-4. Verify your setup by running `make lint` and `make test`.
+4. Verify your setup with `flake8 horizon` and `isort horizon --check-only`.
+
+## Code layout
+
+In `horizon/`:
+
+- `cli.py`: the `run`, `check` and `collect` commands.
+- `parser/`: the `.hor` format: its grammar (`grammar.lark`) and syntax
+  (`syntax.py`), entry values (`values.py`), parameter blocks
+  (`blocks.py`), scenario combinations and labels (`scenarios.py`), and the
+  file as a whole (`hor_file.py`).
+- `parameters.py` and `sampling.py`: the parameters with their `if`
+  overrides, and their Latin hypercube or Monte Carlo sampling; the math of
+  the study.
+- `study.py`: the runs of a study and its folder.
+- `launch.py`: each run's Navigate command, run here or handed to a
+  scheduler.
+- `check.py`: `horizon check`.
+- `collect.py`: `horizon collect`, writing the archive and the Lantern file
+  with `results.py` (reading and writing Navigate results files) and
+  `lantern.py` (the representative sample, the median and the band).
 
 ## What to contribute
 
@@ -52,17 +72,10 @@ can be submitted directly as a pull request.
 - Add an entry to `CHANGELOG.md` for user-visible changes. See the
   [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
 
-## Testing
+## Checking changes
 
-All tests must pass before a pull request can be merged. Run the suite with
-`make test` or plain `pytest`.
-
-New code needs appropriate test coverage:
-
-- New non-trivial calculations (sampling math, parameter resolution) need a
-  unit test (`tests/unit`).
-- Changes that alter generated files or sampled values should explain the
-  difference in the pull request description.
+- Changes that alter sampled values should explain the difference in the
+  pull request description.
 
 ## Questions
 

@@ -5,16 +5,16 @@ SPDX-License-Identifier: CC-BY-4.0
 
 # Configuration reference
 
-Horizon reads two configuration formats: `.hor` files define an uncertainty
-study, and `.sen` files configure PRCC sensitivity analysis on completed
-results. Both use the same block-style syntax. Lines starting with `#` are
-comments. Relative paths are resolved from the directory you run `horizon`
-in, so run it from the directory containing the `.hor` file.
+A `.hor` file defines an uncertainty study. Lines starting with `#` are
+comments; a `#` inside a quoted string is not. Newlines do not matter, and
+commas between entries are optional, so a short block fits on one line.
+Values may be quoted or bare: `distribution = UNIFORM` and
+`distribution = "uniform"` are the same. Paths are taken from the folder of
+the `.hor` file.
 
 ## The `.hor` file
 
-A `.hor` file contains parameter blocks and one `Horizon` block that wires
-them together:
+A `.hor` file contains parameter blocks and one `Horizon` block:
 
 ```
 ContinuousParameter "FUEL_PRICE" {
@@ -26,7 +26,7 @@ ContinuousParameter "FUEL_PRICE" {
 
 Horizon {
     UncFilePath = "template.unc"
-    OutputPath = "output/samples.csv"
+    OutputPath = "output"
     NumberOfSamples = 100
     SamplingMethod = LHS
     RandomSeed = 42
@@ -35,88 +35,68 @@ Horizon {
 
 Every parameter block in the file takes part in the study. Use
 `active = FALSE` to fix a parameter at its default; delete or comment out a
-block to leave it out completely. Two blocks with the same name are an error,
-also across parameter types.
-
-Older files list parameters in the `Horizon` block
-(`Parameters = [ContinuousParameter("FUEL_PRICE")]`, `ScenarioParameters = [...]`
-or bare `ContinuousParameter("X")` lines). These lists are no longer
-supported and raise an error: delete the list, set `active = FALSE` to pin a
-parameter at its default, or remove its block. The old default distribution
-was `UNIFORM`; where a block relied on it, set `distribution = UNIFORM`
-explicitly (the default is now `LOG-TRIANGULAR`).
+block to leave it out completely. The block name is the parameter's
+`%NAME%` in the simulation files, so it uses letters, digits and `_`; two
+blocks with the same name are an error, also across parameter types, and
+`SCENARIO` is reserved.
 
 ### Strict keys and checks
 
-The parser rejects what it does not understand instead of ignoring it. Every
+Horizon rejects what it does not understand instead of ignoring it. Every
 error names the file and line (`run.hor:41: error: ...`); the command line
 prints that one line and exits 1.
 
 - **Unknown keys** in a parameter block, in an `if` body and in the `Horizon`
-  block are errors, with a suggestion when one is close:
-  `unknown key 'hgh_val' in ContinuousParameter "a". Did you mean 'high_val'?`
-  Keys by block: all parameters take `token`, `name`, `active`, `default`;
-  `ScenarioParameter` adds `values`; `ContinuousParameter` adds `low_val`,
-  `mid_val`, `high_val`, `distribution`, `decimals`, `emissions_low`,
-  `emissions_high`; `DiscreteParameter` adds `values`, `probabilities`,
-  `emissions_low`, `emissions_high`. An `if` body takes the same keys except
-  `token`; the `Horizon` block takes the keys in the table below.
-- **`if` blocks** are recognised only at the start of a line and never inside
-  quoted text, so `name = "Cost if any"` is a plain name.
+  block are errors that list the valid keys:
+  `unknown key 'hgh_val' in ContinuousParameter "a". Valid keys: active, default, low_val, ...`
+  A key set twice in one block is an error too.
 - **Ranges** are checked for the base values and for every `if` override
-  after it is applied: `low_val <= high_val` (an override may set both equal
-  to fix a value; the base needs `low_val < high_val`), `low_val <= mid_val
-  <= high_val` for triangular distributions, and `default` within
-  `[low_val, high_val]`. The message names the parameter and the scenario
-  condition. If the base `default` falls outside an override's bounds, set
-  `default` inside that `if` block.
-- **Conditions**: the token in an `if` must be a defined `ScenarioParameter`
+  after it is applied: `low_val < high_val` in the base (an override may set
+  both equal to fix a value), `low_val <= mid_val <= high_val` for
+  triangular distributions, `default` within `[low_val, high_val]`, and
+  bounds above 0 for log distributions. The message names the parameter and
+  the scenario condition. If the base `default` falls outside an override's
+  bounds, set `default` inside that `if` block.
+- **Conditions**: the name in an `if` must be a defined `ScenarioParameter`
   (or `SCENARIO`, the label from Include rules) and every listed value one
   of its values; the error lists the valid values.
 
-### Shared parameter fields
+### Parameter fields
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `token` | no | Placeholder name in the `.unc` template (`%TOKEN%`). Defaults to the block name, which must then use only letters, digits and `_`. |
-| `name` | no | Display name. Defaults to the block name. |
 | `active` | no | `FALSE` fixes the parameter at `default`. Default `TRUE`. |
-| `default` | see below | Value for `sample_1` and for inactive parameters. For `ContinuousParameter` it defaults to `mid_val`; if there is no `mid_val`, `default` is required. Required for `DiscreteParameter`. |
+| `default` | see below | Value of `sample_1` and of an inactive parameter. For `ContinuousParameter` it defaults to `mid_val`; without a `mid_val` (as for `UNIFORM`), `default` is required. Required for `DiscreteParameter`. For `ScenarioParameter` it defaults to the first value and must be one of the values. |
 
 ### Horizon block keys
 
 | Key | Required | Description |
 |-----|----------|-------------|
-| `UncFilePath` | yes | Path to the `.unc` template (a Navigate simulation file with `%TOKEN%` placeholders). |
-| `OutputPath` | yes | Path of the sampled-parameters CSV to write, e.g. `output/samples.csv`. Must include a directory component; the directory is created if missing. |
-| `NumberOfSamples` | yes | Number of samples to generate. |
-| `SamplingMethod` | no | `LHS` (default), `MC`, `SENSITIVITY`, or `CALIBRATION`. |
-| `RandomSeed` | no | Seed for reproducible sampling. |
-| `SampleOnly` | no | `TRUE` stops after sampling and diagnostics — no `.nav` files are generated and nothing is queued. Default `FALSE`. |
-| `Include(...)` / `Exclude(...)` | no | Whitelist / blacklist scenario combinations, see below. |
-| `MaxParallelWorkers` | deprecated | Ignored; pueue handles parallelism natively. |
-| `Plot` | deprecated | Ignored; use Navigate's on-demand plotting instead. |
+| `UncFilePath` | yes | The Navigate deck with `%NAME%` placeholders. |
+| `OutputPath` | yes | The study folder, e.g. `output`: `study.json` with every run and its values, and the results and logs of the runs. It cannot be the folder of the `.hor` file. |
+| `NumberOfSamples` | yes | Samples per scenario combination. |
+| `SamplingMethod` | no | `LHS` (default) or `MC`. |
+| `RandomSeed` | no | Seed for reproducible sampling (default 69). |
+| `Include(...)` / `Exclude(...)` | no | Keep or drop scenario combinations, see below. |
 
 ### Parameter types
 
-**`ScenarioParameter`** — categorical parameters that define named scenario
+**`ScenarioParameter`**: categorical parameters that define named scenario
 branches. Every combination of active scenario parameter values becomes its
 own branch of the study.
 
 ```
 ScenarioParameter "POLICY" {
-    name = "Policy scenario"
     default = "baseline"
     values = ["baseline", "carbon_levy"]
 }
 ```
 
-**`ContinuousParameter`** — numeric parameters sampled from a distribution.
-`distribution` is a keyword: `LOG-TRIANGULAR` (default when omitted),
-`TRIANGULAR`, `LOG-UNIFORM` or `UNIFORM`. Quoted lowercase names
-(`"triangular"`) still work. `low_val` and `high_val` bound the range;
-triangular distributions also take `mid_val` (the mode). If `mid_val` is
-omitted it is inferred: the arithmetic mean `(low + high) / 2` for
+**`ContinuousParameter`**: numeric parameters sampled from a distribution.
+`distribution` is `LOG-TRIANGULAR` (default when omitted), `TRIANGULAR`,
+`LOG-UNIFORM` or `UNIFORM`, in any case. `low_val` and `high_val` bound the
+range; triangular distributions also take `mid_val` (the mode). If `mid_val`
+is omitted it is inferred: the arithmetic mean `(low + high) / 2` for
 `TRIANGULAR`, the geometric mean `sqrt(low * high)` for `LOG-TRIANGULAR`.
 Log distributions require positive bounds.
 
@@ -128,17 +108,16 @@ the number of decimals from the bounds:
   log sampling puts most of its values.
 
 Examples: 100–200 gives 2 decimals, 0.0001–0.001 gives 8, a log-triangular
-0.001–0.12 gives 6. If an `if` block changes the bounds or distribution, the
-decimals are recomputed for that scenario. Set `decimals` only to force a
-fixed number.
+0.001–0.12 gives 6. With 0 decimals the values are whole numbers. If an `if`
+block changes the bounds or distribution, the decimals are recomputed for
+that scenario. Set `decimals` only to force a fixed number.
 
-**`DiscreteParameter`** — parameters drawn from a fixed set of values, with
+**`DiscreteParameter`**: parameters drawn from a fixed set of values, with
 optional probabilities (uniform if omitted). `probabilities` must have one
 entry per value; they are scaled to sum to 1:
 
 ```
 DiscreteParameter "RENEWAL" {
-    name = "Fleet renewal rate"
     default = 0.05
     values = [0.03, 0.05, 0.08]
     probabilities = [0.25, 0.5, 0.25]
@@ -149,7 +128,7 @@ DiscreteParameter "RENEWAL" {
 
 Every parameter has an `active` flag. Inactive parameters (`active = FALSE`)
 always use their `default` value. An inactive scenario parameter does not
-expand the combinatorial space but its default is still available as a token.
+expand the combinatorial space but its default still fills its `%NAME%`.
 
 ### Reserved samples
 
@@ -162,8 +141,10 @@ The first three samples are always deterministic:
 
 The emissions scenarios use each parameter's optional `emissions_low` /
 `emissions_high` attributes, which can be numeric values or the keywords
-`MINIMUM` / `MAXIMUM` (`MIN` / `MAX`). If only one is given as a keyword, the
-other is set to the opposite.
+`MINIMUM` / `MAXIMUM`. If only one is given as a keyword, the other is set to
+the opposite; without either, `sample_2` takes the minimum and `sample_3`
+the maximum. The minimum and maximum of discrete values compare as numbers
+when every value is one.
 
 ### Conditional overrides
 
@@ -187,13 +168,13 @@ ContinuousParameter "FUEL_PRICE" {
 
 Scenarios without a matching `if` block use the base values. If the base has
 no explicit `default`, an override that changes `mid_val` also moves the
-default.
+default. Of several matching `if` blocks, the one with the most conditions
+applies, ties going to the last.
 
 Conditions support equality (`token = value`), membership
-(`token in (a, b)`), and conjunction (`and`). When overrides are present and
-active scenario parameters exist, sampling runs separately per scenario
-combination; the same underlying draw matrix is reused so `sample_i` indices
-align across scenarios.
+(`token in (a, b)`), and conjunction (`and`). Sampling runs per scenario
+combination on one draw matrix, so `sample_i` of every combination comes
+from the same draw.
 
 ### One-line distribution call
 
@@ -226,121 +207,92 @@ DiscreteParameter "LANES" = DISCRETE([3, 4, 5]) { default = 4 }
   same block is an error naming the line.
 - Everything else (`default`, `decimals`, `active`, `emissions_low`,
   `emissions_high`, `if` overrides) goes in an optional `{ }` after the call,
-  exactly as in the block form. Attributes may be separated by commas, so a
-  short block fits on one line. Defaults and validation are unchanged.
-
-### Checking a study before running it
-
-```bash
-horizon run.hor --check             # validation + cross-file checks, exit 0 or 1
-horizon run.hor --check --explain   # also print the resolved parameters
-horizon run.hor --samples 1         # run with one sample, file unchanged
-```
-
-`--check` runs all the validation above and then reads the `.unc` template
-and the `.inc` files it includes (commented-out `Include` lines are skipped):
-
-- a `%TOKEN%` without a parameter is an error (`SCENARIO` is built in); a
-  parameter that no template or include uses is a warning;
-- an include path with a scenario token, such as `policy_%policy%.inc`, is
-  resolved for every value of that scenario parameter; a missing file or one
-  whose name differs in case is an error;
-- the summary line ends with the number of errors and warnings, and the exit
-  code is 1 if there are errors.
-
-Nothing is sampled, written or queued. `--explain` prints one row per
-parameter and scenario value (scenario parameters that appear in an `if` of
-that parameter) with `dist`, `low`, `mode`, `high`, `default`, `decimals`
-and `from`: `base`, or the `if` condition with the keys it changes, plus
-notes for inferred values (`mode inferred`, `default from mid_val`,
-`decimals auto`). `--samples N` replaces `NumberOfSamples` for one run and
-logs that it did.
+  exactly as in the block form.
 
 ### Include / Exclude filters
 
-`Include(...)` and `Exclude(...)` directives in the `Horizon` block filter
-which scenario combinations run:
+`Include(...)` and `Exclude(...)` rules in the `Horizon` block filter which
+scenario combinations run:
 
-- No Include, no Exclude — run all combinations
-- Include only — run **only** matching combinations (whitelist)
-- Exclude only — run all **except** matching (blacklist)
-- Include + Exclude — Include narrows first, then Exclude removes from that set
+- No Include, no Exclude: run all combinations
+- Include only: run **only** matching combinations
+- Exclude only: run all **except** matching ones
+- Include + Exclude: Include narrows first, then Exclude removes from that set
 
-Both use partial matching: `Include(BIO = "high")` matches every combination
-where `BIO` is `"high"`, regardless of other tokens.
+Both match partially: `Include(BIO = high)` matches every combination where
+`BIO` is `high`, whatever the other scenario parameters are. Rules that
+leave no combination are an error.
 
-Include rules support an optional `_name` key that labels each combination:
+Include rules take an optional `_name` that labels the combinations they
+match:
 
 ```
-Include(BIO = "high", ELEC = "low", _name = "s1")
-Include(BIO = "low", ELEC = "high", _name = "s2")
+Include(BIO = high, ELEC = low, _name = s1)
+Include(BIO = low, ELEC = high, _name = s2)
 ```
 
-- `_name` is reserved — it labels, it does not filter
-- If any Include rule has `_name`, all must have it (parse-time error if mixed)
-- The label becomes available as the `%SCENARIO%` token in `.unc` templates
-- `SCENARIO` is therefore a reserved token name — do not use it for a
-  `ScenarioParameter`
+- `_name` labels, it does not filter; Exclude rules take none
+- If any Include rule has `_name`, all must have it
+- The label fills `%SCENARIO%` in the simulation files
 
-## The `.unc` template and token replacement
+### Run labels
 
-A `.unc` file is an ordinary Navigate simulation file in which uncertain
-values are replaced with `%TOKEN%` placeholders. Horizon writes one `.nav`
-file per sample/scenario combination, substituting each token with the
-sampled value. `Include` directives referencing `.inc` files are processed
-the same way, so tokens work across included files too. Write the directive as `Include`;
-any other spelling (`INCLUDE`, `include`, ...) is rejected with an error naming the file and line. Refer to the
+Each scenario combination gets a label, which names its runs
+(`<label>_sample001`, ...) and is the run Lantern shows: the Include rule's
+`_name`, else the active scenario values joined by `_`, else the name of the
+`.hor` file. Labels are part of file names, so they use letters, digits,
+`_`, `.` and `-`, and two combinations cannot share one.
+
+## Checking a study before running it
+
+```bash
+horizon check run.hor                     # validation + cross-file checks, exit 0 or 1
+horizon run run.hor --dry-run             # the study.json it would write, nothing written or run
+horizon run run.hor --samples 1           # run with one sample, file unchanged
+```
+
+`check` runs all the validation above and then reads the deck and the files
+it includes (commented-out `Include` lines are skipped):
+
+- a `%NAME%` without a parameter is an error (`SCENARIO` is built in); a
+  parameter that no file uses is a warning;
+- an include path with a scenario token, such as `policy_%policy%.inc`, is
+  resolved for every scenario combination the study runs; a missing file is
+  an error;
+- the summary line ends with the number of runs, errors and warnings, and
+  the exit code is 1 if there are errors.
+
+Nothing is sampled, written or run.
+
+## The deck and its placeholders
+
+The deck that `UncFilePath` names is an ordinary Navigate simulation file in
+which uncertain values are replaced with `%NAME%` placeholders. Each run
+starts `navigate <deck> --set NAME=VALUE ...` with the run's values, and
+Navigate fills in the placeholders in the deck and in every file it reads,
+include paths too, before it parses them. A placeholder without a value is
+an error naming its file and line. Refer to the
 [Navigate documentation](https://zerocarbonshipping.github.io/navigate-zcs/)
 for the simulation file format itself.
 
-## The `.sen` file (sensitivity analysis)
+## Changes from Horizon 1
 
-The `.sen` format configures PRCC (partial rank correlation coefficient)
-analysis of completed runs:
+Horizon 2 reads the files of Horizon 1 except for these changes:
 
-```
-SensitivityAnalysis {
-    SamplesCSV = "output/samples.csv"       # required
-    SourceDir = "."                         # optional (defaults to .sen file dir)
-    ReportCSV = "report.csv"                # optional (collected report from 'horizon -c')
-    OutputDir = "prcc_analysis"             # optional
-
-    Metric "Emissions reduction" {
-        key = "TotalEquivalentWtw"
-        aggregation = difference            # last year minus first year
-    }
-
-    Metric "Lifetime emissions" {
-        key = "TotalEquivalentWtw"
-        aggregation = cumulative            # sum over all years
-    }
-
-    Metric "Final year emissions" {
-        key = "TotalEquivalentWtw"
-        year = 2050
-        aggregation = point                 # value at a specific year (default)
-    }
-}
-```
-
-### Metric aggregation modes
-
-| Mode | Meaning |
-|------|---------|
-| `point` (default) | Value at a specific year (`year = YYYY`), or the final year if omitted. |
-| `difference` | `metric(last year) - metric(first year)`. More stable than single-year values. |
-| `cumulative` | Sum over all simulation years; captures total lifetime impact. |
-
-### CLI equivalent
-
-Sensitivity analysis can also run without a `.sen` file:
-
-```bash
-horizon --sensitivity-analysis --samples-csv samples.csv \
-        --metric "TotalEquivalentWtw:difference" \
-        --metric "Expenses:cumulative" \
-        --report-csv report.csv source_dir output_dir
-```
-
-Default metrics when none are given: `TotalEquivalentWtw:difference`,
-`Expenses:difference`, `TotalEquivalentWtw:cumulative`.
+- `token` and `name` are gone: the block name is the token. Rename a block
+  whose name is not its token, and delete `name` lines.
+- `MaxParallelWorkers`, `Plot` and `SampleOnly` are gone; delete them.
+  Instead of `SampleOnly = TRUE`, `horizon run --dry-run` prints every run
+  with its values without running it.
+- `MIN` / `MAX` are spelled `MINIMUM` / `MAXIMUM`.
+- `Include` and `Exclude` are written exactly so (not `include`).
+- `SamplingMethod` is `LHS` or `MC`; `SENSITIVITY` and `CALIBRATION` are
+  gone, as are the `.sen` files of the PRCC sensitivity analysis.
+- `UncFilePath` and `OutputPath` are taken from the folder of the `.hor`
+  file, not from the folder `horizon` runs in.
+- `OutputPath` names the study folder (`output`), not a run list
+  (`output/samples.csv`); the runs and their values are in `study.json`.
+- A key set twice in one block, a scenario `default` that is not one of its
+  values, and run labels that clash or cannot be file names are errors.
+- Parameter lists in the `Horizon` block (`Parameters = [...]`,
+  `ContinuousParameter("X")`) were already refused; they stay errors.
