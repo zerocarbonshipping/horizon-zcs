@@ -44,6 +44,10 @@ def _parser():
     run.add_argument("--write-ids", action="store_true",
                      help="with a --command other than pueue: write what each submission prints, the job id when "
                           "asked for just that, to job_ids.txt in the study folder, for a job that waits on the runs")
+    run.add_argument("--full-task-env", action="store_true",
+                     help="with --command pueue: give each task the whole environment, not only what a run needs "
+                          "(PATH, HOME, Python, licensing, thread limits, ...; HORIZON_TASK_ENV=NAME,... adds "
+                          "variables)")
     run.add_argument("-j", "--jobs", type=_positive_int, metavar="N",
                      help="runs at a time without --command (default: one per CPU, as a run uses one)")
     run.add_argument("--samples", type=_positive_int, metavar="N",
@@ -77,6 +81,12 @@ def main():
 
         if pueue_options(args.command) is not None:
             parser.error("--write-ids is for prefixes other than pueue, which queues the collect step itself")
+
+    if getattr(args, "full_task_env", False):
+        from horizon.launch import pueue_options
+
+        if args.command is None or pueue_options(args.command) is None:
+            parser.error("--full-task-env is for --command pueue; other prefixes pass on the whole environment")
 
     target = getattr(args, "hor", None) or getattr(args, "study", "horizon")
     logging.basicConfig(level=logging.INFO, format=_FORMAT)
@@ -115,7 +125,7 @@ def _run(args) -> int:
         logger.info("Dry run of %s: %d scenario combination(s) x %d samples = %d runs; nothing is written or run",
                     hor.name, len(hor.combinations), number_of_samples, len(rows))
 
-        dry_run(Study(hor.study_folder, config), args.command)
+        dry_run(Study(hor.study_folder, config), args.command, args.full_task_env)
         return 0
 
     if navigate is None:
@@ -127,7 +137,7 @@ def _run(args) -> int:
     logger.info("Study %s: %d scenario combination(s) x %d samples = %d runs in %s", hor.name,
                 len(hor.combinations), number_of_samples, len(rows), study.folder)
 
-    return start(study, args.command, args.jobs, args.write_ids)
+    return start(study, args.command, args.jobs, args.write_ids, args.full_task_env)
 
 
 def _check(args) -> int:

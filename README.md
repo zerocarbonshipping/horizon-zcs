@@ -152,6 +152,15 @@ or `-g` with a group of its own). If a run fails, pueue fails the collect
 task too; start the run again (`pueue restart <task>`) and, once it is done,
 run `horizon collect` yourself.
 
+pueue keeps the environment of `pueue add` with each task and rewrites its
+whole state on every add, so a shell's full environment slows every add as
+the queue grows. `--command pueue` therefore passes on only what a run needs:
+`PATH`, `HOME`, the locale, the Python or conda environment,
+`ASSUMPTIONS_DATA_DIR`, Gurobi's licensing, thread limits and what the pueue
+client needs to find its daemon. `HORIZON_TASK_ENV=NAME1,NAME2` passes more
+variables, `--full-task-env` the whole environment, and `--dry-run` lists
+what the tasks would get. Other prefixes pass on the whole environment.
+
 Any other prefix hands over the runs only. Each run is one Navigate command,
 which the prefix gets with `{run}`, `{study}` and `{cmd}` filled in:
 
@@ -180,7 +189,7 @@ See `horizon <command> --help` for the full list.
 
 | Command | Description |
 |---------|-------------|
-| `run STUDY.hor` | Sample the study, write its study folder, and start its runs. `--command PREFIX` hands them to a queue (`pueue` also queues the collect step; `--write-ids` keeps the job ids of any other prefix in `job_ids.txt`); `-j N` runs N at a time here (default: one per CPU); `--samples N` replaces `NumberOfSamples` without editing the file; `--navigate "ARGS"` adds arguments to every Navigate run (e.g. `"-s -d ./assumptions"`; a single flag as `--navigate=-s`); `--dry-run` prints the study as `study.json` would hold it and logs how the first run would start, but writes and runs nothing. A study run again clears its logs and the results of its earlier runs first. |
+| `run STUDY.hor` | Sample the study, write its study folder, and start its runs. `--command PREFIX` hands them to a queue (`pueue` also queues the collect step and passes on only the environment a run needs, all of it with `--full-task-env`; `--write-ids` keeps the job ids of any other prefix in `job_ids.txt`); `-j N` runs N at a time here (default: one per CPU); `--samples N` replaces `NumberOfSamples` without editing the file; `--navigate "ARGS"` adds arguments to every Navigate run (e.g. `"-s -d ./assumptions"`; a single flag as `--navigate=-s`); `--dry-run` prints the study as `study.json` would hold it and logs how the first run would start, but writes and runs nothing. A study run again clears its logs and the results of its earlier runs first. |
 | `check STUDY.hor` | Validate the study and cross-check the deck and the files it includes: every `%NAME%` has a parameter, unused parameters are warned about, and every include path resolves, for each scenario combination, to an existing file. Exits 0 (ok or warnings) or 1 (errors). |
 | `collect STUDY` | Compact the study once every run is ok; `--partial` compacts the runs that have results and keeps the per-run files. `STUDY` is the `.hor` file or its study folder. |
 

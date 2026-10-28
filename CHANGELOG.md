@@ -22,6 +22,10 @@ after this block are superseded where they conflict.
 - `run --command pueue` queues the runs in pueue and, after them, `horizon collect`, which starts once
   every run has succeeded. With any other prefix, `--write-ids` writes what each submission printed
   (the job id with `sbatch --parsable`) to `job_ids.txt`, for a collect job that waits on the runs.
+- `run --command pueue` passes `pueue add` only the environment a run needs (`PATH`, `HOME`, locale,
+  Python/conda, `ASSUMPTIONS_DATA_DIR`, Gurobi licensing, thread limits, pueue's config paths), as
+  pueue stores it in every task and rewrites its whole state on each add. `HORIZON_TASK_ENV=NAME,...`
+  adds variables, `--full-task-env` passes all of them; other prefixes always get the whole environment.
 - Navigate fills in the `%NAME%` placeholders from `--set NAME=VALUE` (needs a Navigate with `--set`,
   `--name` and `--output-dir`); Horizon writes no `.nav` or `.inc` files.
 - The study folder, `OutputPath`, holds `study.json` (the settings and every run with its values), `logs/`
@@ -49,7 +53,7 @@ after this block are superseded where they conflict.
 
 ### Removed
 - The test suite, and the `syntax/` editor files, which highlighted the 1.x format.
-- `.nav`/`.inc` generation, the direct pueue client, `--priority`, `--threads`, `--full-task-env`, `--pueue-cli`,
+- `.nav`/`.inc` generation, the direct pueue client, `--priority`, `--threads`, `--pueue-cli`,
   `--gen-workers`, `--output-dir`, `--replot`, `-c` report collection, PRCC sensitivity analysis and
   `.sen` files, the calibration dashboard, the sampling diagnostics plots, `--explain`, the check
   for include names that differ only in case, and the "did you mean" suggestions in errors. Drops the dependencies
