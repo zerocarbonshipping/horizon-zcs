@@ -9,13 +9,5 @@ __pycache__/
 build/
 dist/
 *.egg-info/
-htmlcov/
-.coverage
-.pytest_cache/
-tmp/
 examples/**/output/
-examples/**/output.log
-
-# autoresearch fixtures, golden snapshots and experiment logs (local only)
-tools/autoresearch/fixtures/
-tools/autoresearch/results/
+examples/**/*.parquet

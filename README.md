@@ -8,16 +8,16 @@ SPDX-License-Identifier: CC-BY-4.0
 [![CI](https://github.com/zerocarbonshipping/horizon-zcs/actions/workflows/ci.yml/badge.svg)](https://github.com/zerocarbonshipping/horizon-zcs/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSES/Apache-2.0.txt)
 
-Horizon is an uncertainty analysis tool for
+Horizon runs uncertainty studies of
 [Navigate](https://github.com/zerocarbonshipping/navigate-zcs), the
 open-source maritime transition model. It samples uncertain input parameters
-(Monte Carlo or Latin Hypercube), generates one Navigate simulation per
-sample across scenario combinations, queues the runs, and aggregates the
-results — turning a single Navigate scenario into an uncertainty study.
+(Latin hypercube or Monte Carlo) across scenario combinations, starts one
+Navigate run per sample on this machine or through any queue (pueue, slurm,
+...), and compacts the results into one file per study, ready for
+[Lantern](https://github.com/zerocarbonshipping/lantern-zcs).
 
-Horizon is a companion to Navigate, not a standalone tool: it prepares,
-schedules, and post-processes Navigate simulations, and a working Navigate
-installation is required for any actual simulation run.
+Horizon writes no simulation files: each run is the study's `.unc` deck,
+which Navigate fills in itself from `--set NAME=VALUE`.
 
 ## Disclaimer
 
@@ -34,9 +34,11 @@ own independent judgement when interpreting any outputs.
 
 - Python >= 3.12
 - [Navigate](https://github.com/zerocarbonshipping/navigate-zcs) installed
-  in the same environment (Horizon invokes the `navigate` command)
-- [pueue](https://github.com/Nukesor/pueue) for queuing simulation runs —
-  the daemon must be running (`pueued -d`)
+  in the same environment, in a version that takes `--set`, `--name` and
+  `--output-dir`. Horizon runs the `navigate` command on
+  `PATH`.
+- Optionally a queue such as [pueue](https://github.com/Nukesor/pueue) or
+  slurm; without one, Horizon runs the study on this machine.
 
 ## Installation
 
@@ -47,7 +49,7 @@ conda activate nav       # or whatever environment Navigate lives in
 pip install .
 ```
 
-For development with lint and test tools:
+For development with the lint tools:
 
 ```bash
 pip install -e ".[dev]"
@@ -55,13 +57,14 @@ pip install -e ".[dev]"
 
 ## Quick start
 
-The bundled example runs without Navigate or pueue — it stops after
-sampling (`SampleOnly = TRUE`) and writes sampled values plus sampling
-diagnostics:
+The bundled example checks and samples without Navigate: `--dry-run` prints
+the study as `study.json` would hold it, every run with its sampled values,
+and logs how the first run would start, but writes and runs nothing.
 
 ```bash
 cd examples/uncertainty
-horizon fuel_cost_study.hor
+horizon check fuel_cost_study.hor
+horizon run fuel_cost_study.hor --dry-run
 ```
 
 See [`examples/uncertainty/README.md`](examples/uncertainty/README.md) for a
@@ -70,132 +73,137 @@ full configuration reference.
 
 ## Workflow
 
-A full uncertainty study runs in three steps:
-
 ```bash
-# 1. Sample parameters, generate .nav files, queue Navigate runs via pueue
-horizon my_study.hor
-
-# 2. Watch progress (pueue) or check for failures
-pueue status
-horizon --status path/to/output_dir
-
-# 3. Collect the Excel reports of completed runs into one file
-horizon -c path/to/output_dir results.xlsx
+horizon check my_study.hor              # validate in seconds, and cross-check the deck
+horizon run my_study.hor                # sample and run, here or through a queue
+horizon collect my_study.hor            # once every run is ok: compact the results
 ```
 
-Before a long run, `horizon my_study.hor --check` catches typos and
-mismatches between the `.hor`, `.unc` and `.inc` files in seconds, and
-`--explain` shows what each parameter resolves to. A broken `.hor` file
-prints one line (`my_study.hor:41: error: ...`) and exits 1; the traceback is
-in `output.log`.
-
 The `.hor` file defines the study: which parameters vary, over what ranges
-and distributions, across which scenario combinations. The `.unc` file it
-points at is an ordinary Navigate simulation file with `%TOKEN%`
-placeholders where sampled values are substituted. A parameter fits on one
+and distributions, across which scenario combinations. Its `UncFilePath`
+names an ordinary Navigate deck with `%NAME%` placeholders where the sampled
+values go, in the deck and in the files it includes. A parameter fits on one
 line, e.g. `ContinuousParameter "WACC" = LOG-TRIANGULAR(0.6, 1.0, 1.8)`; the
 block form is equally valid (see [`docs/configuration.md`](docs/configuration.md)).
 
-### Sensitivity analysis
+`OutputPath` names the study folder, e.g. `output`, which holds:
 
-After a study completes, Horizon can compute PRCC (partial rank correlation
-coefficient) sensitivities linking sampled parameters to output metrics:
+| Path | What |
+|------|------|
+| `output/study.json` | the deck, the navigate command and its arguments, where the study came from, and every run, one per line: its run id, scenario combination, sample number and the value of every token |
+| `output/logs/` | Navigate's log of each run and Horizon's own `horizon.log`, which has the command of each run; cleared when the study is run again |
+| `output/job_ids.txt` | with `--write-ids`: what the scheduler printed for each run, its job id when asked for just that; never deleted, only overwritten |
+| `output/parquets/<run_id>.parquet` | the results of one run; the folder is deleted once the study is compacted |
+| `output/<study>_archive.parquet` | the archive: every row of every run, with the columns `run` and `sample` |
+| `output/<study>.parquet` | for Lantern: per scenario combination the runs `<label>` (the representative sample), `<label>_median`, `<label>_p05` and `<label>_p95` |
+
+Runs are named `<label>_sample<NNN>`. The label is the Include rule's
+`_name`, else the active scenario values joined by `_`, else the study name;
+the study name is the `.hor` file name.
+
+Once every run is ok, `horizon collect` compacts the study into two files.
+The archive, `<study>_archive.parquet`, holds every row of every run. The
+Lantern file, `<study>.parquet`, holds the summary Lantern once computed
+itself from an ensemble, as four runs per scenario combination that Lantern
+opens and compares:
+
+- `<label>`: the representative sample, the one that stays closest to the
+  median of WTW emissions, installed power, fuel consumed by fuel type and
+  fuel-related expenses (weighted 0.4, 0.3, 0.2 and 0.1). It is one real run,
+  so its stacked plots add up.
+- `<label>_median`, `<label>_p05`, `<label>_p95`: for each result row and
+  date, the median and the 5th and 95th percentiles over the samples. The
+  file's metadata names them per label under `summaries`, as `median`, `low`
+  and `high`, the way Lantern finds them.
+
+Percentiles do not add up, so where a plot sums rows (all fleets of a fuel,
+say), the band of the sum is wider than the true band. `collect` deletes
+`parquets/` only once both files are written and read back. With
+`--command pueue`, the collect step is queued after the runs; otherwise run
+`horizon collect` once every run is done. It refuses while a run has no
+results, and `horizon collect --partial` compacts what there is and keeps
+the per-run results.
+
+Horizon keeps no state about the runs. A run that fails shows where it ran:
+in the scheduler's status and log, or, without `--command`, in the summary
+`horizon run` prints, grouped by the last line of each failed run's output.
+Navigate's log of the run is in `logs/`. To run one again, restart it in the
+scheduler (e.g. `pueue restart <task>`), or take its command from
+`horizon.log`, which has the command of every run.
+
+### Running through a queue
+
+Without `--command`, `horizon run` runs the study here, one run per CPU at a
+time (`-j N` to change that), and waits for it. With `--command`, it hands
+each run to a scheduler and returns.
+
+`--command pueue` queues each run as a pueue task labelled with its run id,
+and after them the task `<study>_collect`, which runs `horizon collect` once
+every run has succeeded. Words after `pueue` are options of `pueue add`, for
+both:
 
 ```bash
-horizon --sensitivity-analysis my_study.sen
+horizon run my_study.hor --command pueue
+horizon run my_study.hor --command "pueue -g horizon"
 ```
 
-### Command-line options
+pueue runs as many tasks at a time as the group allows (`pueue parallel 8`,
+or `-g` with a group of its own). If a run fails, pueue fails the collect
+task too; start the run again (`pueue restart <task>`) and, once it is done,
+run `horizon collect` yourself.
 
-See `horizon --help` for the full list. The most used flags:
+pueue keeps the environment of `pueue add` with each task and rewrites its
+whole state on every add, so a shell's full environment slows every add as
+the queue grows. `--command pueue` therefore passes on only what a run needs:
+`PATH`, `HOME`, the locale, the Python or conda environment,
+`ASSUMPTIONS_DATA_DIR`, Gurobi's licensing, thread limits and what the pueue
+client needs to find its daemon. `HORIZON_TASK_ENV=NAME1,NAME2` passes more
+variables, `--full-task-env` the whole environment, and `--dry-run` lists
+what the tasks would get. Other prefixes pass on the whole environment.
 
-| Flag | Description |
-|------|-------------|
-| `-c`, `--collect` | Collect reports from completed runs into a single Excel file. |
-| `--report-name PATTERN` | Only collect reports matching a filename pattern (supports `*`). |
-| `--priority {low,normal,high}` | Pueue scheduling priority for queued runs. |
-| `--threads N` | Pin `OMP_NUM_THREADS`, `MKL_NUM_THREADS` and `NUMEXPR_NUM_THREADS` to exactly N for every queued task, instead of splitting the CPUs by study size. Use it when several runs share one pueue daemon. It does not limit the LP solver's own threads (Navigate's `Threads` define; 0 = solver default). |
-| `--solver {auto,gurobi,highs}` | Solver backend passed through to Navigate. |
-| `--navigate-flags "..."` | Extra flags appended to each `navigate` command (e.g. `"-d ./assumptions -s"`). |
-| `--full-task-env` | Forward your entire environment to each queued task. By default only the variables a Navigate run needs are forwarded (plus any named in `HORIZON_TASK_ENV`, comma-separated), which keeps pueue's state small and submission fast. |
-| `--pueue-cli` | Submit through the pueue CLI instead of the direct daemon connection. |
-| `--gen-workers N` | Thread-pool size for `.nav` generation (default: `min(8, CPU count)`). |
-| `--output-dir DIR` | Directory for generated scenario folders (default: next to the `.unc` file). |
-| `--dry-run` | Validate the configuration and preview what would be generated. |
-| `--check` | Parse the `.hor` file with all validation and cross-check the `.unc` template and the `.inc` files it includes: every `%TOKEN%` has a parameter, unused parameters are warned about, and every scenario value in an include path such as `policy_%policy%.inc` resolves to a file with exactly that spelling. Prints a short summary, exits 0 (ok or warnings) or 1 (errors); writes and queues nothing. |
-| `--explain` | Print each parameter as it resolves per scenario value (distribution, low, mode, high, default, decimals) and where each came from: base, an `if` override, or an inferred value. Use it with `--check` or alone. |
-| `--samples N` | Use `N` samples instead of `NumberOfSamples` for this run, without editing the file (e.g. `horizon run.hor --samples 1` for a smoke test). The override is logged. |
-| `--status DIR` | Check pueue task status and report failures for an output directory. |
-| `--replot DIR ...` | Queue Navigate replot jobs for directories containing `plot_data.pkl`. |
-| `--sensitivity-analysis [FILE]` | Run PRCC sensitivity analysis, optionally from a `.sen` config. |
-| `--calibration-plot` | Generate a calibration comparison dashboard from completed results. |
+Any other prefix hands over the runs only. Each run is one Navigate command,
+which the prefix gets with `{run}`, `{study}` and `{cmd}` filled in:
 
-## Performance and sizing
+```bash
+horizon run my_study.hor --command "sbatch --parsable --job-name {run} --wrap {cmd}" --write-ids
+```
 
-Horizon runs the same on a many-core production server and on a laptop; the
-defaults adapt to the machine, and two knobs cover the extremes:
+`{cmd}` is the Navigate command as one quoted argument, for schedulers that
+take a command string (`sbatch --wrap`); without it, the command's words are
+appended to the prefix. `--write-ids` writes what each submission prints to
+`job_ids.txt` in the study folder, one line per run; asked for just the job
+id (`sbatch --parsable`), that is the list a collect job waits on:
 
-- **File generation** uses a thread pool of `min(8, CPU count)` workers —
-  measured optimal at core count on a 4-core machine (serial is ~2.4x
-  slower, twice the cores ~1.75x slower). For scale: 10 000 realizations
-  generate in ~15 s and ~160 MB of RAM on a 4-core machine — memory is not
-  the constraint, disk is (that study writes ~0.7 GB of `.nav`/`.inc` files
-  before Navigate produces any results).
+```bash
+sbatch --dependency=afterok:$(paste -sd: output/job_ids.txt) --wrap "horizon collect my_study.hor"
+```
 
-- **Network storage** (an output directory on NFS/SMB) changes the game:
-  every file creation is a metadata round trip, so include-heavy decks are
-  bound by files-per-realization, not CPU. Rewritten
-  includes whose content only varies per scenario are therefore written once
-  per scenario combination into `shared_includes/` instead of into every
-  realization folder. Threads blocked on round trips cost nothing, so raising
-  `--gen-workers` above the default `min(8, CPU count)` can raise throughput
-  there (measure your optimum with [`tools/benchmark/`](tools/benchmark/README.md)).
+`horizon.log` pairs each run id with what its submission printed, with or
+without `--write-ids`. Either way, the command names the `navigate` that
+`horizon run` found, so the queue's machines need the same environment, and
+the study folder on a disk they share.
 
-- **Queue submission** uses a direct connection to the pueue daemon when a
-  pueue >= 4 unix socket is found, and the pueue CLI otherwise (or with
-  `--pueue-cli`). pueue rewrites its entire state file on every add, so
-  submission slows as the queue grows — measured with the direct
-  connection: the first 2 000 tasks submit at ~160/s, tasks 8 000–10 000
-  at ~17/s. Two habits keep it fast:
-  - run `pueue clean` between studies (finished tasks keep bloating the
-    state and slow every later submission and `pueue status`);
-  - for studies beyond ~10 000 runs, expect submission to take minutes and
-    consider splitting the study.
+### Commands
 
-- **Simulation parallelism** is pueue's job: set `pueue parallel N` to how
-  many Navigate runs the machine should execute at once (a handful on a
-  laptop, many on the production server). Horizon sizes each task's
-  thread-limit variables (`OMP_NUM_THREADS`, ...) from the study size
-  automatically; pass `--threads N` to pin them to N instead.
+See `horizon <command> --help` for the full list.
 
-- **Task environment**: queued tasks get a minimal environment by default.
-  If your setup needs extra variables (license servers, module systems),
-  pass them with `HORIZON_TASK_ENV=VAR1,VAR2` or fall back to
-  `--full-task-env`.
+| Command | Description |
+|---------|-------------|
+| `run STUDY.hor` | Sample the study, write its study folder, and start its runs. `--command PREFIX` hands them to a queue (`pueue` also queues the collect step and passes on only the environment a run needs, all of it with `--full-task-env`; `--write-ids` keeps the job ids of any other prefix in `job_ids.txt`); `-j N` runs N at a time here (default: one per CPU); `--samples N` replaces `NumberOfSamples` without editing the file; `--navigate "ARGS"` adds arguments to every Navigate run (e.g. `"-s -d ./assumptions"`; a single flag as `--navigate=-s`); `--dry-run` prints the study as `study.json` would hold it and logs how the first run would start, but writes and runs nothing. A study run again clears its logs and the results of its earlier runs first. |
+| `check STUDY.hor` | Validate the study and cross-check the deck and the files it includes: every `%NAME%` has a parameter, unused parameters are warned about, and every include path resolves, for each scenario combination, to an existing file. Exits 0 (ok or warnings) or 1 (errors). |
+| `collect STUDY` | Compact the study once every run is ok; `--partial` compacts the runs that have results and keeps the per-run files. `STUDY` is the `.hor` file or its study folder. |
 
-## Editor support
-
-The [`syntax/`](syntax/) folder contains Notepad++ user-defined-language
-files with syntax highlighting for `.hor`, `.sen`, and Navigate files. It
-also holds a VS Code extension for `.hor` and `.sen` files; install it with
-`code --install-extension syntax/horizon-language-1.1.0.vsix`.
+A broken `.hor` file prints one line (`my_study.hor:41: error: ...`) and
+exits 1.
 
 ## Documentation
 
-- [`docs/configuration.md`](docs/configuration.md) — `.hor` and `.sen`
-  format reference
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — how the code is
-  structured, for contributors
+- [`docs/configuration.md`](docs/configuration.md) — `.hor` format
+  reference
 - [Navigate documentation](https://zerocarbonshipping.github.io/navigate-zcs/)
   — the simulation model itself, including the `.nav` file format
 
-## Testing
-
-```bash
-pip install -e ".[dev]"
-pytest
-```
+## Contributing
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md) for contribution guidelines and
 [`CODESTYLE.md`](CODESTYLE.md) for coding conventions.
@@ -206,7 +214,7 @@ Copyright 2026 Fonden Mærsk Mc-Kinney Møller Center for Zero Carbon Shipping.
 
 Horizon is licensed under two licenses, depending on the type of content:
 
-- The software — the `horizon` package, tests, and all build, tooling, and
+- The software — the `horizon` package and all build, tooling, and
   editor-support files — is licensed under the
   [Apache License 2.0](LICENSES/Apache-2.0.txt) (see also the root
   [LICENSE](LICENSE) file).

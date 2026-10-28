@@ -1,0 +1,43 @@
+// SPDX-FileCopyrightText: 2026 Fonden Mærsk Mc-Kinney Møller Center for Zero Carbon Shipping
+// SPDX-License-Identifier: Apache-2.0
+
+// Horizon study grammar (.hor, Lark LALR).
+//
+// A study is parameter blocks and one Horizon block. Newlines are not
+// significant, and commas between entries are optional. A value is a number,
+// a quoted string, a bare word or a list; the reader gives every value as
+// text and the rest of the parser decides what each key needs.
+
+start: (parameter | horizon)*
+
+parameter: KIND QUOTED_STRING call? body?
+call: "=" WORD "(" [value ("," value)*] ")"
+body: "{" (entry | override)* "}"
+
+override: "if" condition ("and" condition)* "{" entry* "}"
+condition: WORD "=" value                       -> equals
+         | WORD "in" "(" value ("," value)* ")" -> among
+
+horizon: "Horizon" "{" (entry | include | exclude)* "}"
+include: "Include" "(" pair ("," pair)* ")" ","?
+exclude: "Exclude" "(" pair ("," pair)* ")" ","?
+
+entry: pair ","?
+pair: WORD "=" value
+
+?value: SIGNED_NUMBER                          -> number
+      | QUOTED_STRING                          -> string
+      | WORD                                   -> word
+      | "[" [value ("," value)* ","?] "]"      -> list
+
+// only a block can start here, so the kind needs no keyword priority over WORD
+KIND: "ScenarioParameter" | "ContinuousParameter" | "DiscreteParameter"
+// a bare word may carry a hyphen, as in LOG-TRIANGULAR
+WORD: /[A-Za-z_][A-Za-z0-9_\-]*/
+QUOTED_STRING: /"[^"\n]*"/ | /'[^'\n]*'/
+COMMENT: /#[^\n]*/
+
+%import common.SIGNED_NUMBER
+%import common.WS
+%ignore WS
+%ignore COMMENT

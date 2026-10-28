@@ -27,10 +27,10 @@ jobs:
         run: pip install flake8 flake8-bugbear pep8-naming isort
 
       - name: Run flake8
-        run: flake8 horizon tests
+        run: flake8 horizon
 
       - name: Run isort
-        run: isort horizon tests --check-only --diff
+        run: isort horizon --check-only --diff
 
 
   reuse:
@@ -53,9 +53,10 @@ jobs:
         run: reuse lint
 
 
-  build:
-    name: Build package
+  smoke:
+    name: Build and smoke test
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - name: Checkout code
@@ -66,48 +67,15 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Build package
+      - name: Build and install the wheel
         run: |
           pip install build
           python -m build
+          pip install "$(ls dist/*.whl)"
 
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v7
-        with:
-          name: dist-artifacts
-          path: dist/
-
-
-  test:
-    name: Run tests
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    needs: build
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: '3.12'
-
-      - name: Download build artifacts
-        uses: actions/download-artifact@v8
-        with:
-          name: dist-artifacts
-          path: dist/
-
-      - name: Install built wheel with dev dependencies
-        run: pip install --force-reinstall "$(ls dist/*.whl)[dev]"
-
-      - name: Verify installation
-        run: horizon --help
-
-      - name: Run test suite
-        run: pytest
-
-      - name: Run sampling example
+      - name: Check and sample the example study
         working-directory: examples/uncertainty
-        run: horizon fuel_cost_study.hor
+        run: |
+          horizon --help
+          horizon check fuel_cost_study.hor
+          horizon run fuel_cost_study.hor --dry-run

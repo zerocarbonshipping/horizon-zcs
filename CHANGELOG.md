@@ -11,7 +11,62 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+Horizon 2: no generated simulation files, any queue, one compacted file per study. The 1.x entries
+after this block are superseded where they conflict.
+
 ### Added
+- Subcommands `horizon run | check | collect`. `run --command PREFIX` hands each run
+  to any scheduler (`sbatch --wrap {cmd}`); without it the runs run in a local pool (`-j N`, one per
+  CPU by default). Each run is one Navigate command; `run --dry-run` prints the study as `study.json`
+  would hold it, but writes and runs nothing. `horizon.log` has the command of every run.
+- `run --command pueue` queues the runs in pueue and, after them, `horizon collect`, which starts once
+  every run has succeeded. With any other prefix, `--write-ids` writes what each submission printed
+  (the job id with `sbatch --parsable`) to `job_ids.txt`, for a collect job that waits on the runs.
+- `run --command pueue` passes `pueue add` only the environment a run needs (`PATH`, `HOME`, locale,
+  Python/conda, `ASSUMPTIONS_DATA_DIR`, Gurobi licensing, thread limits, pueue's config paths), as
+  pueue stores it in every task and rewrites its whole state on each add. `HORIZON_TASK_ENV=NAME,...`
+  adds variables, `--full-task-env` passes all of them; other prefixes always get the whole environment.
+- Navigate fills in the `%NAME%` placeholders from `--set NAME=VALUE` (needs a Navigate with `--set`,
+  `--name` and `--output-dir`); Horizon writes no `.nav` or `.inc` files.
+- The study folder, `OutputPath`, holds `study.json` (the settings and every run with its values), `logs/`
+  (Navigate's log of each run and Horizon's `horizon.log`) and `parquets/` (each run's results,
+  until the study is compacted). Horizon keeps no run state: failures show
+  in the scheduler, or in the summary of `horizon run` without one.
+- `horizon collect` compacts the study into the archive `<study>_archive.parquet` with every sample,
+  and the Lantern file `<study>.parquet`, both in the study folder, with four runs per scenario
+  combination: the representative sample (Lantern's former rule) and the median, 5th and 95th
+  percentile of each row and date over the samples, which its metadata names per combination under
+  `summaries` (`median`, `low`, `high`). A 300-sample combination of the basecase takes
+  about 30 s and 2 GB. `parquets/` is deleted once both files are verified.
+- Runs are named `<label>_sample<NNN>`, padded to the sample count; labels must be unique and fit in
+  file names.
+
+### Changed
+- The `.hor` parser is a Lark grammar. Newlines are not significant, commas between entries are
+  optional and values may be quoted or bare everywhere. `token` and `name` are gone (the block name is
+  the token), as are `MaxParallelWorkers`, `Plot`, `SampleOnly` (use `horizon run --dry-run`), the
+  `MIN`/`MAX` aliases and lowercase `include(`/`exclude(`. `SamplingMethod` is `LHS` or `MC`. Paths are taken from the folder of the
+  `.hor` file. A key set twice in a block and a scenario `default` outside its values are errors.
+  `docs/configuration.md` lists what to change in a 1.x file.
+- One sampling path: every scenario combination resolves its overrides and samples on the shared draw
+  matrix, which gives the values of both 1.x paths.
+
+### Removed
+- The test suite, and the `syntax/` editor files, which highlighted the 1.x format.
+- `.nav`/`.inc` generation, the direct pueue client, `--priority`, `--threads`, `--pueue-cli`,
+  `--gen-workers`, `--output-dir`, `--replot`, `-c` report collection, PRCC sensitivity analysis and
+  `.sen` files, the calibration dashboard, the sampling diagnostics plots, `--explain`, the check
+  for include names that differ only in case, and the "did you mean" suggestions in errors. Drops the dependencies
+  pandas, matplotlib, scipy, openpyxl, python-calamine, seaborn, psutil and plotly; adds lark and
+  polars.
+
+### Fixed
+- The minimum and maximum of numeric discrete values compared as text (`10` < `5`).
+- Log distributions crashed on an `if` block that fixes the value (`low_val = high_val`).
+- Sampled values with 0 decimals were floats (`300.0`); an explicit continuous `default` stayed text.
+- An Include `_name` that matched several combinations gave their runs the same name silently.
+
+### Added (1.x)
 - `--threads N`: pin `OMP_NUM_THREADS`, `MKL_NUM_THREADS` and `NUMEXPR_NUM_THREADS` to
   exactly N for every queued task (direct daemon and pueue CLI paths). Without it the
   automatic `max(2, cpu_count // tasks)` split is unchanged.
@@ -32,6 +87,14 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   highlighting for `.hor` and `.sen` files. It and the Notepad++ UDL now
   highlight the distribution keywords `LOG-TRIANGULAR`, `TRIANGULAR`,
   `LOG-UNIFORM` and `UNIFORM` (and the `LOG_` spellings).
+- A study now queues a results collector behind its Navigate runs. Once
+  every run has succeeded, it merges their results files (`.parquet`) into
+  `<output_dir>.parquet` next to the output directory, which Lantern shows
+  as ensembles: a realization `<scenario>_sampleNNN` joins the ensemble
+  `<scenario>`. It succeeds without writing anything when the runs wrote no
+  results files. `horizon --collect-results DIR` runs it by hand, with a
+  progress bar. Reads Navigate results schema 1 and merges 1000 basecase
+  runs in about 20 s. Adds `pyarrow` and `tqdm` as dependencies.
 
 ### Changed
 - Stricter `.hor` parser. Unknown keys in parameter blocks, `if` bodies and

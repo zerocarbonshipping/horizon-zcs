@@ -1,26 +1,23 @@
-# Example Horizon configuration: fuel cost uncertainty study.
+# Example Horizon study: fuel cost uncertainty.
 #
-# This example samples three uncertain parameters across two policy scenarios
-# and stops after sampling (SampleOnly = TRUE), so it runs without Navigate or
-# pueue installed. It writes the sampled values and diagnostic plots to the
-# output folder.
+# This example samples three uncertain parameters across two policy scenarios.
+# `horizon check` and `horizon run --dry-run` work on it without Navigate or a
+# queue; template.unc is a sketch, not a runnable Navigate deck.
 #
-# To turn it into a real study: point UncFilePath at a tokenized copy of your
-# own Navigate simulation file, set SampleOnly = FALSE, and make sure the
-# pueue daemon is running.
+# To turn it into a real study: point UncFilePath at your own Navigate deck with
+# %NAME% placeholders and run `horizon run fuel_cost_study.hor`, here or through
+# a queue (`--command pueue`).
 
-# Every block below takes part in the study. The block name is the token used
-# in the template (%POLICY%, %FUEL_PRICE%, ...). Set active = FALSE to fix a
+# Every block below takes part in the study. The block name is the placeholder
+# in the deck (%POLICY%, %FUEL_PRICE%, ...). Set active = FALSE to fix a
 # parameter at its default.
 
 ScenarioParameter "POLICY" {
-    name = "Policy scenario"
     default = "baseline"
     values = ["baseline", "carbon_levy"]
 }
 
 ContinuousParameter "FUEL_PRICE" {
-    name = "Fuel price multiplier"
     default = 1.0
     low_val = 0.8
     high_val = 1.5
@@ -35,7 +32,6 @@ ContinuousParameter "FUEL_PRICE" {
 
 # No default: sample_1 uses mid_val
 ContinuousParameter "DEMAND_GROWTH" {
-    name = "Demand growth rate"
     low_val = 0.01
     mid_val = 0.025
     high_val = 0.04
@@ -43,7 +39,6 @@ ContinuousParameter "DEMAND_GROWTH" {
 }
 
 DiscreteParameter "RENEWAL" {
-    name = "Fleet renewal rate"
     default = 0.05
     values = [0.03, 0.05, 0.08]
     probabilities = [0.25, 0.5, 0.25]
@@ -51,9 +46,8 @@ DiscreteParameter "RENEWAL" {
 
 Horizon {
     UncFilePath = "template.unc"
-    OutputPath = "output/samples.csv"
+    OutputPath = "output"
     NumberOfSamples = 25
     SamplingMethod = LHS
     RandomSeed = 42
-    SampleOnly = TRUE
 }
