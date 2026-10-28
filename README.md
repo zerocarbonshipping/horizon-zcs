@@ -112,7 +112,9 @@ opens and compares:
   fuel-related expenses (weighted 0.4, 0.3, 0.2 and 0.1). It is one real run,
   so its stacked plots add up.
 - `<label>_median`, `<label>_p05`, `<label>_p95`: for each result row and
-  date, the median and the 5th and 95th percentiles over the samples.
+  date, the median and the 5th and 95th percentiles over the samples. The
+  file's metadata names them per label under `summaries`, as `median`, `low`
+  and `high`, the way Lantern finds them.
 
 Percentiles do not add up, so where a plot sums rows (all fleets of a fuel,
 say), the band of the sum is wider than the true band. `collect` deletes

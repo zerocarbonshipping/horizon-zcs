@@ -31,7 +31,8 @@ after this block are superseded where they conflict.
 - `horizon collect` compacts the study into the archive `<study>_archive.parquet` with every sample,
   and the Lantern file `<study>.parquet`, both in the study folder, with four runs per scenario
   combination: the representative sample (Lantern's former rule) and the median, 5th and 95th
-  percentile of each row and date over the samples. A 300-sample combination of the basecase takes
+  percentile of each row and date over the samples, which its metadata names per combination under
+  `summaries` (`median`, `low`, `high`). A 300-sample combination of the basecase takes
   about 30 s and 2 GB. `parquets/` is deleted once both files are verified.
 - Runs are named `<label>_sample<NNN>`, padded to the sample count; labels must be unique and fit in
   file names.
@@ -88,7 +89,7 @@ after this block are superseded where they conflict.
   as ensembles: a realization `<scenario>_sampleNNN` joins the ensemble
   `<scenario>`. It succeeds without writing anything when the runs wrote no
   results files. `horizon --collect-results DIR` runs it by hand, with a
-  progress bar. Reads Navigate results schema 3 and merges 1000 basecase
+  progress bar. Reads Navigate results schema 1 and merges 1000 basecase
   runs in about 20 s. Adds `pyarrow` and `tqdm` as dependencies.
 
 ### Changed

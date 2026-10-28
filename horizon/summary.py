@@ -30,9 +30,10 @@ REPRESENTATIVE_WEIGHTS = (
 _WEIGHTED = pa.array([attribute for _, attributes in REPRESENTATIVE_WEIGHTS for attribute in attributes])
 _LINE = ("attribute", "node", "key1", "key2")
 
-# the band Lantern drew around an ensemble's median, and the runs that carry the summary
+# the band Lantern drew around an ensemble's median, and the suffixes of the runs that carry the summary, by the
+# column Lantern reads each into
 BAND = (0.05, 0.95)
-SUMMARY_RUNS = ("median", "p05", "p95")
+SUMMARY_RUNS = {"median": "median", "low": "p05", "high": "p95"}
 _ROW = ("kind", "node", "attribute", "key1", "key2", "date")
 
 
@@ -122,8 +123,13 @@ def summaries(files: list[Path], label: str, layout: pa.Schema) -> list[pa.Table
     matrix.sort(axis=1)
     counts = np.count_nonzero(~np.isnan(matrix), axis=1)
     keys = rows.drop("position").to_arrow()
-    return [as_written(keys.append_column("value", pa.array(_quantile(matrix, counts, q))), layout,
-                       run=f"{label}_{name}") for name, q in zip(SUMMARY_RUNS, (0.5, *BAND))]
+    return [as_written(keys.append_column("value", pa.array(_quantile(matrix, counts, q))), layout, run=run)
+            for run, q in zip(summary_runs(label).values(), (0.5, *BAND))]
+
+
+def summary_runs(label: str) -> dict[str, str]:
+    """The runs that carry a scenario combination's summary, by column: median, low and high."""
+    return {column: f"{label}_{suffix}" for column, suffix in SUMMARY_RUNS.items()}
 
 
 def _quantile(matrix: np.ndarray, counts: np.ndarray, q: float) -> np.ndarray:

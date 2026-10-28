@@ -25,7 +25,7 @@ from horizon.study import Study
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 1
 METADATA_KEY = b"navigate"
 
 _PROVENANCE = ("deck", "navigate_version", "created", "params")

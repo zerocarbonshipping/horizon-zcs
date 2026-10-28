@@ -41,7 +41,7 @@ In `horizon/`:
 - `check.py`: `horizon check`.
 - `collect.py`: `horizon collect`, writing the archive and the Lantern file
   with `results.py` (reading and writing Navigate results files) and
-  `lantern.py` (the representative sample, the median and the band).
+  `summary.py` (the representative sample, the median and the band).
 
 ## What to contribute
 

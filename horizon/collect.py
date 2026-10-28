@@ -5,9 +5,9 @@
 
 <name>_archive.parquet is the archive: every row of every run, with the columns run (the scenario combination)
 and sample (the run id). <name>.parquet is for Lantern, which opens a file with a run column and one value per
-row and date in each run. It holds four runs per scenario combination (lantern.py): <label>, the representative
-sample, and <label>_median, <label>_p05 and <label>_p95. The folder of the per-run files goes only once both
-files are written and read back.
+row and date in each run. It holds four runs per scenario combination (summary.py): <label>, the representative
+sample, and <label>_median, <label>_p05 and <label>_p95, which its metadata names under summaries. The folder of
+the per-run files goes only once both files are written and read back.
 """
 
 from __future__ import annotations
@@ -19,9 +19,9 @@ import pyarrow as pa
 
 from horizon import __version__
 from horizon.exceptions import StudyError
-from horizon.lantern import BAND, SUMMARY_RUNS, representatives, summaries, weighted_rows
 from horizon.results import read_ahead, read_footers, read_results, verify_rows, write_results
 from horizon.study import Study
+from horizon.summary import BAND, SUMMARY_RUNS, representatives, summaries, summary_runs, weighted_rows
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +70,7 @@ def collect(study: Study, partial: bool = False) -> dict[str, str]:
     chosen = representatives(pa.concat_tables(weighted), available, runs)
     lantern_schema = layout.append(pa.field("run", pa.string()))
     lantern_metadata = {**base, "representatives": chosen, "band": list(BAND),
+                        "summaries": {label: summary_runs(label) for label in chosen},
                         "samples": {run_id: provenance[run_id] for run_id in chosen.values()}}
     expected = [sum(rows[run_id] for run_id in chosen.values())]
 
