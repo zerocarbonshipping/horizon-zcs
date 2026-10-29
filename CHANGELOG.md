@@ -19,13 +19,14 @@ after this block are superseded where they conflict.
   to any scheduler (`sbatch --wrap {cmd}`); without it the runs run in a local pool (`-j N`, one per
   CPU by default). Each run is one Navigate command; `run --dry-run` prints the study as `study.json`
   would hold it, but writes and runs nothing. `horizon.log` has the command of every run.
-- `run --command pueue` queues the runs in pueue and, after them, `horizon collect`, which starts once
-  every run has succeeded. With any other prefix, `--write-ids` writes what each submission printed
-  (the job id with `sbatch --parsable`) to `job_ids.txt`, for a collect job that waits on the runs.
-- `run --command pueue` passes `pueue add` only the environment a run needs (`PATH`, `HOME`, locale,
-  Python/conda, `ASSUMPTIONS_DATA_DIR`, Gurobi licensing, thread limits, pueue's config paths), as
-  pueue stores it in every task and rewrites its whole state on each add. `HORIZON_TASK_ENV=NAME,...`
-  adds variables, `--full-task-env` passes all of them; other prefixes always get the whole environment.
+- `run --after PREFIX` hands `horizon collect` to the scheduler after the runs, waiting on the job ids
+  their submissions printed: `{ids}` on its own is one argument per id (`pueue add -p --after {ids} --
+  {cmd}`), inside a word the ids joined by `:` (`sbatch --parsable --dependency=afterok:{ids} --wrap
+  {cmd}`). `--write-ids` writes what each submission printed to `job_ids.txt`.
+- Submissions pass their scheduler only the environment a run needs (`PATH`, `HOME`, locale,
+  Python/conda, `ASSUMPTIONS_DATA_DIR`, Gurobi licensing, thread limits, the scheduler client's config),
+  as pueue stores it in every task and rewrites its whole state on each add. `HORIZON_TASK_ENV=NAME,...`
+  adds variables, `--full-task-env` passes all of them.
 - Navigate fills in the `%NAME%` placeholders from `--set NAME=VALUE` (needs a Navigate with `--set`,
   `--name` and `--output-dir`); Horizon writes no `.nav` or `.inc` files.
 - The study folder, `OutputPath`, holds `study.json` (the settings and every run with its values), `logs/`
