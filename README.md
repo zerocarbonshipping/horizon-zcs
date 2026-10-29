@@ -118,11 +118,11 @@ opens and compares:
 
 Percentiles do not add up, so where a plot sums rows (all fleets of a fuel,
 say), the band of the sum is wider than the true band. `collect` deletes
-`parquets/` only once both files are written and read back. With
-`--command pueue`, the collect step is queued after the runs; otherwise run
-`horizon collect` once every run is done. It refuses while a run has no
-results, and `horizon collect --partial` compacts what there is and keeps
-the per-run results.
+`parquets/` only once both files are written and read back. With `--after`,
+the scheduler starts the collect step once the runs have succeeded;
+otherwise run `horizon collect` once every run is done. It refuses while a
+run has no results, and `horizon collect --partial` compacts what there is
+and keeps the per-run results.
 
 Horizon keeps no state about the runs. A run that fails shows where it ran:
 in the scheduler's status and log, or, without `--command`, in the summary
@@ -135,53 +135,60 @@ scheduler (e.g. `pueue restart <task>`), or take its command from
 
 Without `--command`, `horizon run` runs the study here, one run per CPU at a
 time (`-j N` to change that), and waits for it. With `--command`, it hands
-each run to a scheduler and returns.
-
-`--command pueue` queues each run as a pueue task labelled with its run id,
-and after them the task `<study>_collect`, which runs `horizon collect` once
-every run has succeeded. Words after `pueue` are options of `pueue add`, for
-both:
+each run to a scheduler and returns. Each run is one Navigate command, which
+the prefix gets with `{run}`, `{study}` and `{cmd}` filled in:
 
 ```bash
-horizon run my_study.hor --command pueue
-horizon run my_study.hor --command "pueue -g horizon"
-```
-
-pueue runs as many tasks at a time as the group allows (`pueue parallel 8`,
-or `-g` with a group of its own). If a run fails, pueue fails the collect
-task too; start the run again (`pueue restart <task>`) and, once it is done,
-run `horizon collect` yourself.
-
-pueue keeps the environment of `pueue add` with each task and rewrites its
-whole state on every add, so a shell's full environment slows every add as
-the queue grows. `--command pueue` therefore passes on only what a run needs:
-`PATH`, `HOME`, the locale, the Python or conda environment,
-`ASSUMPTIONS_DATA_DIR`, Gurobi's licensing, thread limits and what the pueue
-client needs to find its daemon. `HORIZON_TASK_ENV=NAME1,NAME2` passes more
-variables, `--full-task-env` the whole environment, and `--dry-run` lists
-what the tasks would get. Other prefixes pass on the whole environment.
-
-Any other prefix hands over the runs only. Each run is one Navigate command,
-which the prefix gets with `{run}`, `{study}` and `{cmd}` filled in:
-
-```bash
-horizon run my_study.hor --command "sbatch --parsable --job-name {run} --wrap {cmd}" --write-ids
+horizon run my_study.hor --command "pueue add -p -g horizon --label {run} -- {cmd}"
+horizon run my_study.hor --command "sbatch --parsable --job-name {run} --wrap {cmd}"
 ```
 
 `{cmd}` is the Navigate command as one quoted argument, for schedulers that
-take a command string (`sbatch --wrap`); without it, the command's words are
-appended to the prefix. `--write-ids` writes what each submission prints to
-`job_ids.txt` in the study folder, one line per run; asked for just the job
-id (`sbatch --parsable`), that is the list a collect job waits on:
+take a command string (`pueue add -- {cmd}`, `sbatch --wrap {cmd}`); without
+it, the command's words are appended to the prefix. Groups, partitions,
+priorities and labels are the scheduler's own options, so they go in the
+prefix (`pueue add -g horizon`, `sbatch -p short`).
+
+`--after PREFIX` then hands `horizon collect` to the scheduler the same way,
+waiting on the job ids the runs' submissions printed, so ask the scheduler
+for just the id (`pueue add -p`, `sbatch --parsable`; a `;` and the cluster
+after it are dropped). `{ids}` on its own becomes one argument per id, as
+`pueue add --after` takes them; inside a word, the ids joined by `:`, as
+slurm's `--dependency=afterok:` takes them:
 
 ```bash
-sbatch --dependency=afterok:$(paste -sd: output/job_ids.txt) --wrap "horizon collect my_study.hor"
+horizon run my_study.hor --command "pueue add -p -g horizon --label {run} -- {cmd}" \
+                         --after "pueue add -p -g horizon --label my_study_collect --after {ids} -- {cmd}"
+horizon run my_study.hor --command "sbatch --parsable --job-name {run} --wrap {cmd}" \
+                         --after "sbatch --parsable --kill-on-invalid-dep=yes --dependency=afterok:{ids} --wrap {cmd}"
 ```
 
-`horizon.log` pairs each run id with what its submission printed, with or
-without `--write-ids`. Either way, the command names the `navigate` that
-`horizon run` found, so the queue's machines need the same environment, and
-the study folder on a disk they share.
+pueue needs the `--` before `{cmd}`, as `--after` takes every word up to it.
+If a run fails, pueue fails the collect step, and slurm cancels it with
+`--kill-on-invalid-dep=yes` (without, it stays pending); start the run again
+(`pueue restart <task>`, or its command from `horizon.log`) and, once it is
+done, run `horizon collect` yourself. A slurm dependency is one argument,
+which Linux caps at 128 kB, some 15 000 job ids; and whether a run that ended
+and left slurm's memory (`MinJobAge`) before the collect step was submitted
+still counts as done depends on the Slurm version, so try it on your cluster.
+
+`--write-ids` writes what each submission printed to `job_ids.txt` in the
+study folder, one line per run, e.g. for a post-processing job of your own;
+`horizon.log` pairs each run id with what its submission printed either way.
+
+Every submission passes its scheduler only what a run needs: `PATH`, `HOME`,
+the locale, the Python or conda environment, `ASSUMPTIONS_DATA_DIR`, Gurobi's
+licensing, thread limits and what the scheduler's client needs to find its
+daemon (`PUEUE_CONFIG_PATH`, `SLURM_CONF`, ...). pueue keeps the environment
+of `pueue add` with each task and rewrites its whole state on every add, so a
+shell's full environment slows every add as the queue grows; slurm hands it
+to the job. `HORIZON_TASK_ENV=NAME1,NAME2` passes more variables (e.g.
+`SBATCH_ACCOUNT`, or what `module load` sets), `--full-task-env` the whole
+environment, and `--dry-run` lists what the submissions would get.
+
+The command names the `navigate` that `horizon run` found, so the queue's
+machines need the same environment, and the study folder on a disk they
+share.
 
 ### Commands
 
@@ -189,7 +196,7 @@ See `horizon <command> --help` for the full list.
 
 | Command | Description |
 |---------|-------------|
-| `run STUDY.hor` | Sample the study, write its study folder, and start its runs. `--command PREFIX` hands them to a queue (`pueue` also queues the collect step and passes on only the environment a run needs, all of it with `--full-task-env`; `--write-ids` keeps the job ids of any other prefix in `job_ids.txt`); `-j N` runs N at a time here (default: one per CPU); `--samples N` replaces `NumberOfSamples` without editing the file; `--navigate "ARGS"` adds arguments to every Navigate run (e.g. `"-s -d ./assumptions"`; a single flag as `--navigate=-s`); `--dry-run` prints the study as `study.json` would hold it and logs how the first run would start, but writes and runs nothing. A study run again clears its logs and the results of its earlier runs first. |
+| `run STUDY.hor` | Sample the study, write its study folder, and start its runs. `--command PREFIX` hands them to a queue, passing on only the environment a run needs (all of it with `--full-task-env`); `--after PREFIX` then hands over the collect step, waiting on their job ids (`--write-ids` keeps those in `job_ids.txt`); `-j N` runs N at a time here (default: one per CPU); `--samples N` replaces `NumberOfSamples` without editing the file; `--navigate-flags "ARGS"` adds arguments to every Navigate run (e.g. `"-s -d ./assumptions"`; a single flag as `--navigate-flags=-s`); `--dry-run` prints the study as `study.json` would hold it and logs how the first run would start, but writes and runs nothing. A study run again clears its logs and the results of its earlier runs first. |
 | `check STUDY.hor` | Validate the study and cross-check the deck and the files it includes: every `%NAME%` has a parameter, unused parameters are warned about, and every include path resolves, for each scenario combination, to an existing file. Exits 0 (ok or warnings) or 1 (errors). |
 | `collect STUDY` | Compact the study once every run is ok; `--partial` compacts the runs that have results and keeps the per-run files. `STUDY` is the `.hor` file or its study folder. |
 

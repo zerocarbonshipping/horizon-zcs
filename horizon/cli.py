@@ -36,23 +36,28 @@ def _parser():
     run = commands.add_parser("run", help="sample a study and start its runs")
     run.add_argument("hor", help="the .hor file")
     run.add_argument("--command", metavar="PREFIX",
-                     help="hand each run to a scheduler through this prefix: 'pueue' (with options of pueue add, "
-                          "e.g. 'pueue -g horizon') queues the runs and, after them, `horizon collect`; any other "
-                          "prefix only hands over the runs, e.g. 'sbatch --parsable --wrap {cmd}' ({cmd}: the "
-                          "Navigate command as one argument, {run}: the run id, {study}: the study folder); without "
-                          "it the runs run here")
+                     help="hand each run to a scheduler through this prefix, e.g. 'pueue add -p --label {run} -- "
+                          "{cmd}' or 'sbatch --parsable --wrap {cmd}' ({cmd}: the Navigate command as one argument, "
+                          "else its words are appended; {run}: the run id; {study}: the study folder); without it "
+                          "the runs run here")
+    run.add_argument("--after", metavar="PREFIX",
+                     help="with --command: hand `horizon collect` to the scheduler through this prefix once the runs "
+                          "are submitted, waiting on the job ids their submissions print when asked for just the id "
+                          "(pueue add -p, sbatch --parsable): {ids} on its own is one argument per id ('pueue add -p "
+                          "--after {ids} -- {cmd}'), inside a word the ids joined by ':' ('sbatch --parsable "
+                          "--dependency=afterok:{ids} --wrap {cmd}'); {cmd}: the collect command; {study} as above")
     run.add_argument("--write-ids", action="store_true",
-                     help="with a --command other than pueue: write what each submission prints, the job id when "
-                          "asked for just that, to job_ids.txt in the study folder, for a job that waits on the runs")
+                     help="with --command: write what each submission prints, the job id when asked for just that, "
+                          "to job_ids.txt in the study folder")
     run.add_argument("--full-task-env", action="store_true",
-                     help="with --command pueue: give each task the whole environment, not only what a run needs "
+                     help="with --command: give each submission the whole environment, not only what a run needs "
                           "(PATH, HOME, Python, licensing, thread limits, ...; HORIZON_TASK_ENV=NAME,... adds "
                           "variables)")
     run.add_argument("-j", "--jobs", type=_positive_int, metavar="N",
                      help="runs at a time without --command (default: one per CPU, as a run uses one)")
     run.add_argument("--samples", type=_positive_int, metavar="N",
                      help="N samples instead of NumberOfSamples, without editing the file")
-    run.add_argument("--navigate", default="", metavar="ARGS",
+    run.add_argument("--navigate-flags", default="", metavar="ARGS",
                      help="extra arguments for every Navigate run, e.g. '-s -d ./assumptions --solver highs'")
     run.add_argument("--dry-run", action="store_true",
                      help="run and write nothing: print study.json, the settings and every run with its "
@@ -73,20 +78,9 @@ def main():
     """Entry point of the horizon command."""
     parser = _parser()
     args = parser.parse_args()
-    if getattr(args, "write_ids", False):
-        from horizon.launch import pueue_options
-
-        if args.command is None:
-            parser.error("--write-ids needs --command")
-
-        if pueue_options(args.command) is not None:
-            parser.error("--write-ids is for prefixes other than pueue, which queues the collect step itself")
-
-    if getattr(args, "full_task_env", False):
-        from horizon.launch import pueue_options
-
-        if args.command is None or pueue_options(args.command) is None:
-            parser.error("--full-task-env is for --command pueue; other prefixes pass on the whole environment")
+    for flag in ("after", "write_ids", "full_task_env"):
+        if getattr(args, flag, None) and args.command is None:
+            parser.error(f"--{flag.replace('_', '-')} needs --command")
 
     target = getattr(args, "hor", None) or getattr(args, "study", "horizon")
     logging.basicConfig(level=logging.INFO, format=_FORMAT)
@@ -116,7 +110,7 @@ def _run(args) -> int:
 
     rows = sample_runs(hor, number_of_samples)
     navigate = shutil.which("navigate")
-    navigate_args = shlex.split(args.navigate)
+    navigate_args = shlex.split(args.navigate_flags)
 
     if args.dry_run:
         config = study_config(hor, rows, navigate or "navigate", navigate_args)
@@ -125,7 +119,7 @@ def _run(args) -> int:
         logger.info("Dry run of %s: %d scenario combination(s) x %d samples = %d runs; nothing is written or run",
                     hor.name, len(hor.combinations), number_of_samples, len(rows))
 
-        dry_run(Study(hor.study_folder, config), args.command, args.full_task_env)
+        dry_run(Study(hor.study_folder, config), args.command, args.after, args.full_task_env)
         return 0
 
     if navigate is None:
@@ -137,7 +131,7 @@ def _run(args) -> int:
     logger.info("Study %s: %d scenario combination(s) x %d samples = %d runs in %s", hor.name,
                 len(hor.combinations), number_of_samples, len(rows), study.folder)
 
-    return start(study, args.command, args.jobs, args.write_ids, args.full_task_env)
+    return start(study, args.command, args.jobs, args.write_ids, args.after, args.full_task_env)
 
 
 def _check(args) -> int:
