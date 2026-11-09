@@ -95,8 +95,10 @@ def main():
 
 
 def _run(args) -> int:
+    from horizon.independence import describe, sampling_record, write_record
     from horizon.launch import dry_run, start
     from horizon.parser import read_hor
+    from horizon.sampling import ParameterSampler
     from horizon.study import Study, config_text, prepare_study, sample_runs, study_config
 
     hor = read_hor(args.hor)
@@ -108,7 +110,9 @@ def _run(args) -> int:
         logger.info("NumberOfSamples overridden by --samples: %d (the file says %d)", args.samples,
                     hor.number_of_samples)
 
-    rows = sample_runs(hor, number_of_samples)
+    sampler = ParameterSampler()
+    rows = sample_runs(hor, number_of_samples, sampler)
+    record = sampling_record(hor, number_of_samples, sampler)
     navigate = shutil.which("navigate")
     navigate_args = shlex.split(args.navigate_flags)
 
@@ -119,6 +123,7 @@ def _run(args) -> int:
         logger.info("Dry run of %s: %d scenario combination(s) x %d samples = %d runs; nothing is written or run",
                     hor.name, len(hor.combinations), number_of_samples, len(rows))
 
+        _log_record(record, describe(record))
         dry_run(Study(hor.study_folder, config), args.command, args.after, args.full_task_env)
         return 0
 
@@ -131,7 +136,18 @@ def _run(args) -> int:
     logger.info("Study %s: %d scenario combination(s) x %d samples = %d runs in %s", hor.name,
                 len(hor.combinations), number_of_samples, len(rows), study.folder)
 
+    write_record(study.folder, record)
+    _log_record(record, describe(record))
+
     return start(study, args.command, args.jobs, args.write_ids, args.after, args.full_task_env)
+
+
+def _log_record(record, line):
+    """Log the sampling check: a warning when the inputs do not vary independently."""
+    if record["independent"]:
+        logger.info("%s", line)
+    else:
+        logger.warning("%s", line)
 
 
 def _check(args) -> int:

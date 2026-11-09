@@ -15,6 +15,12 @@ Horizon 2: no generated simulation files, any queue, one compacted file per stud
 after this block are superseded where they conflict.
 
 ### Added
+- `FirstSample` in the Horizon block numbers the samples from that number, for a later round of a study: all
+  its samples are random draws, with no defaults or emissions samples. `study.json` records it.
+- `horizon run` checks that the sampled inputs vary independently and writes `sampling_check.json` to the
+  study folder: the largest rank correlation of any two inputs against 4.5/√draws, inputs drawn the same,
+  repeated draws, and the share of grid cells filled for every 2, 3 and 4 inputs at once. It logs a
+  warning when they do not vary independently; `--dry-run` logs the line.
 - Subcommands `horizon run | check | collect`. `run --command PREFIX` hands each run
   to any scheduler (`sbatch --wrap {cmd}`); without it the runs run in a local pool (`-j N`, one per
   CPU by default). Each run is one Navigate command; `run --dry-run` prints the study as `study.json`

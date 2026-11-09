@@ -28,10 +28,14 @@ class ParameterSampler:
     sampling can reuse one instance across all scenario combinations and pay
     for the (identical, seed-determined) LHS/MC matrix only once instead of
     recomputing it per combination.
+
+    draws is the last uniform draw matrix used (one column per parameter, one row per random sample),
+    for the independence check.
     """
 
     def __init__(self):
         self._draw_cache = {}
+        self.draws = None
 
     def _cached_draw(self, kind, dim, rows, seed, compute):
         """Return a seeded draw matrix from the cache, computing it once.
@@ -49,7 +53,7 @@ class ParameterSampler:
     # Public sampling APIs
     # ------------------------------------------------------------------
 
-    def sample_monte_carlo(self, parameters, num_samples, seed):
+    def sample_monte_carlo(self, parameters, num_samples, seed, first_sample=1):
         """
         Monte Carlo sampling.
 
@@ -57,15 +61,17 @@ class ParameterSampler:
         sample_2 = emissions_low
         sample_3 = emissions_high
         sample_4..N = random MC samples (uniform draws mapped through each parameter's PPF)
+
+        With first_sample above 1 (a later round of a study) all samples are random, numbered from first_sample.
         """
         np.random.seed(seed)
 
         def _compute_draws(remaining):
             return np.random.uniform(0.0, 1.0, size=(remaining, len(parameters)))
 
-        return self._sample(parameters, num_samples, seed, "mc", _compute_draws)
+        return self._sample(parameters, num_samples, seed, "mc", _compute_draws, first_sample)
 
-    def sample_latin_hypercube(self, parameters, num_samples, seed):
+    def sample_latin_hypercube(self, parameters, num_samples, seed, first_sample=1):
         """
         Latin Hypercube Sampling (LHS).
 
@@ -73,6 +79,8 @@ class ParameterSampler:
         sample_2 = emissions_low
         sample_3 = emissions_high
         sample_4..N = LHS samples (inverse CDF per parameter)
+
+        With first_sample above 1 (a later round of a study) all samples are random, numbered from first_sample.
         """
         np.random.seed(seed)
 
@@ -84,25 +92,30 @@ class ParameterSampler:
             from pyDOE3 import lhs
             return np.clip(lhs(len(parameters), samples=remaining, criterion="maximin", seed=seed), 0.0, 1.0)
 
-        return self._sample(parameters, num_samples, seed, "lhs", _compute_draws)
+        return self._sample(parameters, num_samples, seed, "lhs", _compute_draws, first_sample)
 
-    def _sample(self, parameters, num_samples, seed, kind, compute_draws):
+    def _sample(self, parameters, num_samples, seed, kind, compute_draws, first_sample=1):
         """Defaults and emissions samples followed by random samples from a (cached) draw matrix.
 
         Seeded matrices are cached so per-scenario sampling pays for the identical, seed-determined
-        draw (LHS maximin is O(n^2)) only once. The matrices are never mutated downstream.
+        draw (LHS maximin is O(n^2)) only once. The matrices are never mutated downstream. A later
+        round (first_sample above 1) has no defaults or emissions samples: round 1 has them.
         """
+        if first_sample < 1:
+            raise ValueError(f"FirstSample must be at least 1, got {first_sample}")
+
         self._normalize_probabilities(parameters)
 
-        simulation_sets = self._build_base_simulation_sets(parameters, num_samples)
+        simulation_sets = self._build_base_simulation_sets(parameters, num_samples) if first_sample == 1 else []
         remaining = num_samples - len(simulation_sets)
 
         if remaining <= 0:
             return simulation_sets
 
         draws = self._cached_draw(kind, len(parameters), remaining, seed, lambda: compute_draws(remaining))
+        self.draws = draws
 
-        start = len(simulation_sets)
+        start = first_sample - 1 + len(simulation_sets)
         for i in range(remaining):
             sample = {"sample": f"sample_{start + i + 1}"}
 

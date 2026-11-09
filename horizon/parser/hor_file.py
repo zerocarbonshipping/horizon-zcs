@@ -17,7 +17,7 @@ from horizon.parser.scenarios import Combination, combinations
 from horizon.parser.syntax import Block, HorizonBlock, parse_text
 from horizon.parser.values import as_count, as_text, error_at, keyed
 
-_HORIZON_KEYS = ("UncFilePath", "OutputPath", "NumberOfSamples", "SamplingMethod", "RandomSeed")
+_HORIZON_KEYS = ("UncFilePath", "OutputPath", "NumberOfSamples", "SamplingMethod", "RandomSeed", "FirstSample")
 
 SAMPLING_METHODS = ("LHS", "MC")
 DEFAULT_SEED = 69
@@ -34,6 +34,8 @@ class HorFile:
     number_of_samples: int
     sampling_method: str
     random_seed: int
+    # the number of the first sample; above 1, a later round of a study with only random samples
+    first_sample: int
     scenario_parameters: list
     parameters: list
     combinations: list[Combination]
@@ -103,4 +105,5 @@ def _settings(horizon: HorizonBlock, path: Path, where: str) -> dict:
         "number_of_samples": as_count(entries["NumberOfSamples"], where, 1),
         "sampling_method": method,
         "random_seed": as_count(entries["RandomSeed"], where, 0) if "RandomSeed" in entries else DEFAULT_SEED,
+        "first_sample": as_count(entries["FirstSample"], where, 1) if "FirstSample" in entries else 1,
     }

@@ -91,6 +91,7 @@ block form is equally valid (see [`docs/configuration.md`](docs/configuration.md
 | Path | What |
 |------|------|
 | `output/study.json` | the deck, the navigate command and its arguments, where the study came from, and every run, one per line: its run id, scenario combination, sample number and the value of every token |
+| `output/sampling_check.json` | do the sampled inputs vary independently: the largest rank correlation of any two inputs against its limit (4.5/√draws), inputs drawn the same, repeated draws, and the share of grid cells filled for every 2, 3 and 4 inputs at once; `horizon run` logs a warning when they do not |
 | `output/logs/` | Navigate's log of each run and Horizon's own `horizon.log`, which has the command of each run; cleared when the study is run again |
 | `output/job_ids.txt` | with `--write-ids`: what the scheduler printed for each run, its job id when asked for just that; never deleted, only overwritten |
 | `output/parquets/<run_id>.parquet` | the results of one run; the folder is deleted once the study is compacted |

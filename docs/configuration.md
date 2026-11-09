@@ -73,10 +73,11 @@ prints that one line and exits 1.
 | Key | Required | Description |
 |-----|----------|-------------|
 | `UncFilePath` | yes | The Navigate deck with `%NAME%` placeholders. |
-| `OutputPath` | yes | The study folder, e.g. `output`: `study.json` with every run and its values, and the results and logs of the runs. It cannot be the folder of the `.hor` file. |
+| `OutputPath` | yes | The study folder, e.g. `output`: `study.json` with every run and its values, `sampling_check.json` (do the sampled inputs vary independently?), and the results and logs of the runs. It cannot be the folder of the `.hor` file. |
 | `NumberOfSamples` | yes | Samples per scenario combination. |
 | `SamplingMethod` | no | `LHS` (default) or `MC`. |
 | `RandomSeed` | no | Seed for reproducible sampling (default 69). |
+| `FirstSample` | no | The number of the first sample (default 1). Above 1 the study is a later round of another: all its samples are random draws, numbered from this one, with no defaults or emissions samples. Give it a new `RandomSeed` too, or it repeats the draws of the earlier round. |
 | `Include(...)` / `Exclude(...)` | no | Keep or drop scenario combinations, see below. |
 
 ### Parameter types

@@ -40,11 +40,12 @@ def format_value(value) -> str:
     return str(value)
 
 
-def sample_runs(hor: HorFile, number_of_samples: int) -> list[dict]:
+def sample_runs(hor: HorFile, number_of_samples: int, sampler: ParameterSampler | None = None) -> list[dict]:
     """Sample every scenario combination: one entry per run, its id, label and sample number, and its values.
 
     Each combination resolves its `if` overrides and samples with one shared draw matrix, so sample i of
     every combination comes from the same draw. The values are the text each token gets through --set.
+    Samples are numbered from FirstSample.
 
     Parameters
     ----------
@@ -52,14 +53,17 @@ def sample_runs(hor: HorFile, number_of_samples: int) -> list[dict]:
         The study.
     number_of_samples : int
         Samples per scenario combination.
+    sampler : ParameterSampler, optional
+        The sampler to use; afterwards its draws hold the draw matrix, for the independence check.
     """
-    sampler = ParameterSampler()
+    sampler = sampler or ParameterSampler()
     sample = sampler.sample_latin_hypercube if hor.sampling_method == "LHS" else sampler.sample_monte_carlo
-    width = max(3, len(str(number_of_samples)))
+    width = max(3, len(str(hor.first_sample + number_of_samples - 1)))
     rows = []
     for combination in hor.combinations:
         parameters = resolve_parameters_for_scenario(hor.parameters, combination.scenario_map)
-        for index, values in enumerate(sample(parameters, number_of_samples, seed=hor.random_seed), 1):
+        sets = sample(parameters, number_of_samples, seed=hor.random_seed, first_sample=hor.first_sample)
+        for index, values in enumerate(sets, hor.first_sample):
             rows.append({"run_id": f"{combination.label}_sample{index:0{width}d}", "run": combination.label,
                          "sample": index, "values": {**combination.scenario_map,
                                                      **{p.token: format_value(values[p.token]) for p in parameters}}})
@@ -152,6 +156,7 @@ def study_config(hor: HorFile, rows: list[dict], navigate: str, navigate_args: l
         "navigate_args": navigate_args,
         "sampling_method": hor.sampling_method,
         "random_seed": hor.random_seed,
+        "first_sample": hor.first_sample,
         "runs": rows,
     }
 
