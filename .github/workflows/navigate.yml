@@ -1,0 +1,58 @@
+# SPDX-FileCopyrightText: 2026 Fonden Mærsk Mc-Kinney Møller Center for Zero Carbon Shipping
+# SPDX-License-Identifier: Apache-2.0
+
+# Runs and collects a small study of Navigate's notebook case on Navigate's dev, so a change in the
+# results files Navigate writes shows here; also when this workflow itself changes.
+
+name: Navigate
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+    inputs:
+      navigate_ref:
+        description: Navigate branch, tag or commit
+        default: dev
+  pull_request:
+    paths:
+      - .github/workflows/navigate.yml
+
+jobs:
+  navigate:
+    name: Study on Navigate ${{ inputs.navigate_ref || 'dev' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      # a scheduled run checks out main otherwise
+      - name: Checkout Horizon
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'schedule' && 'dev' || github.ref }}
+
+      - name: Checkout Navigate
+        uses: actions/checkout@v6
+        with:
+          repository: zerocarbonshipping/navigate-zcs
+          ref: ${{ inputs.navigate_ref || 'dev' }}
+          path: navigate-zcs
+
+      # Navigate needs Python 3.13
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      - name: Install Navigate and Horizon
+        run: pip install ./navigate-zcs .
+
+      - name: Run and collect two samples of the notebook study
+        env:
+          ASSUMPTIONS_DATA_DIR: ${{ github.workspace }}/navigate-zcs/assumptions
+        run: |
+          cp -r navigate-zcs/docs/notebooks/notebook_1/copper_trade study
+          cd study
+          sed -i 's/NumberOfSamples = [0-9]*/NumberOfSamples = 2/' levers.hor
+          horizon run levers.hor
+          horizon collect levers.hor
