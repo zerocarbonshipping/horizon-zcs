@@ -43,6 +43,12 @@ after this block are superseded where they conflict.
   file names.
 
 ### Changed
+- `horizon collect` carries every key of the runs' metadata into both study files; it kept only
+  `units`, `constants`, `plant_fuel` and the provenance. Where runs differ on a key other than
+  `units`, it warns and keeps the first run's value. (#25)
+- A run of a results schema Horizon does not read stops `collect` with a message naming the version
+  and whether to upgrade Horizon or run it again with a newer Navigate; a study archive passed as a
+  run says so. (#25)
 - The `.hor` parser is a Lark grammar. Newlines are not significant, commas between entries are
   optional and values may be quoted or bare everywhere. `token` and `name` are gone (the block name is
   the token), as are `MaxParallelWorkers`, `Plot`, `SampleOnly` (use `horizon run --dry-run`), the

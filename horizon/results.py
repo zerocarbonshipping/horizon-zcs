@@ -29,10 +29,17 @@ SCHEMA_VERSION = 1
 METADATA_KEY = b"navigate"
 
 _PROVENANCE = ("deck", "navigate_version", "created", "params")
+# what a study's metadata takes from Horizon, from the runs' units or per run under samples, not merged
+_NOT_MERGED = ("schema_version", "study", "horizon_version", "samples", "representatives", "band", "summaries",
+               "units", *_PROVENANCE)
 
 
 def read_footers(study: Study, run_ids: list[str]) -> tuple[pa.Schema, dict, dict, dict]:
-    """Read the footers of the per-run files: their common layout, merged metadata, provenance and row counts."""
+    """Read the footers of the per-run files: their common layout, merged metadata, provenance and row counts.
+
+    The metadata carries every key of the runs' metadata that Horizon does not write itself. The runs must agree on units;
+    where they differ on another key, the first run's value is kept.
+    """
     layout = None
     metadata = {"schema_version": SCHEMA_VERSION, "units": {}, "constants": {}, "plant_fuel": {}}
     provenance, rows = {}, {}
@@ -53,11 +60,11 @@ def read_footers(study: Study, run_ids: list[str]) -> tuple[pa.Schema, dict, dic
         if clash:
             raise StudyError(f"'{run_id}' has other units for {', '.join(clash)}")
 
-        for key in ("constants", "plant_fuel"):
-            clash = _merge(metadata[key], meta.get(key, {}))
-            if clash:
-                logger.warning("'%s' has other %s for %s than the runs before it; the compacted files keep the "
-                               "first", run_id, key, ", ".join(clash))
+        carried = {key: value for key, value in meta.items() if key not in _NOT_MERGED}
+        clash = _merge(metadata, carried)
+        if clash:
+            logger.warning("'%s' has other metadata for %s than the runs before it; the compacted files keep the "
+                           "first", run_id, ", ".join(clash))
 
         provenance[run_id] = {key: meta[key] for key in _PROVENANCE if key in meta}
         rows[run_id] = footer.num_rows
@@ -66,14 +73,21 @@ def read_footers(study: Study, run_ids: list[str]) -> tuple[pa.Schema, dict, dic
 
 
 def _navigate_metadata(footer_metadata: dict, schema: pa.Schema, run_id: str) -> dict:
-    """The Navigate metadata of a single run's results file, or raise."""
+    """The Navigate metadata of a single run's results file, or raise saying what to upgrade."""
     try:
         meta = json.loads(footer_metadata[METADATA_KEY])
     except (KeyError, ValueError) as error:
         raise StudyError(f"'{run_id}' is not a Navigate results file") from error
 
-    if meta.get("schema_version") != SCHEMA_VERSION or "sample" in schema.names:
-        raise StudyError(f"'{run_id}' is not a single run with results schema {SCHEMA_VERSION}")
+    if "sample" in schema.names:
+        raise StudyError(f"'{run_id}' is a study archive, not a single run")
+
+    found = meta.get("schema_version")
+    if found != SCHEMA_VERSION:
+        newer = isinstance(found, int) and found > SCHEMA_VERSION
+        remedy = "upgrade Horizon" if newer else "run it again with a newer Navigate"
+        written = f"results schema {found}" if found is not None else "no results schema"
+        raise StudyError(f"'{run_id}' has {written}; this Horizon reads schema {SCHEMA_VERSION}: {remedy}")
 
     return meta
 

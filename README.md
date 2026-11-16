@@ -124,6 +124,16 @@ otherwise run `horizon collect` once every run is done. It refuses while a
 run has no results, and `horizon collect --partial` compacts what there is
 and keeps the per-run results.
 
+Both files follow Navigate's
+[results file](https://github.com/zerocarbonshipping/navigate-zcs/blob/dev/docs/reference_manual/results_file.md),
+with keys Horizon adds to its metadata: `study`, `horizon_version` and
+`samples`, the provenance of each run, and in the Lantern file
+`representatives`, `band` and `summaries`. `schema_version` is the version
+of Navigate's layout Horizon reads and writes; a run of another version stops
+`collect` with a message naming what to upgrade. Every other key of the runs'
+metadata is carried over: the runs must agree on `units`, and where they
+differ on another key the files keep the first run's value.
+
 Horizon keeps no state about the runs. A run that fails shows where it ran:
 in the scheduler's status and log, or, without `--command`, in the summary
 `horizon run` prints, grouped by the last line of each failed run's output.
