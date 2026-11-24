@@ -1,13 +1,20 @@
-# SPDX-FileCopyrightText: 2026 Fonden Mærsk Mc-Kinney Møller Center for Zero Carbon Shipping
-# SPDX-License-Identifier: Apache-2.0
-
-*.pyc
+# Python and packaging
 __pycache__/
-.idea/
-.claude/
-.venv/
+*.py[cod]
 build/
 dist/
 *.egg-info/
+.venv/
+venv/
+
+# tools
+.idea/
+.vscode/
+.claude/
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+
+# what the example study writes when it is run for real
 examples/**/output/
 examples/**/*.parquet

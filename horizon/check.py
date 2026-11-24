@@ -1,6 +1,3 @@
-# SPDX-FileCopyrightText: 2026 Fonden Mærsk Mc-Kinney Møller Center for Zero Carbon Shipping
-# SPDX-License-Identifier: Apache-2.0
-
 """
 Static checks of a study for `horizon check`.
 
@@ -9,18 +6,25 @@ it includes: every %token% must have a parameter, every parameter should be used
 resolve, for each scenario combination, to an existing file. Nothing is sampled, written or run.
 """
 
+from __future__ import annotations
+
 import os
 import re
+from pathlib import Path
+from typing import TYPE_CHECKING
 
 from horizon.exceptions import HorizonError, error_line
 from horizon.parser import read_hor
 
-_TOKEN_RE = re.compile(r'%([A-Za-z0-9_]+)%')
+if TYPE_CHECKING:
+    from horizon.parser import Combination, HorFile
+
+_TOKEN_RE = re.compile(r"%([A-Za-z0-9_]+)%")
 _INCLUDE_RE = re.compile(r'^\s*Include\s*"([^"]*)"')
 _BUILTIN_TOKENS = {"SCENARIO"}
 
 
-def run_check(hor_file):
+def run_check(hor_file: str) -> tuple[str, int]:
     """
     Check a .hor file and the simulation files it names.
 
@@ -44,34 +48,36 @@ def run_check(hor_file):
 
     verdict = "failed" if errors else "ok"
     runs = len(hor.combinations) * hor.number_of_samples
-    summary = (f"{hor_file}: {verdict}: {len(hor.parameters)} sample parameters, {len(hor.scenario_parameters)} "
-               f"scenario parameters, {len(hor.combinations)} scenario combinations, {runs} runs, {len(errors)} "
-               f"errors, {len(warnings)} warnings")
+    summary = (
+        f"{hor_file}: {verdict}: {len(hor.parameters)} sample parameters, {len(hor.scenario_parameters)} "
+        f"scenario parameters, {len(hor.combinations)} scenario combinations, {runs} runs, {len(errors)} "
+        f"errors, {len(warnings)} warnings"
+    )
 
     return "\n".join(errors + warnings + [summary]) + "\n", 1 if errors else 0
 
 
-def _strip_comment(line):
+def _strip_comment(line: str) -> str:
     """Remove a `#` comment running to end of line, unless the `#` is inside a quoted string."""
-    quote = None
+    quote: str | None = None
     for index, character in enumerate(line):
         if quote:
             if character == quote:
                 quote = None
         elif character in ('"', "'"):
             quote = character
-        elif character == '#':
-            return line[:index].rstrip() + '\n'
+        elif character == "#":
+            return line[:index].rstrip() + "\n"
     return line
 
 
-def _template_lines(path):
-    """Lines of a .unc or .inc file with comments removed (line numbers are kept)."""
-    with open(path, 'r', encoding='utf-8') as file:
+def _template_lines(path: str | Path) -> list[str]:
+    """Read the lines of a .unc or .inc file with comments removed (line numbers are kept)."""
+    with Path(path).open("r", encoding="utf-8") as file:
         return [_strip_comment(line) for line in file]
 
 
-def _expand_include(raw_path, combinations):
+def _expand_include(raw_path: str, combinations: list[Combination]) -> tuple[list[tuple[str, str]], list[str]]:
     """
     Resolve the tokens of an include path for every scenario combination the study runs.
 
@@ -83,25 +89,30 @@ def _expand_include(raw_path, combinations):
     if unknown:
         return [], unknown
 
-    resolved = {}
+    resolved: dict[str, str] = {}
     for combination in combinations:
-        path = _TOKEN_RE.sub(lambda match: combination.scenario_map[match.group(1)], raw_path)
+        path = _fill_tokens(raw_path, combination.scenario_map)
         resolved.setdefault(path, combination.label if tokens else "")
     return list(resolved.items()), []
 
 
-def _check_deck(hor_file, hor):
+def _fill_tokens(text: str, values: dict[str, str]) -> str:
+    """Replace each %token% in text with its value."""
+    return _TOKEN_RE.sub(lambda match: values[match.group(1)], text)
+
+
+def _check_deck(hor_file: str, hor: HorFile) -> tuple[list[str], list[str]]:
     """Cross-check the .unc file and its includes against the parameters; returns (errors, warnings)."""
-    errors = []
-    warnings = []
+    errors: list[str] = []
+    warnings: list[str] = []
     unc_file = os.path.relpath(hor.unc_path)
     if not hor.unc_path.is_file():
         return [f"{hor_file}: error: UncFilePath '{unc_file}' not found"], warnings
 
-    used = {}  # token -> "file:line" of its first use
-    checked_paths = set()
+    used: dict[str, str] = {}  # token -> "file:line" of its first use
+    checked_paths: set[str] = set()
 
-    def note_tokens(path, lines):
+    def note_tokens(path: str, lines: list[str]) -> None:
         for line_number, line in enumerate(lines, 1):
             for token in _TOKEN_RE.findall(line):
                 used.setdefault(token, f"{path}:{line_number}")
@@ -116,17 +127,19 @@ def _check_deck(hor_file, hor):
         where = f"{unc_file}:{line_number}"
         resolved, unknown = _expand_include(include.group(1), hor.combinations)
         if unknown:
-            warnings.append(f"{where}: warning: include path '{include.group(1)}' uses "
-                            f"{', '.join('%' + t + '%' for t in unknown)}, which is not a scenario "
-                            "parameter; not checked")
+            warnings.append(
+                f"{where}: warning: include path '{include.group(1)}' uses "
+                f"{', '.join('%' + t + '%' for t in unknown)}, which is not a scenario "
+                "parameter; not checked"
+            )
 
         for raw_path, label in resolved:
-            path = os.path.normpath(os.path.join(hor.unc_path.parent, raw_path))
+            path = os.path.normpath(hor.unc_path.parent / raw_path)
             if path in checked_paths:
                 continue
 
             checked_paths.add(path)
-            if not os.path.isfile(path):
+            if not Path(path).is_file():
                 errors.append(f"{where}: error: include '{raw_path}'{' for ' + label if label else ''}: not found")
                 continue
 
@@ -137,9 +150,8 @@ def _check_deck(hor_file, hor):
         errors.append(f"{used[token]}: error: token %{token}% has no matching parameter in {hor_file}")
 
     # a scenario parameter that only drives `if` overrides needs no token in the simulation files
-    conditioned = {c["token"] for p in hor.parameters for ov in p.overrides for c in ov["conditions"]}
+    conditioned = {condition.token for p in hor.parameters for override in p.overrides for condition in override.conditions}
     for token in sorted(defined - set(used) - conditioned):
-        warnings.append(f"{hor_file}: warning: parameter '{token}' is not used in {unc_file} "
-                        "or the files it includes")
+        warnings.append(f"{hor_file}: warning: parameter '{token}' is not used in {unc_file} or the files it includes")
 
     return errors, warnings

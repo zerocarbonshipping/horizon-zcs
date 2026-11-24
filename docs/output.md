@@ -1,8 +1,3 @@
-<!--
-SPDX-FileCopyrightText: 2026 Fonden Mærsk Mc-Kinney Møller Center for Zero Carbon Shipping
-SPDX-License-Identifier: CC-BY-4.0
--->
-
 # The study folder
 
 `OutputPath` in the `.hor` file names the study folder, e.g. `output`,

@@ -1,12 +1,4 @@
-<!--
-SPDX-FileCopyrightText: 2026 Fonden Mærsk Mc-Kinney Møller Center for Zero Carbon Shipping
-SPDX-License-Identifier: CC-BY-4.0
--->
-
 # Horizon
-
-[![CI](https://github.com/zerocarbonshipping/horizon-zcs/actions/workflows/ci.yml/badge.svg)](https://github.com/zerocarbonshipping/horizon-zcs/actions/workflows/ci.yml)
-[![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSES/Apache-2.0.txt)
 
 Horizon runs uncertainty studies of
 [Navigate](https://github.com/zerocarbonshipping/navigate-zcs), the
@@ -24,12 +16,11 @@ study.hor ─▶ horizon run ─▶ navigate × N ─▶ horizon collect ─▶ 
 
 Horizon runs the `navigate` command on `PATH`, so it goes into the same
 environment as Navigate, in a version that takes `--set`, `--name` and
-`--output-dir`. Python 3.12 or newer.
+`--output-dir`. Python 3.13 or newer, as Navigate.
 
 ```bash
 conda activate nav          # the environment Navigate lives in
 pip install .               # from a clone of this repository
-pip install -e ".[dev]"     # for development, with the lint tools
 ```
 
 A queue such as [pueue](https://github.com/Nukesor/pueue) or slurm is
@@ -111,7 +102,21 @@ Horizon {
 - [`docs/output.md`](docs/output.md): the study folder, how the representative run is picked, failed runs
 - [`examples/uncertainty/`](examples/uncertainty/README.md): a small study to start from
 - [Navigate documentation](https://zerocarbonshipping.github.io/navigate-zcs/): the model and its deck format
-- [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`CODESTYLE.md`](CODESTYLE.md): how a change gets in
+
+## Contributing
+
+Horizon follows Navigate's
+[contributing guide](https://github.com/zerocarbonshipping/navigate-zcs/blob/dev/CONTRIBUTING.md#horizon-and-lantern) and
+[code style](https://github.com/zerocarbonshipping/navigate-zcs/blob/dev/CODESTYLE.md): pull requests target `dev`, and
+`CHANGELOG.md` records what a user would notice. Set up and check a change with:
+
+```bash
+pip install -e ".[dev]"
+ruff check horizon tests && ruff format --check horizon tests && mypy && pytest
+```
+
+The tests check and sample the example study, without Navigate. A change that alters sampled values
+explains the difference in its pull request. The package docstring, `horizon/__init__.py`, maps the modules.
 
 ## Disclaimer
 
@@ -128,9 +133,4 @@ own independent judgement when interpreting any outputs.
 
 Copyright 2026 Fonden Mærsk Mc-Kinney Møller Center for Zero Carbon Shipping.
 
-The `horizon` package and the build, tooling and editor-support files are
-licensed under the [Apache License 2.0](LICENSES/Apache-2.0.txt) (see also
-[LICENSE](LICENSE)); the documentation, examples and figures under
-[CC-BY-4.0](LICENSES/CC-BY-4.0.txt). Every file declares its license
-following the [REUSE specification](https://reuse.software/), see
-[REUSE.toml](REUSE.toml).
+Horizon is licensed under the [Apache License 2.0](LICENSE).
