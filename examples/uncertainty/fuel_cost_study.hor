@@ -6,7 +6,7 @@
 #
 # To turn it into a real study: point UncFilePath at your own Navigate deck with
 # %NAME% placeholders and run `horizon run fuel_cost_study.hor`, here or through
-# a queue (`--command pueue`).
+# a queue (`--command "pueue add -p -- {cmd}"`, see docs/queues.md).
 
 # Every block below takes part in the study. The block name is the placeholder
 # in the deck (%POLICY%, %FUEL_PRICE%, ...). Set active = FALSE to fix a

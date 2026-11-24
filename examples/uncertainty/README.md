@@ -35,8 +35,15 @@ nothing.
 To turn this into a real study, replace `template.unc` with a working
 Navigate deck from your own project with the uncertain values replaced by
 placeholders, and run `horizon run fuel_cost_study.hor`: here, one run per
-CPU at a time, or through a queue with `--command pueue`. Once the runs are
-done, `horizon collect fuel_cost_study.hor` compacts their results;
-`--command pueue` queues that step for you. See
+CPU at a time, or through a queue with `--command PREFIX`:
+
+```bash
+horizon run fuel_cost_study.hor --command "pueue add -p --label {run} -- {cmd}" \
+                                --after "pueue add -p --after {ids} -- {cmd}"
+```
+
+Once the runs are done, `horizon collect fuel_cost_study.hor` compacts their
+results; `--after` queues that step behind the runs. See
+[`docs/queues.md`](../../docs/queues.md) for running through a queue and
 [`docs/configuration.md`](../../docs/configuration.md) for the full `.hor`
 reference.
