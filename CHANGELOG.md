@@ -34,20 +34,28 @@ what to change in a 1.x `.hor` file.
   run, and `<study>.parquet` for Lantern: per scenario combination the
   representative run and the median, 5th and 95th percentile (`docs/output.md`).
 - `collect --partial` compacts the runs that have results so far.
+- `--version` prints the Horizon version, the oldest Navigate it runs and the
+  schemas it reads and writes.
+- `run` checks the Navigate on `PATH` before it starts a run: one older than
+  1.1.0, or one writing a results schema Horizon does not read, stops with a
+  message naming what to upgrade.
+- The study files carry `study_schema_version`, the version of what Horizon
+  adds to Navigate's layout, which Lantern checks.
 - `collect` carries every key of the runs' metadata into both study files,
   not only `units`, `constants`, `plant_fuel` and the provenance; where runs
   differ on a key other than `units`, it warns and keeps the first run's
-  value. (#26)
+  value. (#25)
 - A run of a results schema Horizon does not read stops `collect` with a
   message naming the version and whether to upgrade Horizon or run it again
-  with a newer Navigate; a study archive passed as a run says so. (#26)
+  with a newer Navigate, and the Navigate and Horizon versions; a study
+  archive passed as a run, or a run lacking a column, says so. (#25)
 - The one-line form of a parameter, such as
   `ContinuousParameter "x" = LOG-TRIANGULAR(0.6, 1.0, 1.8)` or
   `DiscreteParameter "y" = DISCRETE([3, 4, 5], [0.2, 0.5, 0.3]) { default = 4 }`.
 
 ### Changed
-- Horizon requires Python 3.13 or newer, and a Navigate that takes `--set`,
-  `--name` and `--output-dir`, installed in the same environment.
+- Horizon requires Python 3.13 or newer, and Navigate 1.1.0 or later,
+  installed in the same environment.
 - Each run is the study's deck with `--set NAME=VALUE` for every token; Horizon
   writes no `.nav` or `.inc` files.
 - `OutputPath` names the study folder: `study.json` with every run and its

@@ -18,7 +18,9 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from tqdm import tqdm
 
+from horizon import __version__
 from horizon.exceptions import StudyError
+from horizon.versions import SCHEMA_VERSION
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator
@@ -27,13 +29,15 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 1
 METADATA_KEY = b"navigate"
+# the columns of a results file Horizon reads
+COLUMNS = ("kind", "node", "attribute", "key1", "key2", "date", "value")
 
 _PROVENANCE = ("deck", "navigate_version", "created", "params")
 # what a study's metadata takes from Horizon, from the runs' units or per run under samples, not merged
 _NOT_MERGED = (
     "schema_version",
+    "study_schema_version",
     "study",
     "horizon_version",
     "samples",
@@ -105,7 +109,15 @@ def _navigate_metadata(footer_metadata: dict[bytes, bytes], schema: pa.Schema, r
         newer = isinstance(found, int) and found > SCHEMA_VERSION
         remedy = "upgrade Horizon" if newer else "run it again with a newer Navigate"
         written = f"results schema {found}" if found is not None else "no results schema"
-        raise StudyError(f"'{run_id}' has {written}; this Horizon reads schema {SCHEMA_VERSION}: {remedy}")
+        origin = f"written by Navigate {meta['navigate_version']}, " if "navigate_version" in meta else ""
+        raise StudyError(
+            f"'{run_id}' has {written}; this Horizon reads schema {SCHEMA_VERSION}: {remedy} "
+            f"({origin}read by Horizon {__version__})"
+        )
+
+    missing = [name for name in COLUMNS if name not in schema.names]
+    if missing:
+        raise StudyError(f"'{run_id}' lacks the columns {', '.join(missing)}")
 
     return meta
 

@@ -1,9 +1,9 @@
 name: Publish
 
-# PyPI refuses a version it already has: a push to main needs a new version in pyproject.toml
+# a published GitHub release publishes its tag; PyPI refuses a version it already has
 on:
-  push:
-    branches: [ main ]
+  release:
+    types: [ published ]
 
 jobs:
   ci:

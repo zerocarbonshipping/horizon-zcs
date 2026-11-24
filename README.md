@@ -15,8 +15,10 @@ study.hor ─▶ horizon run ─▶ navigate × N ─▶ horizon collect ─▶ 
 ## Install
 
 Horizon runs the `navigate` command on `PATH`, so it goes into the same
-environment as Navigate, in a version that takes `--set`, `--name` and
-`--output-dir`. Python 3.13 or newer, as Navigate.
+environment as Navigate 1.1.0 or later. `horizon run` checks that Navigate
+before it starts a run, and stops with a message naming what to upgrade;
+`horizon --version` names the Navigate and the schemas this Horizon works with.
+Python 3.13 or newer, as Navigate.
 
 ```bash
 conda activate nav          # the environment Navigate lives in

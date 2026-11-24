@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Fonden Mærsk Mc-Kinney Møller Center for Zero Carbon Shipping
 # SPDX-License-Identifier: Apache-2.0
 
-# Runs and collects a small study of Navigate's notebook case on Navigate's dev, so a change in the
-# results files Navigate writes shows here; also when this workflow itself changes.
+# Runs and collects a small study of Navigate's notebook case on Navigate's dev and its latest release, so
+# a change in what Navigate writes or takes shows here; also when this workflow itself changes.
 
 name: Navigate
 
@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
     inputs:
       navigate_ref:
-        description: Navigate branch, tag or commit
+        description: Navigate branch, tag or commit, or 'release' for the latest release
         default: dev
   pull_request:
     paths:
@@ -20,11 +20,26 @@ on:
 
 jobs:
   navigate:
-    name: Study on Navigate ${{ inputs.navigate_ref || 'dev' }}
+    name: Study on Navigate ${{ matrix.navigate }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        navigate: ${{ fromJSON(inputs.navigate_ref && format('["{0}"]', inputs.navigate_ref) || '["dev", "release"]') }}
 
     steps:
+      - name: Resolve the Navigate ref
+        id: navigate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF: ${{ matrix.navigate }}
+        run: |
+          if [ "$REF" = release ]; then
+            REF=$(gh release view --repo zerocarbonshipping/navigate-zcs --json tagName --jq .tagName)
+          fi
+          echo "ref=$REF" >> "$GITHUB_OUTPUT"
+
       # a scheduled run checks out main otherwise
       - name: Checkout Horizon
         uses: actions/checkout@v6
@@ -35,7 +50,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           repository: zerocarbonshipping/navigate-zcs
-          ref: ${{ inputs.navigate_ref || 'dev' }}
+          ref: ${{ steps.navigate.outputs.ref }}
           path: navigate-zcs
 
       # Navigate needs Python 3.13
