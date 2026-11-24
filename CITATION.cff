@@ -1,9 +1,6 @@
-# SPDX-FileCopyrightText: 2026 Fonden Mærsk Mc-Kinney Møller Center for Zero Carbon Shipping
-# SPDX-License-Identifier: CC-BY-4.0
-
 cff-version: 1.2.0
 title: Horizon
-abstract: "An uncertainty analysis tool for the Navigate maritime transition model"
+abstract: "Uncertainty studies of the Navigate maritime transition model, run through any queue"
 type: software
 license: Apache-2.0
 version: 1.0.1
@@ -13,6 +10,11 @@ authors:
   - given-names: Mathias
     family-names: Hintze
     email: mathias.hintze@zerocarbonshipping.com
+    affiliation: "Fonden Mærsk Mc-Kinney Møller Center for Zero Carbon Shipping"
+  - given-names: Julius
+    family-names: Thomas
+    email: julius.thomas@zerocarbonshipping.com
+    orcid: https://orcid.org/0009-0006-4512-7330
     affiliation: "Fonden Mærsk Mc-Kinney Møller Center for Zero Carbon Shipping"
   - given-names: "Frederik Winkel"
     family-names: Lehn

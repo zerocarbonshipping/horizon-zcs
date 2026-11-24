@@ -1,7 +1,5 @@
-# SPDX-FileCopyrightText: 2026 Fonden Mærsk Mc-Kinney Møller Center for Zero Carbon Shipping
-# SPDX-License-Identifier: Apache-2.0
-
-"""Navigate results files: the per-run files a study's runs write, and the compacted files written from them.
+"""
+Navigate results files: the per-run files a study's runs write, and the compacted files written from them.
 
 A results file is Parquet with a table of kind, node, attribute, key1, key2, date and value, and Navigate's
 metadata (schema version, units, constants, provenance) as JSON under the key navigate.
@@ -12,16 +10,20 @@ from __future__ import annotations
 import json
 import logging
 import os
-from collections.abc import Callable, Iterable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 import pyarrow.parquet as pq
 from tqdm import tqdm
 
 from horizon.exceptions import StudyError
-from horizon.study import Study
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterable, Iterator
+
+    from horizon.study import Study
 
 logger = logging.getLogger(__name__)
 
@@ -30,19 +32,32 @@ METADATA_KEY = b"navigate"
 
 _PROVENANCE = ("deck", "navigate_version", "created", "params")
 # what a study's metadata takes from Horizon, from the runs' units or per run under samples, not merged
-_NOT_MERGED = ("schema_version", "study", "horizon_version", "samples", "representatives", "band", "summaries",
-               "units", *_PROVENANCE)
+_NOT_MERGED = (
+    "schema_version",
+    "study",
+    "horizon_version",
+    "samples",
+    "representatives",
+    "band",
+    "summaries",
+    "units",
+    *_PROVENANCE,
+)
 
 
-def read_footers(study: Study, run_ids: list[str]) -> tuple[pa.Schema, dict, dict, dict]:
-    """Read the footers of the per-run files: their common layout, merged metadata, provenance and row counts.
+def read_footers(
+    study: Study, run_ids: list[str]
+) -> tuple[pa.Schema, dict[str, Any], dict[str, dict[str, Any]], dict[str, int]]:
+    """
+    Read the footers of the per-run files: their common layout, merged metadata, provenance and row counts.
 
     The metadata carries every key of the runs' metadata that Horizon does not write itself. The runs must agree on units;
     where they differ on another key, the first run's value is kept.
     """
     layout = None
-    metadata = {"schema_version": SCHEMA_VERSION, "units": {}, "constants": {}, "plant_fuel": {}}
-    provenance, rows = {}, {}
+    metadata: dict[str, Any] = {"schema_version": SCHEMA_VERSION, "units": {}, "constants": {}, "plant_fuel": {}}
+    provenance: dict[str, dict[str, Any]] = {}
+    rows: dict[str, int] = {}
     for run_id in run_ids:
         try:
             footer = pq.read_metadata(study.results(run_id))
@@ -63,8 +78,11 @@ def read_footers(study: Study, run_ids: list[str]) -> tuple[pa.Schema, dict, dic
         carried = {key: value for key, value in meta.items() if key not in _NOT_MERGED}
         clash = _merge(metadata, carried)
         if clash:
-            logger.warning("'%s' has other metadata for %s than the runs before it; the compacted files keep the "
-                           "first", run_id, ", ".join(clash))
+            logger.warning(
+                "'%s' has other metadata for %s than the runs before it; the compacted files keep the first",
+                run_id,
+                ", ".join(clash),
+            )
 
         provenance[run_id] = {key: meta[key] for key in _PROVENANCE if key in meta}
         rows[run_id] = footer.num_rows
@@ -72,10 +90,10 @@ def read_footers(study: Study, run_ids: list[str]) -> tuple[pa.Schema, dict, dic
     return layout, metadata, provenance, rows
 
 
-def _navigate_metadata(footer_metadata: dict, schema: pa.Schema, run_id: str) -> dict:
-    """The Navigate metadata of a single run's results file, or raise saying what to upgrade."""
+def _navigate_metadata(footer_metadata: dict[bytes, bytes], schema: pa.Schema, run_id: str) -> dict[str, Any]:
+    """Read the Navigate metadata of a single run's results file, or raise saying what to upgrade."""
     try:
-        meta = json.loads(footer_metadata[METADATA_KEY])
+        meta: dict[str, Any] = json.loads(footer_metadata[METADATA_KEY])
     except (KeyError, ValueError) as error:
         raise StudyError(f"'{run_id}' is not a Navigate results file") from error
 
@@ -92,9 +110,9 @@ def _navigate_metadata(footer_metadata: dict, schema: pa.Schema, run_id: str) ->
     return meta
 
 
-def _merge(into: dict, more: dict, prefix: str = "") -> list[str]:
+def _merge(into: dict[str, Any], more: dict[str, Any], prefix: str = "") -> list[str]:
     """Merge more into into, nested dicts key by key; returns the keys whose values disagree (into keeps its)."""
-    clash = []
+    clash: list[str] = []
     for key, value in more.items():
         if isinstance(value, dict) and isinstance(into.get(key), dict):
             clash += _merge(into[key], value, f"{prefix}{key}.")
@@ -115,11 +133,12 @@ def read_results(file: Path, layout: pa.Schema, **constants: str) -> pa.Table:
 
 
 def as_written(table: pa.Table, layout: pa.Schema, **constants: str) -> pa.Table:
-    """A table in the types of the per-run files, string columns as dictionaries, with a constant column per
-    keyword."""
+    """Cast a table to the types of the per-run files, string columns as dictionaries, with a constant column per keyword."""
     columns = [table[field.name].cast(field.type, safe=False) for field in layout]
-    columns = [column.dictionary_encode() if pa.types.is_string(field.type) else column
-               for column, field in zip(columns, layout)]
+    columns = [
+        column.dictionary_encode() if pa.types.is_string(field.type) else column
+        for column, field in zip(columns, layout, strict=True)
+    ]
     table = pa.table(columns, names=layout.names)
     for name, value in constants.items():
         table = table.append_column(name, constant_column(value, table.num_rows))
@@ -128,13 +147,15 @@ def as_written(table: pa.Table, layout: pa.Schema, **constants: str) -> pa.Table
 
 
 def constant_column(value: str, length: int) -> pa.DictionaryArray:
-    """A column of length times value, as a dictionary of that one value."""
+    """Make a column of length times value, as a dictionary of that one value."""
     return pa.DictionaryArray.from_arrays(pa.repeat(pa.scalar(0, pa.int32()), length), [value])
 
 
-def write_results(output: Path, schema: pa.Schema, metadata: dict, tables: Iterable[pa.Table], total: int,
-                  description: str) -> int:
-    """Stream tables into output, replacing it only once complete; returns the rows written.
+def write_results(
+    output: Path, schema: pa.Schema, metadata: dict[str, Any], tables: Iterable[pa.Table], total: int, description: str
+) -> int:
+    """
+    Stream tables into output, replacing it only once complete; returns the rows written.
 
     Parameters
     ----------
@@ -155,8 +176,12 @@ def write_results(output: Path, schema: pa.Schema, metadata: dict, tables: Itera
     temporary = output.with_name(f".{output.name}.{os.getpid()}.tmp")
     output.parent.mkdir(parents=True, exist_ok=True)
 
-    dictionary_schema = pa.schema([field.with_type(pa.dictionary(pa.int32(), field.type))
-                                   if pa.types.is_string(field.type) else field for field in schema])
+    dictionary_schema = pa.schema(
+        [
+            field.with_type(pa.dictionary(pa.int32(), field.type)) if pa.types.is_string(field.type) else field
+            for field in schema
+        ]
+    )
     keyed = [name for name in ("run", "sample") if name in schema.names]
 
     # Encoded as Navigate writes a run: the labels, dates, run and sample repeat a few values; the floats are
@@ -165,13 +190,19 @@ def write_results(output: Path, schema: pa.Schema, metadata: dict, tables: Itera
     # back as strings, and the metadata is added to the file by hand.
     written = 0
     try:
-        with pq.ParquetWriter(temporary, dictionary_schema, compression="zstd",
-                              use_dictionary=[name for name in schema.names if name != "value"],
-                              column_encoding={"value": "BYTE_STREAM_SPLIT"},
-                              write_statistics=keyed, store_schema=False) as writer:
+        with pq.ParquetWriter(
+            temporary,
+            dictionary_schema,
+            compression="zstd",
+            use_dictionary=[name for name in schema.names if name != "value"],
+            column_encoding={"value": "BYTE_STREAM_SPLIT"},
+            write_statistics=keyed,
+            store_schema=False,
+        ) as writer:
             # shown only on a terminal, so the log of a queued run stays clean
-            for table in tqdm(tables, total=total, desc=description, unit="run", colour="green",
-                              dynamic_ncols=True, disable=None):
+            for table in tqdm(
+                tables, total=total, desc=description, unit="run", colour="green", dynamic_ncols=True, disable=None
+            ):
                 writer.write_table(table)
                 written += table.num_rows
 
@@ -180,7 +211,7 @@ def write_results(output: Path, schema: pa.Schema, metadata: dict, tables: Itera
         temporary.unlink(missing_ok=True)
         raise
 
-    os.replace(temporary, output)
+    Path(temporary).replace(output)
     return written
 
 
@@ -188,12 +219,12 @@ def verify_rows(output: Path, written: int, expected: int) -> None:
     """Read back the footer of a written file; its rows must be all the rows of its inputs."""
     rows = pq.read_metadata(output).num_rows
     if rows != expected or written != expected:
-        raise StudyError(f"{output} holds {rows} rows, but its runs have {expected}; the per-run files "
-                         "are kept")
+        raise StudyError(f"{output} holds {rows} rows, but its runs have {expected}; the per-run files are kept")
 
 
-def read_ahead(read: Callable, items: Iterable) -> Iterator[pa.Table]:
-    """Yield read(item) for each item in order, reading the next while the caller uses this one.
+def read_ahead[T](read: Callable[[T], pa.Table], items: Iterable[T]) -> Iterator[pa.Table]:
+    """
+    Yield read(item) for each item in order, reading the next while the caller uses this one.
 
     Reading and writing both release the GIL, so they overlap; one read is in flight at a time, so memory
     stays at two runs.
