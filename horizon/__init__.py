@@ -9,6 +9,7 @@ Horizon: uncertainty studies of the Navigate maritime transition model, run thro
 - study.py: the runs of a study and its folder.
 - launch.py: each run's Navigate command, run here or handed to a scheduler.
 - check.py: horizon check.
+- versions.py: the oldest Navigate Horizon runs, the schemas it reads and writes, and the check of the Navigate it runs.
 - collect.py: horizon collect, writing the archive and the Lantern file with results.py (reading and writing Navigate
   results files) and summary.py (the representative sample, the median and the band).
 """

@@ -20,6 +20,7 @@ from horizon import __version__
 from horizon.exceptions import StudyError
 from horizon.results import read_ahead, read_footers, read_results, verify_rows, write_results
 from horizon.summary import BAND, SUMMARY_RUNS, representatives, summaries, summary_runs, weighted_rows
+from horizon.versions import STUDY_SCHEMA_VERSION
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -58,7 +59,12 @@ def collect(study: Study, partial: bool = False) -> dict[str, str]:
         raise StudyError(f"no run of {study.folder} has results yet")
 
     layout, metadata, provenance, rows = read_footers(study, available)
-    base = {**metadata, "study": study.name, "horizon_version": __version__}
+    base = {
+        **metadata,
+        "study_schema_version": STUDY_SCHEMA_VERSION,
+        "study": study.name,
+        "horizon_version": __version__,
+    }
 
     weighted: list[pa.Table] = []
     archive_schema = layout.append(pa.field("run", pa.string())).append(pa.field("sample", pa.string()))

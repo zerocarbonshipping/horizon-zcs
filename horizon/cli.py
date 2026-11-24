@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from horizon.exceptions import HorizonError, StudyError, error_line
+from horizon.versions import check_navigate, version_line
 
 if TYPE_CHECKING:
     from horizon.study import Study
@@ -35,7 +36,10 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="horizon",
         description="Uncertainty studies of Navigate: sample a .hor study, run it through any queue, compact it.",
+        # keeps the --version line on one line
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+    parser.add_argument("--version", action="version", version=version_line())
     commands = parser.add_subparsers(dest="command_name", required=True, metavar="COMMAND")
 
     run = commands.add_parser("run", help="sample a study and start its runs")
@@ -159,6 +163,8 @@ def _run(args: argparse.Namespace) -> int:
 
     if navigate is None:
         raise StudyError("navigate is not on PATH; activate Navigate's environment")
+
+    check_navigate(navigate)
 
     study = prepare_study(hor, rows, navigate, navigate_args)
     _log_to(study.horizon_log)
