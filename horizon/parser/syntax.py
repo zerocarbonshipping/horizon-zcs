@@ -1,12 +1,13 @@
-# SPDX-FileCopyrightText: 2026 Fonden Mærsk Mc-Kinney Møller Center for Zero Carbon Shipping
-# SPDX-License-Identifier: Apache-2.0
+"""
+The syntax of a .hor file.
 
-"""The syntax of a .hor file: its text as plain records with their line numbers, which the rest of the parser
-gives meaning."""
+Its text as plain records with their line numbers, which the rest of the parser gives meaning.
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
 
 from lark import Lark, Token, Transformer, v_args
 from lark.exceptions import UnexpectedCharacters, UnexpectedToken, VisitError
@@ -14,13 +15,21 @@ from lark.lexer import PatternStr
 
 from horizon.exceptions import ParseError
 
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+
+    from lark.tree import Meta
+
+# a value as the file writes it: text, or a list of values
+type Text = str | list[Text]
+
 
 @dataclass
 class Entry:
     """`key = value`; a value is text or a list of values."""
 
     key: str
-    value: str | list
+    value: Text
     line: int
 
 
@@ -29,15 +38,24 @@ class Call:
     """The one-line distribution call of a parameter, e.g. `= UNIFORM(0, 1)`."""
 
     name: str
-    args: list
+    args: list[Text]
     line: int
 
 
 @dataclass
-class Override:
-    """An `if` block: its conditions, as the sampler matches them, and its entries."""
+class Comparison:
+    """A condition of an `if` block as written: `token = value`, or `token in (values)` when among."""
 
-    conditions: list[dict]
+    token: str
+    values: list[Text]
+    among: bool
+
+
+@dataclass
+class IfBlock:
+    """An `if` block: its conditions and its entries."""
+
+    conditions: list[Comparison]
     entries: list[Entry]
     line: int
 
@@ -51,7 +69,7 @@ class Block:
     line: int
     call: Call | None = None
     entries: list[Entry] = field(default_factory=list)
-    overrides: list[Override] = field(default_factory=list)
+    overrides: list[IfBlock] = field(default_factory=list)
 
 
 @dataclass
@@ -73,13 +91,13 @@ class HorizonBlock:
 
 
 @v_args(meta=True)
-class _HorTransformer(Transformer):
+class _HorTransformer(Transformer[Token, list[Block | HorizonBlock]]):
     """Turn the parse tree into the records above."""
 
-    def start(self, meta, blocks):
+    def start(self, meta: Meta, blocks: list[Block | HorizonBlock]) -> list[Block | HorizonBlock]:
         return blocks
 
-    def parameter(self, meta, children):
+    def parameter(self, meta: Meta, children: list[Any]) -> Block:
         kind, name, *rest = children
         block = Block(str(kind), _unquote(name), meta.line)
         for part in rest:
@@ -87,56 +105,57 @@ class _HorTransformer(Transformer):
                 block.call = part
             else:
                 block.entries = [item for item in part if isinstance(item, Entry)]
-                block.overrides = [item for item in part if isinstance(item, Override)]
+                block.overrides = [item for item in part if isinstance(item, IfBlock)]
 
         return block
 
-    def call(self, meta, children):
+    def call(self, meta: Meta, children: list[Any]) -> Call:
         name, *args = children
         return Call(str(name).upper(), args, meta.line)
 
-    def body(self, meta, items):
+    def body(self, meta: Meta, items: list[Entry | IfBlock]) -> list[Entry | IfBlock]:
         return items
 
-    def override(self, meta, children):
-        conditions = [child for child in children if isinstance(child, dict)]
-        return Override(conditions, [child for child in children if isinstance(child, Entry)], meta.line)
+    def override(self, meta: Meta, children: list[Any]) -> IfBlock:
+        conditions = [child for child in children if isinstance(child, Comparison)]
+        return IfBlock(conditions, [child for child in children if isinstance(child, Entry)], meta.line)
 
-    def equals(self, meta, children):
+    def equals(self, meta: Meta, children: list[Any]) -> Comparison:
         token, value = children
-        return {"token": str(token), "op": "eq", "value": value}
+        return Comparison(str(token), [value], among=False)
 
-    def among(self, meta, children):
+    def among(self, meta: Meta, children: list[Any]) -> Comparison:
         token, *values = children
-        return {"token": str(token), "op": "in", "values": values}
+        return Comparison(str(token), values, among=True)
 
-    def horizon(self, meta, items):
-        return HorizonBlock([item for item in items if isinstance(item, Entry)],
-                            [item for item in items if isinstance(item, Rule)], meta.line)
+    def horizon(self, meta: Meta, items: list[Entry | Rule]) -> HorizonBlock:
+        return HorizonBlock(
+            [item for item in items if isinstance(item, Entry)], [item for item in items if isinstance(item, Rule)], meta.line
+        )
 
-    def include(self, meta, pairs):
+    def include(self, meta: Meta, pairs: list[Entry]) -> Rule:
         return Rule("Include", pairs, meta.line)
 
-    def exclude(self, meta, pairs):
+    def exclude(self, meta: Meta, pairs: list[Entry]) -> Rule:
         return Rule("Exclude", pairs, meta.line)
 
-    def entry(self, meta, children):
+    def entry(self, meta: Meta, children: list[Entry]) -> Entry:
         return children[0]
 
-    def pair(self, meta, children):
+    def pair(self, meta: Meta, children: list[Any]) -> Entry:
         key, value = children
         return Entry(str(key), value, key.line)
 
-    def number(self, meta, children):
+    def number(self, meta: Meta, children: list[Token]) -> str:
         return str(children[0])
 
-    def string(self, meta, children):
+    def string(self, meta: Meta, children: list[Token]) -> str:
         return _unquote(children[0])
 
-    def word(self, meta, children):
+    def word(self, meta: Meta, children: list[Token]) -> str:
         return str(children[0])
 
-    def list(self, meta, children):
+    def value_list(self, meta: Meta, children: list[Text]) -> list[Text]:
         return children
 
 
@@ -144,12 +163,14 @@ def _unquote(token: Token) -> str:
     return str(token)[1:-1]
 
 
-_PARSER = Lark.open_from_package("horizon.parser", "grammar.lark", parser="lalr", propagate_positions=True,
-                                 maybe_placeholders=False)
+_PARSER = Lark.open_from_package(
+    "horizon.parser", "grammar.lark", parser="lalr", propagate_positions=True, maybe_placeholders=False
+)
 
 # the text of each fixed-string terminal, e.g. LBRACE -> {
-_LITERALS = {terminal.name: terminal.pattern.value for terminal in _PARSER.terminals
-             if isinstance(terminal.pattern, PatternStr)}
+_LITERALS = {
+    terminal.name: terminal.pattern.value for terminal in _PARSER.terminals if isinstance(terminal.pattern, PatternStr)
+}
 
 
 def _describe(terminal: str) -> str:
@@ -160,12 +181,14 @@ def _describe(terminal: str) -> str:
     if terminal in _LITERALS:
         return f"'{_LITERALS[terminal]}'"
 
-    return {"WORD": "a name", "QUOTED_STRING": "a quoted string", "SIGNED_NUMBER": "a number",
-            "KIND": "a parameter block"}.get(terminal, terminal.lower())
+    return {"WORD": "a name", "QUOTED_STRING": "a quoted string", "SIGNED_NUMBER": "a number", "KIND": "a parameter block"}.get(
+        terminal, terminal.lower()
+    )
 
 
 def parse_text(text: str, file: str) -> list[Block | HorizonBlock]:
-    """Parse the text of a .hor file into its blocks.
+    """
+    Parse the text of a .hor file into its blocks.
 
     Parameters
     ----------
@@ -188,7 +211,7 @@ def parse_text(text: str, file: str) -> list[Block | HorizonBlock]:
         raise error.orig_exc from None
 
 
-def _syntax_error(file: str, line: int, got: str, expected) -> ParseError:
+def _syntax_error(file: str, line: int, got: str, expected: Iterable[str]) -> ParseError:
     *others, last = sorted({_describe(name) for name in expected}) or ["nothing"]
     listed = f"{', '.join(others)} or {last}" if others else last
     return ParseError(f"unexpected {got}, expected {listed}", f"{file}:{line}")

@@ -1,8 +1,3 @@
-<!--
-SPDX-FileCopyrightText: 2026 Fonden Mærsk Mc-Kinney Møller Center for Zero Carbon Shipping
-SPDX-License-Identifier: CC-BY-4.0
--->
-
 # Configuration reference
 
 A `.hor` file defines an uncertainty study. Lines starting with `#` are

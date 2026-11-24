@@ -1,13 +1,15 @@
-# SPDX-FileCopyrightText: 2026 Fonden Mærsk Mc-Kinney Møller Center for Zero Carbon Shipping
-# SPDX-License-Identifier: Apache-2.0
-
 name: CI
 
 on:
   push:
-    branches: [ main, dev ]
+    branches: [ dev ]
   pull_request:
+  workflow_call:
 
+# on main, every push is published, so none is cancelled
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.ref == 'refs/heads/main' && github.sha || '' }}
+  cancel-in-progress: true
 
 jobs:
   lint:
@@ -21,20 +23,22 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: '3.12'
+          python-version: '3.13'
 
-      - name: Install lint tools
-        run: pip install flake8 flake8-bugbear pep8-naming isort
+      - name: Install package with dev dependencies
+        run: pip install -e ".[dev]"
 
-      - name: Run flake8
-        run: flake8 horizon
+      - name: Run ruff
+        run: |
+          ruff check horizon tests
+          ruff format --check horizon tests
 
-      - name: Run isort
-        run: isort horizon --check-only --diff
+      - name: Run mypy
+        run: mypy
 
 
-  reuse:
-    name: REUSE compliance
+  build:
+    name: Build package
     runs-on: ubuntu-latest
 
     steps:
@@ -44,38 +48,44 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: '3.12'
+          python-version: '3.13'
 
-      - name: Install REUSE tool
-        run: pip install reuse
-
-      - name: Check copyright and license metadata
-        run: reuse lint
-
-
-  smoke:
-    name: Build and smoke test
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: '3.12'
-
-      - name: Build and install the wheel
+      - name: Build package
         run: |
           pip install build
           python -m build
-          pip install "$(ls dist/*.whl)"
 
-      - name: Check and sample the example study
-        working-directory: examples/uncertainty
-        run: |
-          horizon --help
-          horizon check fuel_cost_study.hor
-          horizon run fuel_cost_study.hor --dry-run
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: dist-artifacts
+          path: dist/
+
+
+  test:
+    name: Run tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: build
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: dist-artifacts
+          path: dist/
+
+      # the installed wheel, not the checkout, so a file missing from the package (grammar.lark) fails the tests
+      - name: Install built wheel with dev dependencies
+        run: pip install "$(ls dist/*.whl)[dev]"
+
+      - name: Run tests
+        run: pytest

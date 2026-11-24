@@ -1,23 +1,22 @@
-# SPDX-FileCopyrightText: 2026 Fonden Mærsk Mc-Kinney Møller Center for Zero Carbon Shipping
-# SPDX-License-Identifier: Apache-2.0
-
 [build-system]
-requires = ["setuptools>=68.2", "wheel"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "horizon-zcs"
-dynamic = ["version"]
+version = "2.0.0.dev0"
 authors = [
     { name = "Mathias Hintze", email = "mathias.hintze@zerocarbonshipping.com" },
+    { name = "Julius Thomas", email = "julius.thomas@zerocarbonshipping.com" },
 ]
 maintainers = [
     { name = "Frederik Winkel Lehn", email = "frederik.lehn@zerocarbonshipping.com" },
 ]
 description = "Uncertainty studies of the Navigate maritime transition model, run through any queue"
 readme = "README.md"
-requires-python = ">=3.12"
-license = { file = "LICENSE" }
+requires-python = ">=3.13"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 
 dependencies = [
     "numpy>=1.22.0",
@@ -30,10 +29,10 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "flake8",
-    "flake8-bugbear",
-    "pep8-naming",
-    "isort",
+    "ruff==0.16.5",
+    "mypy==2.3.1",
+    "types-tqdm",
+    "pytest>=9.0",
 ]
 
 [project.urls]
@@ -43,15 +42,107 @@ Repository = "https://github.com/zerocarbonshipping/horizon-zcs"
 [tool.setuptools.packages.find]
 include = ["horizon*"]
 
-[tool.setuptools.dynamic]
-version = { attr = "horizon.__version__" }
-
 [tool.setuptools.package-data]
 "horizon.parser" = ["grammar.lark"]
 
 [project.scripts]
 horizon = "horizon.cli:main"
 
-[tool.isort]
-profile = "black"
-line_length = 120
+[tool.ruff]
+# Navigate's rule set (.ruff.toml in navigate-zcs), at this repository's line length
+line-length = 128
+target-version = "py313"
+
+[tool.ruff.format]
+docstring-code-format = true
+
+[tool.ruff.lint]
+# preview rules are opt-in one at a time, by full code, in extend-select below
+preview = true
+explicit-preview-rules = true
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "N",   # pep8-naming
+    "B",   # flake8-bugbear
+    "UP",  # pyupgrade
+    "C4",  # flake8-comprehensions
+    "SIM", # flake8-simplify
+    "RUF", # ruff-specific
+    "D",   # pydocstyle
+    "TC",  # flake8-type-checking
+    "SLF", # flake8-self
+    "NPY", # numpy-specific checks (deprecated aliases, legacy random API)
+    "ICN", # canonical import aliases (numpy as np, polars as pl, ...)
+    "PGH", # bans blanket noqa/type-ignore; malformed mock assertions
+    "PT",  # pytest style and failure quality
+    "G",   # flake8-logging-format: lazy % arguments, extra keys clear of LogRecord's
+    "LOG", # flake8-logging: no root-logger calls, exc_info only in except handlers
+    "RET", # flake8-return: no else after an exit, no assign-then-return
+    "PTH", # flake8-use-pathlib: pathlib over os.path, os file calls and open()
+    "A",   # flake8-builtins: no name shadows a builtin or a standard-library module
+    "PLE", # pylint errors: code that fails at runtime (dunder returns, logging arity)
+    "PLW", # pylint warnings: no loop variable rebound in its body, no nested min/max
+    "PIE", # flake8-pie: no needless pass, spread or range start; unique enum values
+    "FURB", # refurb: the shorter idiom (or for if-else, sorted()[0] as min, ...)
+    "RSE", # flake8-raise: no parentheses on an exception raised without arguments
+    "FLY", # flynt: an f-string over joining a static list
+    "T10", # flake8-debugger: no breakpoint() or debugger imports
+]
+extend-select = [
+    "D213",    # multi-line docstring summaries start on the second line
+    "D417",    # every argument appears in a Parameters section that exists
+    "DOC102",  # every documented parameter exists in the signature
+    "DOC202",  # no Returns section on a function that returns nothing
+    "ERA001",  # no commented-out code
+    "TID252",  # imports are absolute (ban-relative-imports below)
+]
+ignore = [
+    "D105", # magic methods need no docstring
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
+
+[tool.ruff.lint.flake8-tidy-imports]
+# sibling-relative imports too, not only parent-relative ones
+ban-relative-imports = "all"
+
+[tool.ruff.lint.isort]
+required-imports = ["from __future__ import annotations"]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]
+# tests document themselves through their names and access private state of
+# the module under test (white-box testing is the suite convention)
+"tests/*" = ["D1", "SLF001"]
+# the legacy global random state reproduces the Monte Carlo samples of studies already run;
+# a numpy Generator would draw other values
+"horizon/sampling.py" = ["NPY002"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.13"
+files = ["horizon"]
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+no_implicit_optional = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+strict_equality = true
+warn_return_any = true
+warn_unreachable = true
+disallow_any_generics = true
+# a variable may be rebound to a new type, so the loops of one function can share names
+allow_redefinition_new = true
+local_partial_types = true
+
+# pyDOE3 and pyarrow ship neither inline types nor stubs
+[[tool.mypy.overrides]]
+module = ["pyDOE3.*", "pyarrow.*"]
+ignore_missing_imports = true
