@@ -1,19 +1,50 @@
 name: Publish
 
-# a published GitHub release publishes its tag; PyPI refuses a version it already has
+# a pushed v* tag publishes the version it names: CI builds the package, TestPyPI takes it
+# first and PyPI once TestPyPI has; each refuses a version it already has
 on:
-  release:
-    types: [ published ]
+  push:
+    tags: [ 'v*' ]
 
 jobs:
   ci:
     name: CI
     uses: ./.github/workflows/ci.yml
 
-  publish:
-    name: Publish to PyPI
+  testpypi:
+    name: Publish to TestPyPI
     runs-on: ubuntu-latest
     needs: ci
+    environment: testpypi
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: dist-artifacts
+          path: dist/
+
+      # a tag on a commit whose pyproject.toml says another version would publish that one
+      - name: Check the tag names the package's version
+        run: |
+          if ! ls dist/*-"${GITHUB_REF_NAME#v}".tar.gz > /dev/null 2>&1; then
+            echo "::error::tag $GITHUB_REF_NAME, but CI built $(ls dist | tr '\n' ' ')"
+            exit 1
+          fi
+
+      - name: Publish to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          skip-existing: true  # a re-run after PyPI failed
+
+  pypi:
+    name: Publish to PyPI
+    runs-on: ubuntu-latest
+    needs: testpypi
     environment: pypi
     permissions:
       id-token: write
