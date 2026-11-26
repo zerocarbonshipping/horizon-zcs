@@ -1,12 +1,14 @@
 # SPDX-FileCopyrightText: 2026 Fonden Mærsk Mc-Kinney Møller Center for Zero Carbon Shipping
 # SPDX-License-Identifier: Apache-2.0
 
-# Runs and collects a small study of Navigate's notebook case on Navigate's dev and its latest release, so
-# a change in what Navigate writes or takes shows here; also when this workflow itself changes.
+# Runs and collects a small study of Navigate's notebook case on Navigate's dev, at each push to Horizon's dev
+# and weekly, so a change in what Navigate writes or takes shows here; also when this workflow itself changes.
 
 name: Navigate
 
 on:
+  push:
+    branches: [ dev ]
   schedule:
     - cron: '0 6 * * 1'
   workflow_dispatch:
@@ -25,8 +27,9 @@ jobs:
     timeout-minutes: 20
     strategy:
       fail-fast: false
+      # Navigate's latest release joins dev once it is 1.1.0: 1.0 has no --version, which this Horizon reads (#32)
       matrix:
-        navigate: ${{ fromJSON(inputs.navigate_ref && format('["{0}"]', inputs.navigate_ref) || '["dev", "release"]') }}
+        navigate: ${{ fromJSON(inputs.navigate_ref && format('["{0}"]', inputs.navigate_ref) || '["dev"]') }}
 
     steps:
       - name: Resolve the Navigate ref
