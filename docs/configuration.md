@@ -274,11 +274,17 @@ for the simulation file format itself.
 
 Horizon 2 reads the files of Horizon 1 except for these changes:
 
+- The lines of the `Horizon` block that listed the parameters taking part,
+  such as `ContinuousParameter("X")`, are gone: every block takes part. Delete
+  them, and set `active = FALSE` in a block they left out, to keep it at its
+  `default`.
 - `token` and `name` are gone: the block name is the token. Rename a block
   whose name is not its token, and delete `name` lines.
 - `MaxParallelWorkers`, `Plot` and `SampleOnly` are gone; delete them.
   Instead of `SampleOnly = TRUE`, `horizon run --dry-run` prints every run
   with its values without running it.
+- `distribution` defaults to `LOG-TRIANGULAR`, not uniform: write
+  `distribution = UNIFORM` in a block that relied on the old default.
 - `MIN` / `MAX` are spelled `MINIMUM` / `MAXIMUM`.
 - `Include` and `Exclude` are written exactly so (not `include`).
 - `SamplingMethod` is `LHS` or `MC`; `SENSITIVITY` and `CALIBRATION` are
@@ -289,5 +295,3 @@ Horizon 2 reads the files of Horizon 1 except for these changes:
   (`output/samples.csv`); the runs and their values are in `study.json`.
 - A key set twice in one block, a scenario `default` that is not one of its
   values, and run labels that clash or cannot be file names are errors.
-- Parameter lists in the `Horizon` block (`Parameters = [...]`,
-  `ContinuousParameter("X")`) were already refused; they stay errors.
