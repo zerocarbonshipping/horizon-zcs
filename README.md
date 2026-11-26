@@ -22,7 +22,7 @@ Python 3.13 or newer, as Navigate.
 
 ```bash
 conda activate nav          # the environment Navigate lives in
-pip install .               # from a clone of this repository
+pip install horizon-zcs
 ```
 
 A queue such as [pueue](https://github.com/Nukesor/pueue) or slurm is
@@ -60,10 +60,12 @@ one line (`my_study.hor:41: error: ...`) and exits 1. Horizon keeps no state
 about the runs: a failed run shows in the scheduler, or in the summary
 `horizon run` prints, and `logs/horizon.log` has the command of every run.
 
-To try it without Navigate, the bundled example checks and samples:
+To try it without Navigate, the [example study](https://github.com/zerocarbonshipping/horizon-zcs/tree/main/examples/uncertainty)
+in the repository checks and samples:
 
 ```bash
-cd examples/uncertainty
+git clone https://github.com/zerocarbonshipping/horizon-zcs
+cd horizon-zcs/examples/uncertainty
 horizon check fuel_cost_study.hor
 horizon run fuel_cost_study.hor --dry-run
 ```
@@ -99,10 +101,10 @@ Horizon {
 
 ## Documentation
 
-- [`docs/configuration.md`](docs/configuration.md): the `.hor` format
-- [`docs/queues.md`](docs/queues.md): pueue, slurm and other schedulers, and the environment a run gets
-- [`docs/output.md`](docs/output.md): the study folder, how the representative run is picked, failed runs
-- [`examples/uncertainty/`](examples/uncertainty/README.md): a small study to start from
+- [`docs/configuration.md`](https://github.com/zerocarbonshipping/horizon-zcs/blob/main/docs/configuration.md): the `.hor` format
+- [`docs/queues.md`](https://github.com/zerocarbonshipping/horizon-zcs/blob/main/docs/queues.md): pueue, slurm and other schedulers, and the environment a run gets
+- [`docs/output.md`](https://github.com/zerocarbonshipping/horizon-zcs/blob/main/docs/output.md): the study folder, how the representative run is picked, failed runs
+- [`examples/uncertainty/`](https://github.com/zerocarbonshipping/horizon-zcs/blob/main/examples/uncertainty/README.md): a small study to start from
 - [Navigate documentation](https://zerocarbonshipping.github.io/navigate-zcs/): the model and its deck format
 
 ## Contributing
@@ -135,4 +137,4 @@ own independent judgement when interpreting any outputs.
 
 Copyright 2026 Fonden Mærsk Mc-Kinney Møller Center for Zero Carbon Shipping.
 
-Horizon is licensed under the [Apache License 2.0](LICENSE).
+Horizon is licensed under the [Apache License 2.0](https://github.com/zerocarbonshipping/horizon-zcs/blob/main/LICENSE).
