@@ -124,6 +124,8 @@ required-imports = ["from __future__ import annotations"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# importlib: the checkout never shadows the wheel CI's test job installs
+addopts = "-x --tb=short --import-mode=importlib"
 
 [tool.mypy]
 python_version = "3.13"

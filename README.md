@@ -117,8 +117,19 @@ pip install -e ".[dev]"
 ruff check horizon tests && ruff format --check horizon tests && mypy && pytest
 ```
 
-The tests check and sample the example study, without Navigate. A change that alters sampled values
-explains the difference in its pull request. The package docstring, `horizon/__init__.py`, maps the modules.
+The suite is kept small on purpose, as Navigate's is: a test earns its place only when a plausible change could
+silently break the decision it pins. It covers the example study end to end, checked and sampled without Navigate
+(`tests/test_example.py`); the sampling math: each distribution's inverse CDF, the reserved samples 2 and 3 and the
+automatic decimals (`tests/test_sampling.py`); and the parser: the scenario combinations a study runs, and the line
+an error names (`tests/test_parser.py`). Queues and launching, what the libraries guarantee, and collecting results
+are not tested here; the weekly Navigate workflow runs and collects a study on Navigate itself. Expected values are
+worked out by hand or taken from an independent source, never from current output, so no test pins sampled values:
+a change that alters them explains the difference in its pull request. As in Navigate
+([`tests/AGENTS.md`](https://github.com/zerocarbonshipping/navigate-zcs/blob/dev/tests/AGENTS.md)), a coding agent
+proposes a test, naming what it pins and where its expected value comes from, rather than writing it, and a failing
+test is never changed to make it pass.
+
+The package docstring, `horizon/__init__.py`, maps the modules.
 
 ## Disclaimer
 
