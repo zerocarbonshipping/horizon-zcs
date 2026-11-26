@@ -6,9 +6,10 @@ on:
   pull_request:
   workflow_call:
 
-# on main, every push is published, so none is cancelled
+# a newer push to dev or to the pull request cancels the run before it; a tag's push and its
+# release each publish, so they run apart
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.ref == 'refs/heads/main' && github.sha || '' }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
