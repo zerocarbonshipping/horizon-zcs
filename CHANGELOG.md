@@ -11,8 +11,8 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 Horizon 2 is a rewrite. Navigate fills in each run's sampled values itself, so
 Horizon writes no simulation files; the runs go to any scheduler or run on this
 machine; and `horizon collect` compacts a study into one file for Lantern.
-[Changes from Horizon 1](docs/configuration.md#changes-from-horizon-1) lists
-what to change in a 1.x `.hor` file.
+[Changes from Horizon 1](https://github.com/zerocarbonshipping/horizon-zcs/blob/main/docs/configuration.md#changes-from-horizon-1)
+lists what to change in a 1.x `.hor` file.
 
 ### Added
 - The commands `horizon run`, `horizon check` and `horizon collect`;
@@ -67,16 +67,16 @@ what to change in a 1.x `.hor` file.
   and values may be quoted or bare.
 - The block name is the token: write the block under its token and delete
   `token` and `name`.
-- Every block takes part in the study: delete the `ScenarioParameters` and
-  `Parameters` lists of the Horizon block, and set `active = FALSE` to fix a
-  parameter at its default.
+- Every block takes part in the study: delete the lines of the Horizon block
+  that listed parameters, such as `ContinuousParameter("X")`, and set
+  `active = FALSE` in a block they left out, to fix it at its default.
 - `distribution` defaults to `LOG-TRIANGULAR`, not uniform; write
   `distribution = UNIFORM` where a study relied on the old default.
 - `decimals` is optional: without it, the rounding step is at most 1/10,000 of
   the range, and log distributions keep 4 significant digits at `low_val`.
-- A `ContinuousParameter` without `default` takes `mid_val`; a
-  `DiscreteParameter` without `default` is an error, and one without
-  `probabilities` is uniform.
+- A `ContinuousParameter` without `default` takes `mid_val`, and one without
+  `mid_val`, such as a `UNIFORM` one, needs `default`; a `DiscreteParameter`
+  needs `default`, and one without `probabilities` is uniform.
 - `MIN` and `MAX` are `MINIMUM` and `MAXIMUM`, `Include` and `Exclude` are
   written so, and `SamplingMethod` is `LHS` or `MC`.
 - `UncFilePath` and `OutputPath` are taken from the folder of the `.hor` file,
@@ -119,11 +119,6 @@ what to change in a 1.x `.hor` file.
 - A key set only inside an `if` block was taken as the parameter's own.
 - An Include `_name` that matched several scenario combinations gave their runs
   one name; it is an error.
-
-## [1.0.1] - 2026-10-13
-
-### Fixed
-- Generated `.nav` files now always emit the `Include` keyword in Title case, as required by navigate-zcs; 1.0.0 emitted `INCLUDE`, which navigate rejects.
 
 ## [1.0.0] - 2026-08-17
 
