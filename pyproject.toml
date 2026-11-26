@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "horizon-zcs"
-version = "2.0.0.dev0"
+version = "2.0.0"
 authors = [
     { name = "Mathias Hintze", email = "mathias.hintze@zerocarbonshipping.com" },
     { name = "Julius Thomas", email = "julius.thomas@zerocarbonshipping.com" },

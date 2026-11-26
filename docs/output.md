@@ -45,7 +45,7 @@ run has no results, and `horizon collect --partial` compacts what there is
 and keeps the per-run results.
 
 Both files follow Navigate's
-[results file](https://github.com/zerocarbonshipping/navigate-zcs/blob/dev/docs/reference_manual/results_file.md),
+[results file](https://github.com/zerocarbonshipping/navigate-zcs/blob/main/docs/reference_manual/results_file.md),
 with keys Horizon adds to its metadata: `study`, `horizon_version`,
 `study_schema_version` and `samples`, the provenance of each run, and in the
 Lantern file `representatives`, `band` and `summaries`. `schema_version` is the
