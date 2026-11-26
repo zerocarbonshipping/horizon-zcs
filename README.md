@@ -108,8 +108,8 @@ Horizon {
 ## Contributing
 
 Horizon follows Navigate's
-[contributing guide](https://github.com/zerocarbonshipping/navigate-zcs/blob/dev/CONTRIBUTING.md#horizon-and-lantern) and
-[code style](https://github.com/zerocarbonshipping/navigate-zcs/blob/dev/CODESTYLE.md): pull requests target `dev`, and
+[contributing guide](https://github.com/zerocarbonshipping/navigate-zcs/blob/main/CONTRIBUTING.md#horizon-and-lantern) and
+[code style](https://github.com/zerocarbonshipping/navigate-zcs/blob/main/CODESTYLE.md): pull requests target `dev`, and
 `CHANGELOG.md` records what a user would notice. Set up and check a change with:
 
 ```bash

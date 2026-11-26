@@ -3,9 +3,9 @@ title: Horizon
 abstract: "Uncertainty studies of the Navigate maritime transition model, run through any queue"
 type: software
 license: Apache-2.0
-version: 1.0.1
+version: 2.0.0
 repository-code: "https://github.com/zerocarbonshipping/horizon-zcs"
-date-released: 2026-10-13
+date-released: 2026-11-30
 authors:
   - given-names: Mathias
     family-names: Hintze

@@ -6,7 +6,9 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 <!-- What gets an entry: Navigate's CONTRIBUTING.md, Changelog. -->
 
-## [Unreleased]
+## [2.0.0] - 2026-11-30
+
+Runs Navigate 1.1 or later; reads results schema 1; writes study schema 1.
 
 Horizon 2 is a rewrite. Navigate fills in each run's sampled values itself, so
 Horizon writes no simulation files; the runs go to any scheduler or run on this
