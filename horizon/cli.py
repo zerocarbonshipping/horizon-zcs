@@ -88,7 +88,7 @@ def _parser() -> argparse.ArgumentParser:
         "--navigate-flags",
         default="",
         metavar="ARGS",
-        help="extra arguments for every Navigate run, e.g. '-d ./assumptions --solver highs'",
+        help="extra arguments for every Navigate run, e.g. '--solver highs'; a path among them must be absolute",
     )
     run.add_argument(
         "--dry-run",
